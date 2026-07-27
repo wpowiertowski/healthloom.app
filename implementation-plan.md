@@ -23,10 +23,24 @@ the Xcode 27 beta (Swift 6.4 compiler). The XCUITest suite is temporarily skippe
 CI (`-skip-testing:HealthLoomUITests`): the preview image's iOS 27 beta 3 runtime does
 not deliver XCUITest-synthesized taps to the out-of-process HealthKit permission sheet
 (com.apple.HealthPrivacyService), so the onboarding test cannot pass there (diagnosis
-in PR #7); UI tests still build in CI and still run locally via `make test`. Remaining
-WP-38 launch-checklist work: flip manifests to 6.4, re-enable UI tests in CI once a
-newer beta lands on the runner image, and move the app job from the preview image back
-to the regular macOS image once Xcode 27 goes GA there.
+in PR #7); UI tests still build in CI and still run locally via `make test`.
+
+**Onboarding test quarantined locally too (2026-07).** The same beta limitation made
+`OnboardingUITests` fail on a dev Mac, and since `make test` is this repo's pre-commit
+hook (`.git/hooks/pre-commit`), that left the gate permanently red and every commit
+needing `--no-verify`. The test now self-skips via `XCTSkipUnless`, so it reports as
+*skipped* rather than failing, and the reason travels with the test instead of living
+only in a CI flag. Re-run it on demand with
+`TEST_RUNNER_HEALTHLOOM_RUN_HEALTHKIT_SHEET_TEST=1 xcodebuild test …` (verified: the
+variable reaches the runner and the test really does execute); delete the skip once a
+newer beta makes it pass. Because that one test is now self-skipping, CI's blanket
+`-skip-testing:HealthLoomUITests` could narrow to just `HealthLoomUITests/
+OnboardingUITests` and let the other four UI tests run on the runner -- untested there
+so far, so it is deliberately left as a separate decision.
+
+Remaining WP-38 launch-checklist work: flip manifests to 6.4, re-enable UI tests in CI
+once a newer beta lands on the runner image, and move the app job from the preview image
+back to the regular macOS image once Xcode 27 goes GA there.
 
 ---
 

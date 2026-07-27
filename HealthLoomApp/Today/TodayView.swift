@@ -138,7 +138,35 @@ struct TodayMetricsEditor: View {
     // replaced with `Theme.canvas`, rows sit on `Theme.surface`, and the
     // remove affordance moves from `.red` to the palette's accent.
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            // Done lives in the header, not a `ToolbarItem`. On iOS 27 a
+            // `ToolbarItem` reports its content's `accessibilityIdentifier`
+            // on *both* the toolbar's wrapper element and the inner button,
+            // so `TodayUITests`' identifier-only
+            // `.descendants(matching: .any)` query matched two elements and
+            // the tap failed with "Multiple matching elements found"
+            // (element dump: Other[today.editor.done] > Other >
+            // Button[today.editor.done]). Neither
+            // `.accessibilityElement(children: .ignore)` on the button nor
+            // moving the identifier onto the label suppressed the wrapper's
+            // copy -- both tried against a real simulator run. A plain
+            // in-content button has exactly one element, which is why
+            // `dashboard.syncNow` (a `ThemedIconButton`) resolves cleanly
+            // under the same query. Dropping the toolbar also removes the
+            // last stock navigation bar in the app.
+            ThemedHeader(title: "Edit Today") {
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Done")
+                        .font(Theme.font(15, .medium, relativeTo: .callout))
+                        .foregroundStyle(Theme.accentDeep)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("today.editor.done")
+            }
+            .padding(.horizontal, 22)
+
             List {
                 Section {
                     ForEach(preferences.visibleKinds) { kind in
@@ -192,7 +220,18 @@ struct TodayMetricsEditor: View {
                                         .foregroundStyle(Theme.ink)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            // Deliberately NO `.buttonStyle(.plain)` here,
+                            // unlike the remove button above. This button IS
+                            // the whole row, and with `EditMode` active a
+                            // `List` row only delivers taps to a full-row
+                            // button under the default style -- `.plain`
+                            // made this silently dead: a diagnostic run
+                            // showed `today.editor.add.weight` still present
+                            // and no `today.editor.row.weight` after tapping
+                            // it, while the (inset, non-full-row) remove
+                            // button kept working. The label sets its own
+                            // colors, so the default style changes nothing
+                            // visually.
                             .listRowBackground(Theme.surface)
                             .accessibilityIdentifier("today.editor.add.\(kind.rawValue)")
                         }
@@ -204,51 +243,10 @@ struct TodayMetricsEditor: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Theme.canvas.ignoresSafeArea())
             .environment(\.editMode, .constant(.active))
-            .navigationTitle("Edit Today")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // `.principal` overrides the system's SF-Bold inline title
-                // with the palette's Helvetica. `.navigationTitle` is kept
-                // above so VoiceOver and the back-navigation label still have
-                // a real title string to read.
-                ToolbarItem(placement: .principal) {
-                    Text("Edit Today")
-                        .font(Theme.font(15, .medium, relativeTo: .headline))
-                        .foregroundStyle(Theme.ink)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Text("Done")
-                            .font(Theme.font(15, .medium, relativeTo: .callout))
-                            .foregroundStyle(Theme.accentDeep)
-                    }
-                    // KNOWN FAILING, pre-existing and not caused by the
-                    // restyle: `TodayUITests` line 62 taps this via an
-                    // identifier-only `.descendants(matching: .any)` query
-                    // and fails with "Multiple matching elements found",
-                    // because on the iOS 27 beta a `ToolbarItem` reports its
-                    // content's identifier on *both* the toolbar wrapper and
-                    // the inner button -- the run log's element dump shows
-                    // Other[today.editor.done] > Other >
-                    // Button[today.editor.done]. Confirmed to reproduce
-                    // identically on a tree with this whole restyle stashed.
-                    // Neither `.accessibilityElement(children: .ignore)` on
-                    // the button nor moving the identifier onto the label
-                    // suppresses the wrapper's copy (both tried against a
-                    // real simulator run), so the fix belongs either in the
-                    // test's query (a typed `.buttons[...]`, which the
-                    // OnboardingUITests header warns is unreliable on this
-                    // beta) or in a future SDK. Same family of pitfall
-                    // LocalOnlyTypeRow.swift documents for `Label`.
-                    .accessibilityIdentifier("today.editor.done")
-                }
-            }
-            .tint(Theme.accent)
         }
+        .background(Theme.canvas.ignoresSafeArea())
+        .tint(Theme.accent)
     }
 }
 
