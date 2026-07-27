@@ -50,15 +50,25 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.healthloom.app
         PRODUCT_NAME: HealthLoom
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_CFBundleDisplayName: HealthLoom
         ENABLE_PREVIEWS: YES
     info:
       path: HealthLoomApp/Info.plist
       properties:
         CFBundleDisplayName: HealthLoom
         LSRequiresIPhoneOS: true
-        UIRequiredDeviceCapabilities: [armv7]
+        # Must be present (even as an empty dict) or iOS runs the app in
+        # legacy compatibility mode: it lays the UI out into a legacy-sized
+        # canvas and letterboxes it, so the app never goes edge-to-edge and
+        # sees wrong safe-area insets. The `INFOPLIST_KEY_UILaunchScreen_
+        # Generation` build setting that used to sit in `settings.base` did
+        # not do this -- INFOPLIST_KEY_* only applies when Xcode synthesizes
+        # the plist (GENERATE_INFOPLIST_FILE), and this target ships the
+        # checked-in Info.plist below instead.
+        UILaunchScreen: {}
+        # arm64, not armv7: armv7 is 32-bit ARM, which no device capable of
+        # running this app's iOS 27 deployment target reports support for --
+        # the old template value made the app uninstallable on real hardware.
+        UIRequiredDeviceCapabilities: [arm64]
         # HealthKit usage strings: specific and honest, per WP-01 step 4 -- App
         # Review reads these verbatim.
         NSHealthShareUsageDescription: >-
