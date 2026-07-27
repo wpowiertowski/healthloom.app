@@ -130,6 +130,13 @@ struct TodayMetricsEditor: View {
     @Environment(\.dismiss) private var dismiss
     let preferences: TodayMetricPreferences
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): the one modal in the app,
+    // brought onto the same palette as the screens behind it. It keeps `List`
+    // + `EditMode` -- the system reorder handles are the whole point of this
+    // sheet, and reimplementing drag-and-drop to avoid a `List` would trade
+    // real functionality for cosmetics -- but the system background is
+    // replaced with `Theme.canvas`, rows sit on `Theme.surface`, and the
+    // remove affordance moves from `.red` to the palette's accent.
     var body: some View {
         NavigationStack {
             List {
@@ -143,8 +150,9 @@ struct TodayMetricsEditor: View {
                             Button {
                                 preferences.hide(kind)
                             } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red)
+                                Image(systemName: "minus.circle")
+                                    .font(.system(size: 16, weight: .light))
+                                    .foregroundStyle(Theme.accent)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Remove \(kind.displayName)")
@@ -154,38 +162,89 @@ struct TodayMetricsEditor: View {
                                 .foregroundStyle(Theme.ink)
                                 .accessibilityIdentifier("today.editor.row.\(kind.rawValue)")
                         }
+                        .listRowBackground(Theme.surface)
                     }
                     .onMove { source, destination in
                         preferences.move(fromOffsets: source, toOffset: destination)
                     }
                 } header: {
-                    Text("Shown")
+                    Text("SHOWN")
+                        .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
+                        .foregroundStyle(Theme.secondary)
                 } footer: {
                     Text("Drag to reorder. Removed metrics keep syncing \u{2014} they just leave this panel.")
+                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .foregroundStyle(Theme.tertiary)
                 }
 
                 if !preferences.hiddenKinds.isEmpty {
-                    Section("More metrics") {
+                    Section {
                         ForEach(preferences.hiddenKinds) { kind in
                             Button {
                                 preferences.show(kind)
                             } label: {
-                                Label(kind.displayName, systemImage: "plus.circle.fill")
-                                    .font(Theme.font(14, .regular, relativeTo: .subheadline))
-                                    .foregroundStyle(Theme.ink)
+                                HStack(spacing: 12) {
+                                    Image(systemName: "plus.circle")
+                                        .font(.system(size: 16, weight: .light))
+                                        .foregroundStyle(Theme.accent)
+                                    Text(kind.displayName)
+                                        .font(Theme.font(14, .regular, relativeTo: .subheadline))
+                                        .foregroundStyle(Theme.ink)
+                                }
                             }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Theme.surface)
                             .accessibilityIdentifier("today.editor.add.\(kind.rawValue)")
                         }
+                    } header: {
+                        Text("MORE METRICS")
+                            .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
+                            .foregroundStyle(Theme.secondary)
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.canvas.ignoresSafeArea())
             .environment(\.editMode, .constant(.active))
             .navigationTitle("Edit Today")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // `.principal` overrides the system's SF-Bold inline title
+                // with the palette's Helvetica. `.navigationTitle` is kept
+                // above so VoiceOver and the back-navigation label still have
+                // a real title string to read.
+                ToolbarItem(placement: .principal) {
+                    Text("Edit Today")
+                        .font(Theme.font(15, .medium, relativeTo: .headline))
+                        .foregroundStyle(Theme.ink)
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .accessibilityIdentifier("today.editor.done")
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text("Done")
+                            .font(Theme.font(15, .medium, relativeTo: .callout))
+                            .foregroundStyle(Theme.accentDeep)
+                    }
+                    // KNOWN FAILING, pre-existing and not caused by the
+                    // restyle: `TodayUITests` line 62 taps this via an
+                    // identifier-only `.descendants(matching: .any)` query
+                    // and fails with "Multiple matching elements found",
+                    // because on the iOS 27 beta a `ToolbarItem` reports its
+                    // content's identifier on *both* the toolbar wrapper and
+                    // the inner button -- the run log's element dump shows
+                    // Other[today.editor.done] > Other >
+                    // Button[today.editor.done]. Confirmed to reproduce
+                    // identically on a tree with this whole restyle stashed.
+                    // Neither `.accessibilityElement(children: .ignore)` on
+                    // the button nor moving the identifier onto the label
+                    // suppresses the wrapper's copy (both tried against a
+                    // real simulator run), so the fix belongs either in the
+                    // test's query (a typed `.buttons[...]`, which the
+                    // OnboardingUITests header warns is unreliable on this
+                    // beta) or in a future SDK. Same family of pitfall
+                    // LocalOnlyTypeRow.swift documents for `Label`.
+                    .accessibilityIdentifier("today.editor.done")
                 }
             }
             .tint(Theme.accent)

@@ -78,7 +78,24 @@ enum Theme {
 
     // MARK: - Private
 
-    private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+    /// `nonisolated` is load-bearing, not tidiness. This app target sets
+    /// `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor` (project.yml), so a closure
+    /// literal written inside a `MainActor`-isolated function inherits that
+    /// isolation. UIKit resolves a `UIDynamicProviderColor` on whatever
+    /// thread is rendering -- not necessarily the main one -- and under Swift
+    /// 6 that mismatch is not a warning but a hard `EXC_BREAKPOINT` trap in
+    /// `swift_task_checkIsolatedSwift`, crashing the app mid-render (observed
+    /// via a real `xcodebuild test` run: `TodayUITests` and
+    /// `OnboardingUITests` both died with `dispatch_assert_queue_fail` under
+    /// `Theme.dynamic`'s closure, stack topped by
+    /// `-[UIDynamicProviderColor _resolvedColorWithTraitCollection:]`).
+    ///
+    /// Declaring the enclosing function `nonisolated` means the closure has
+    /// no ambient `MainActor` context to inherit, so it is safe to call from
+    /// any thread -- exactly the reasoning HealthLoomApp.swift documents for
+    /// nesting the `BGTaskScheduler` launch handler inside a `nonisolated`
+    /// function rather than relying on inference.
+    nonisolated private static func dynamic(light: UInt32, dark: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
         })
@@ -86,7 +103,11 @@ enum Theme {
 }
 
 private extension UIColor {
-    convenience init(hex: UInt32) {
+    /// `nonisolated` for the same reason as `Theme.dynamic` above: this
+    /// initializer is called from inside that off-main dynamic-provider
+    /// closure, so it must not carry the target's default `MainActor`
+    /// isolation.
+    nonisolated convenience init(hex: UInt32) {
         self.init(
             red: CGFloat((hex >> 16) & 0xFF) / 255,
             green: CGFloat((hex >> 8) & 0xFF) / 255,

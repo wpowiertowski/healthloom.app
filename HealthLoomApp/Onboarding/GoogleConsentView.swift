@@ -25,46 +25,32 @@ struct GoogleConsentView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "person.badge.key")
-                .font(.system(size: 48))
-                .foregroundStyle(.tint)
-            Text("Connect Google")
-                .font(.title.bold())
-            Text("Sign in with the personal Google account linked to your Fitbit or Pixel Watch. Google Workspace (work or school) accounts aren't supported.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+        OnboardingScaffold(
+            step: .google,
+            symbol: "person.badge.key",
+            title: "Connect Google",
+            message: "Sign in with the personal Google account linked to your Fitbit or Pixel Watch. Google Workspace (work or school) accounts aren't supported."
+        ) {
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-                    .accessibilityIdentifier("onboarding.google.error")
+                OnboardingErrorPanel(
+                    message: errorMessage,
+                    accessibilityIdentifier: "onboarding.google.error"
+                )
+                .padding(.top, 20)
             }
-            Spacer()
-            Button {
-                beginConsent()
-            } label: {
-                if isConsenting {
-                    ProgressView()
-                } else {
-                    Text("Sign in with Google")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+        } actions: {
+            OnboardingPrimaryButton(
+                title: "Sign in with Google",
+                isLoading: isConsenting,
+                accessibilityIdentifier: "onboarding.google.signIn",
+                action: beginConsent
+            )
             .disabled(isConsenting)
-            .accessibilityIdentifier("onboarding.google.signIn")
-            Spacer().frame(height: 16)
         }
-        .padding()
         // No container-level identifier -- see WelcomeView.swift's note:
         // it would override the more specific `onboarding.google.signIn`/
-        // `.error` identifiers set on the children above.
+        // `.error` identifiers, which are passed into the themed components
+        // above and applied directly to their own leaf views.
     }
 
     private func beginConsent() {

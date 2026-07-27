@@ -21,29 +21,37 @@ import SyncKit
 struct BackfillTypeRow: View {
     let status: BackfillTypeStatus
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
+    // rust/gray status dot instead of the green/red SF Symbol, plus the 2 pt
+    // rust attention bar on errored rows. Copy and identifiers unchanged.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: statusIcon)
-                    .foregroundStyle(statusColor)
-                    .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).statusIcon")
-                Text(displayName)
-                    .font(.headline)
-                    .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).name")
-                Spacer()
+        ZStack(alignment: .leading) {
+            if status.lastError != nil { ThemedAttentionBar() }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(statusDotColor)
+                        .frame(width: 6, height: 6)
+                        .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).statusIcon")
+                    Text(displayName)
+                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .foregroundStyle(Theme.ink)
+                        .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).name")
+                    Spacer()
+                }
+                Text(progressText)
+                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .foregroundStyle(Theme.secondary)
+                    .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).progress")
+                if let lastError = status.lastError {
+                    ThemedErrorText(
+                        message: lastError,
+                        accessibilityIdentifier: "backfill.row.\(status.dataType.rawValue).error"
+                    )
+                }
             }
-            Text(progressText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).progress")
-            if let lastError = status.lastError {
-                Text(lastError)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).error")
-            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
         }
-        .padding(.vertical, 4)
     }
 
     private var displayName: String {
@@ -58,21 +66,26 @@ struct BackfillTypeRow: View {
         case .dailyRestingHeartRate: return "Resting Heart Rate"
         case .exercise: return "Exercise"
         case .nutritionLog: return "Nutrition"
-        default: return status.dataType.rawValue
+        // Every other syncable type falls through to here, and this list has
+        // grown well past the hand-written cases above -- rendering the raw
+        // `active_minutes`/`blood_glucose` identifiers next to properly
+        // titled rows looked like a bug. Title-cases the identifier the same
+        // way `SettingsView.displayName(_:)` and `SyncLogRow.displayName`
+        // already do for the same enum.
+        default:
+            return status.dataType.rawValue
+                .split(separator: "_")
+                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                .joined(separator: " ")
         }
     }
 
-    private var statusIcon: String {
-        if status.lastError != nil { return "exclamationmark.triangle.fill" }
-        if status.isComplete { return "checkmark.circle.fill" }
-        if status.reachedDate == nil { return "circle.dashed" }
-        return "arrow.down.circle"
-    }
-
-    private var statusColor: Color {
-        if status.lastError != nil { return .red }
-        if status.isComplete { return .green }
-        return .secondary
+    /// Rust once the walk is complete, gray while it is still running or
+    /// errored -- an errored row is additionally marked by the 2 pt bar and
+    /// `Theme.accentDeep` error text, never by dot color alone. See
+    /// ThemedChrome.swift's "Status colors".
+    private var statusDotColor: Color {
+        status.lastError == nil && status.isComplete ? Theme.accent : Theme.gray
     }
 
     /// WP-15 step 3's own illustrative style: "Mar 2026 … done" once the

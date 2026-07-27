@@ -53,78 +53,82 @@ struct DashboardView: View {
         }
     }
 
+    // WP-33 follow-on: the stock `List` this screen shipped with is replaced
+    // by the Yacht club panel layout (`Shared/ThemedChrome.swift`) so the
+    // Data tab matches Today. Structure, data flow, copy and every
+    // accessibility identifier are unchanged -- only the presentation.
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    freshnessHeader
+            ThemedScreen(title: "HealthLoom") {
+                // The toolbar's two items, redrawn as themed header actions
+                // (the system navigation bar is hidden for tab roots -- see
+                // ThemedChrome.swift's "Navigation chrome" note).
+                NavigationLink(destination: SettingsView(chrome: .pushed)) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 18, weight: .light))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 24, height: 24)
                 }
-                Section("Your Data") {
-                    ForEach(orderedRows, id: \.0) { type, state in
-                        SyncTypeRow(type: type, state: state)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
+                .accessibilityIdentifier("dashboard.settings")
+
+                ThemedIconButton(
+                    systemImage: "arrow.triangle.2.circlepath",
+                    accessibilityLabel: "Sync Now",
+                    accessibilityIdentifier: "dashboard.syncNow",
+                    isBusy: isSyncing,
+                    action: syncNow
+                )
+                .disabled(isSyncing)
+            } content: {
+                freshnessHeader
+                    .padding(.top, 18)
+
+                ThemedSectionHeader(title: "Your Data")
+                ThemedPanel {
+                    ForEach(Array(orderedRows.enumerated()), id: \.element.0) { index, row in
+                        if index > 0 { ThemedRowDivider() }
+                        SyncTypeRow(type: row.0, state: row.1)
                     }
                 }
-                Section("Not in Apple Health") {
-                    ForEach(localOnlyRows, id: \.0) { type, samples in
-                        LocalOnlyTypeRow(type: type, samples: samples)
+
+                ThemedSectionHeader(title: "Not in Apple Health")
+                ThemedPanel {
+                    ForEach(Array(localOnlyRows.enumerated()), id: \.element.0) { index, row in
+                        if index > 0 { ThemedRowDivider() }
+                        LocalOnlyTypeRow(type: row.0, samples: row.1)
                     }
                 }
-                // WP-15 coordination point (flagged per the handoff brief,
-                // and anticipated by WP-17's own note above): the smallest
-                // possible addition to this pre-existing file to make the
-                // new Backfill screen (`Backfill/BackfillView.swift`)
-                // reachable -- one row, placed after the existing sections
-                // rather than touching the `.toolbar` WP-17 also edited.
-                Section { NavigationLink("Historical Backfill", destination: BackfillView()) }
-                // WP-12b: the consolidated Activities view (architecture.md
-                // D13.2) -- same one-row nav-link pattern as WP-15's
-                // Backfill link above.
-                Section {
-                    NavigationLink("Activities", destination: ActivitiesView())
-                        .accessibilityIdentifier("dashboard.activities.link")
-                }
-            }
-            .navigationTitle("HealthLoom")
-            .toolbar {
-                // WP-17: nav link to the new Settings screen (per-type sync
-                // toggles). Placed at `.topBarLeading` so it doesn't compete
-                // with the existing `.primaryAction` "Sync Now" button below;
-                // flagged in progress.md as a coordination point since WP-15
-                // may independently want a Dashboard nav link of its own (to
-                // a backfill screen) -- this item only adds `SettingsView`,
-                // nothing else on this toolbar was touched.
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink(destination: SettingsView()) {
-                        Image(systemName: "gearshape")
+
+                // WP-15 / WP-12b nav links, unchanged in behavior -- now one
+                // panel of themed rows rather than two bare `List` sections.
+                ThemedSectionHeader(title: "More")
+                ThemedPanel {
+                    ThemedNavRow(
+                        title: "Historical Backfill",
+                        accessibilityIdentifier: "dashboard.backfill.link"
+                    ) {
+                        BackfillView()
                     }
-                    .accessibilityIdentifier("dashboard.settings")
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        syncNow()
-                    } label: {
-                        if isSyncing {
-                            ProgressView()
-                        } else {
-                            Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
-                        }
+                    ThemedRowDivider()
+                    ThemedNavRow(
+                        title: "Activities",
+                        accessibilityIdentifier: "dashboard.activities.link"
+                    ) {
+                        ActivitiesView(chrome: .pushed)
                     }
-                    .disabled(isSyncing)
-                    .accessibilityIdentifier("dashboard.syncNow")
                 }
             }
         }
     }
 
     private var freshnessHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label("About data freshness", systemImage: "clock")
-                .font(.subheadline.bold())
-            Text("Your Fitbit or Pixel Watch reaches Google roughly every 15 minutes while the Google Health app is open. HealthLoom then pulls from Google each time you sync below -- this isn't a live feed.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityIdentifier("dashboard.freshnessHeader")
+        ThemedCallout(
+            title: "About data freshness",
+            message: "Your Fitbit or Pixel Watch reaches Google roughly every 15 minutes while the Google Health app is open. HealthLoom then pulls from Google each time you sync below -- this isn't a live feed.",
+            accessibilityIdentifier: "dashboard.freshnessHeader"
+        )
     }
 
     private func syncNow() {

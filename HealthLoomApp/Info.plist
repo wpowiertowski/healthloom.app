@@ -48,9 +48,11 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
-		<string>armv7</string>
+		<string>arm64</string>
 	</array>
 </dict>
 </plist>

@@ -41,16 +41,22 @@ struct LocalOnlyTypeRow: View {
     let type: GoogleDataType
     let samples: [LocalSample]
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
+    // `TodayMetricRowView` geometry and `ThemedBadge` pills in place of the
+    // orange/purple SF Symbol badges. Badge *strings* are untouched:
+    // `DashboardUITests` asserts on their exact labels.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text(displayName)
-                    .font(.headline)
+                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).name")
                 Spacer()
                 Text(itemCountText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.font(15, .regular, relativeTo: .subheadline))
+                    .foregroundStyle(Theme.secondary)
+                    .monospacedDigit()
                     .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).itemCount")
             }
             HStack(spacing: 6) {
@@ -68,31 +74,41 @@ struct LocalOnlyTypeRow: View {
                 // only the `Text` -- carrying the one identifier -- is
                 // queryable, and its `.label` is exactly the badge's display
                 // string.
-                HStack(spacing: 4) {
-                    Image(systemName: "questionmark.circle")
-                        .accessibilityHidden(true)
-                    Text("Not in Apple Health")
-                        .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).badge")
-                }
-                .font(.caption.bold())
-                .foregroundStyle(.orange)
+                // Each badge is now a single `Text` inside `ThemedBadge`,
+                // which resolves the `Label`/icon+text hazard this row
+                // previously worked around by hand: with no decorative
+                // `Image` in the badge at all, there is exactly one
+                // accessibility element per identifier by construction, so
+                // an identifier query can no longer resolve to two matches.
+                // (The original note is kept below for the general rule.)
+                //
+                // Deliberately not SwiftUI's `Label`, whose icon and text
+                // render as two *separate* accessibility elements: a real
+                // `xcodebuild test` run against the simulator showed a
+                // single `.accessibilityIdentifier` applied to a `Label`
+                // gets reported on *both* underlying elements, so an
+                // identifier query resolves to two matches instead of one --
+                // the same "container identifier cascades to children"
+                // family of pitfall WP-10's progress.md note documented for
+                // plain `VStack`s.
+                ThemedBadge(
+                    text: "Not in Apple Health",
+                    accessibilityIdentifier: "dashboard.localRow.\(type.rawValue).badge"
+                )
                 if isClinicalType(type) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "lock.shield")
-                            .accessibilityHidden(true)
-                        Text("Clinical · excluded from AI")
-                            .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).clinicalBadge")
-                    }
-                    .font(.caption.bold())
-                    .foregroundStyle(.purple)
+                    ThemedBadge(
+                        text: "Clinical · excluded from AI",
+                        style: .accent,
+                        accessibilityIdentifier: "dashboard.localRow.\(type.rawValue).clinicalBadge"
+                    )
                 }
             }
             Text(lastSampleText)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .font(Theme.font(11, .regular, relativeTo: .caption2))
+                .foregroundStyle(Theme.tertiary)
                 .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).lastSample")
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 16).padding(.vertical, 13)
     }
 
     private var displayName: String {

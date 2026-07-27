@@ -10,34 +10,40 @@ import SwiftUI
 struct ActivityRow: View {
     let entry: ActivityEntry
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation,
+    // matching `TodayMetricRowView`'s geometry. Copy, structure and every
+    // accessibility identifier are unchanged; the icon moves from the system
+    // tint to the palette's single accent.
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(spacing: 8) {
                 Image(systemName: iconName)
-                    .foregroundStyle(.tint)
+                    .font(.system(size: 14, weight: .light))
+                    .foregroundStyle(Theme.accent)
                     .accessibilityIdentifier("activities.row.\(entry.id).icon")
                 Text(entry.title)
-                    .font(.headline)
+                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("activities.row.\(entry.id).title")
                 Spacer()
                 Text(entry.start, style: .time)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                    .foregroundStyle(Theme.tertiary)
             }
             Text("\(durationText) \u{00B7} \(entry.sourceLabel)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(Theme.font(12, .regular, relativeTo: .caption))
+                .foregroundStyle(Theme.secondary)
                 .accessibilityIdentifier("activities.row.\(entry.id).detail")
             // D13.2: the linked Fitbit session's fields, inline as a
             // supplement under the watch workout -- never a second entry.
             if let supplement = entry.supplement {
                 Text("+ \(supplementText(supplement))")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                    .foregroundStyle(Theme.tertiary)
                     .accessibilityIdentifier("activities.row.\(entry.id).supplement")
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 16).padding(.vertical, 13)
     }
 
     private var iconName: String {

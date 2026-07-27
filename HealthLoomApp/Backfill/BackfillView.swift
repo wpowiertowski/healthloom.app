@@ -36,19 +36,26 @@ struct BackfillView: View {
     @State private var isPaused = false
     @State private var horizon: BackfillHorizon = .defaultHorizon
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation.
+    // Always pushed (from the Data dashboard), so it keeps the system
+    // navigation bar for back/swipe -- see ThemedChrome.swift.
     var body: some View {
-        List {
-            Section {
+        ThemedScreen(title: "Historical Backfill", chrome: .pushed) {
+            ThemedPanel {
                 horizonPicker
+                ThemedRowDivider()
                 pauseResumeButton
             }
-            Section("Backfill Progress") {
-                ForEach(statuses, id: \.dataType) { status in
+            .padding(.top, 18)
+
+            ThemedSectionHeader(title: "Backfill Progress")
+            ThemedPanel {
+                ForEach(Array(statuses.enumerated()), id: \.element.dataType) { index, status in
+                    if index > 0 { ThemedRowDivider() }
                     BackfillTypeRow(status: status)
                 }
             }
         }
-        .navigationTitle("Historical Backfill")
         .task {
             await appEnvironment.backfillCoordinator.start()
             await refresh()
@@ -60,15 +67,29 @@ struct BackfillView: View {
     }
 
     private var horizonPicker: some View {
-        Picker(
-            "Import history back to",
-            selection: Binding(get: { horizon }, set: { changeHorizon(to: $0) })
-        ) {
-            Text("30 days").tag(BackfillHorizon.days30)
-            Text("90 days").tag(BackfillHorizon.days90)
-            Text("1 year").tag(BackfillHorizon.year1)
-            Text("All available history").tag(BackfillHorizon.all)
+        // Label on the left, value on the right -- the panel-row shape every
+        // other themed row uses. A bare `Picker` renders its menu centered
+        // and drops the label entirely inside a plain `VStack` (it only gets
+        // the leading-label treatment for free inside a `List`), so the label
+        // is drawn explicitly and the picker's own is hidden.
+        HStack {
+            Text("Import history back to")
+                .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                .foregroundStyle(Theme.ink)
+            Spacer(minLength: 12)
+            Picker(
+                "Import history back to",
+                selection: Binding(get: { horizon }, set: { changeHorizon(to: $0) })
+            ) {
+                Text("30 days").tag(BackfillHorizon.days30)
+                Text("90 days").tag(BackfillHorizon.days90)
+                Text("1 year").tag(BackfillHorizon.year1)
+                Text("All available history").tag(BackfillHorizon.all)
+            }
+            .labelsHidden()
+            .tint(Theme.accentDeep)
         }
+        .padding(.horizontal, 16).padding(.vertical, 10)
         .accessibilityIdentifier("backfill.horizonPicker")
     }
 
@@ -76,11 +97,18 @@ struct BackfillView: View {
         Button {
             togglePause()
         } label: {
-            Label(
-                isPaused ? "Resume Backfill" : "Pause Backfill",
-                systemImage: isPaused ? "play.fill" : "pause.fill"
-            )
+            HStack(spacing: 8) {
+                Image(systemName: isPaused ? "play" : "pause")
+                    .font(.system(size: 14, weight: .light))
+                Text(isPaused ? "Resume Backfill" : "Pause Backfill")
+                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                Spacer()
+            }
+            .foregroundStyle(Theme.accentDeep)
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("backfill.pauseResumeButton")
     }
 

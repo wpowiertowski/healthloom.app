@@ -79,6 +79,11 @@ struct HomeView: View {
             HomeTabBar(selection: $selection)
         }
         .background(Theme.canvas.ignoresSafeArea())
+        // Applied at the shell so every pushed screen's system navigation
+        // chrome (the back chevron in particular) picks up the palette's
+        // accent instead of the stock blue -- a `.tint` inside an individual
+        // screen's body does not reach the navigation bar hosting it.
+        .tint(Theme.accent)
     }
 }
 
