@@ -92,6 +92,33 @@ struct ThemedScreen<Actions: View, Content: View>: View {
 
     private var stack: some View {
         VStack(alignment: .leading, spacing: 0) {
+            ThemedHeader(title: title, topPadding: chrome == .tabRoot ? 12 : 4) {
+                actions
+            }
+
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 22)
+        .padding(.bottom, 24)
+    }
+}
+
+/// The title + actions row and its `Theme.gray` hairline, on its own so
+/// screens that can't be a `ThemedScreen` still get the identical header.
+/// `TodayMetricsEditor` uses it directly: that sheet's body is a `List`
+/// (its `EditMode` reorder handles are the whole point of the screen), which
+/// must keep its own row insets rather than sit inside `ThemedScreen`'s
+/// 22 pt gutter -- so it applies the gutter to this header alone.
+///
+/// Callers supply their own horizontal padding; this view adds none.
+struct ThemedHeader<Actions: View>: View {
+    let title: String
+    var topPadding: CGFloat = 12
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title)
                     .font(Theme.font(26, .light, relativeTo: .title))
@@ -99,16 +126,11 @@ struct ThemedScreen<Actions: View, Content: View>: View {
                 Spacer(minLength: 12)
                 HStack(spacing: 18) { actions }
             }
-            .padding(.top, chrome == .tabRoot ? 12 : 4)
+            .padding(.top, topPadding)
 
             Rectangle().fill(Theme.gray).frame(height: 1)
                 .padding(.top, 14)
-
-            content
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 22)
-        .padding(.bottom, 24)
     }
 }
 

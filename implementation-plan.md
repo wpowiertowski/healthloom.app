@@ -19,14 +19,29 @@ dedicated `xcode-27` preview runner image (actions/runner-images#14196), so the 
 runs `xcodebuild build test` there unconditionally (the skip guard is gone); the
 per-package `swift test` jobs stay on `macos-26` with Xcode 26.x (they build for the
 macOS host, so 6.2 keeps them green without the preview image). Local development uses
-the Xcode 27 beta (Swift 6.4 compiler). The XCUITest suite is temporarily skipped in
-CI (`-skip-testing:HealthLoomUITests`): the preview image's iOS 27 beta 3 runtime does
-not deliver XCUITest-synthesized taps to the out-of-process HealthKit permission sheet
-(com.apple.HealthPrivacyService), so the onboarding test cannot pass there (diagnosis
-in PR #7); UI tests still build in CI and still run locally via `make test`. Remaining
-WP-38 launch-checklist work: flip manifests to 6.4, re-enable UI tests in CI once a
-newer beta lands on the runner image, and move the app job from the preview image back
-to the regular macOS image once Xcode 27 goes GA there.
+the Xcode 27 beta (Swift 6.4 compiler).
+
+**HealthKit-sheet test quarantined; the rest of the XCUITest suite is back in CI
+(2026-07).** The preview image's iOS 27 beta 3 runtime does not deliver
+XCUITest-synthesized taps to the out-of-process HealthKit permission sheet
+(com.apple.HealthPrivacyService), so `OnboardingUITests` cannot pass there (diagnosis in
+PR #7). The same limitation made it fail on a dev Mac, and since `make test` is this
+repo's pre-commit hook (`.git/hooks/pre-commit`), that left the gate permanently red and
+every commit needing `--no-verify`.
+
+That test now self-skips via `XCTSkipUnless`, so it reports as *skipped* rather than
+failing and the reason travels with the test. Re-run it on demand with
+`TEST_RUNNER_HEALTHLOOM_RUN_HEALTHKIT_SHEET_TEST=1 xcodebuild test …` (verified: the
+variable reaches the runner and the test really does execute); delete the skip once a
+newer beta makes it pass. Because it self-skips, CI's blanket
+`-skip-testing:HealthLoomUITests` is gone and the other four UI tests (Dashboard x2,
+Activities, Today) now run on the runner. No narrowed `-skip-testing` replaced it on
+purpose: a second mechanism skipping the same test would hand a green CI to whoever
+eventually deletes the `XCTSkip`, without the test ever having run.
+
+Remaining WP-38 launch-checklist work: flip manifests to 6.4, re-enable UI tests in CI
+once a newer beta lands on the runner image, and move the app job from the preview image
+back to the regular macOS image once Xcode 27 goes GA there.
 
 ---
 
