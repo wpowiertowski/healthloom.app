@@ -18,6 +18,11 @@ import SwiftData
 import SwiftUI
 
 struct ActivitiesView: View {
+    /// This screen is reachable both as a tab root (`HomeView`) and pushed
+    /// from the Data dashboard's "Activities" row, which need different
+    /// navigation chrome -- see ThemedChrome.swift's "Navigation chrome".
+    var chrome: ScreenChrome = .tabRoot
+
     @Query(sort: \LocalSample.start, order: .reverse) private var localSamples: [LocalSample]
     @State private var workouts: [WorkoutSummary] = []
     @State private var hasLoaded = false
@@ -30,26 +35,34 @@ struct ActivitiesView: View {
         return ActivityConsolidator.consolidate(workouts: workouts, supplements: supplements)
     }
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
+    // day groups become tracked section headers over surface panels. Data
+    // flow, copy and accessibility identifiers are unchanged.
     var body: some View {
-        List {
+        ThemedScreen(title: "Activities", chrome: chrome) {
             if entries.isEmpty && hasLoaded {
-                Section {
-                    Text("No activities yet. Workouts recorded by your Apple Watch and activities synced from your Fitbit will appear here.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("activities.empty")
-                }
+                Text("No activities yet. Workouts recorded by your Apple Watch and activities synced from your Fitbit will appear here.")
+                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .foregroundStyle(Theme.secondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 24)
+                    .accessibilityIdentifier("activities.empty")
             } else {
                 ForEach(ActivityConsolidator.groupedByDay(entries), id: \.day) { group in
-                    Section(group.day.formatted(date: .abbreviated, time: .omitted)) {
-                        ForEach(group.entries) { entry in
+                    ThemedSectionHeader(
+                        title: group.day.formatted(date: .abbreviated, time: .omitted)
+                    )
+                    ThemedPanel {
+                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 { ThemedRowDivider() }
                             ActivityRow(entry: entry)
                         }
                     }
                 }
             }
         }
-        .navigationTitle("Activities")
         .task {
             workouts = await provider.recentWorkouts()
             hasLoaded = true

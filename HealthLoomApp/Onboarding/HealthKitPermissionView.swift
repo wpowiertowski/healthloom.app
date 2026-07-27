@@ -28,46 +28,32 @@ struct HealthKitPermissionView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "heart.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.red)
-            Text("Connect Apple Health")
-                .font(.title.bold())
-            Text("HealthLoom needs permission to write your steps, heart rate, weight, and sleep data to Apple Health. It also asks to read your workouts and heart rate so activities your Apple Watch already recorded aren't double-counted when your Fitbit data arrives.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+        OnboardingScaffold(
+            step: .healthKit,
+            symbol: "heart.text.square.fill",
+            title: "Connect Apple Health",
+            message: "HealthLoom needs permission to write your steps, heart rate, weight, and sleep data to Apple Health. It also asks to read your workouts and heart rate so activities your Apple Watch already recorded aren't double-counted when your Fitbit data arrives."
+        ) {
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-                    .accessibilityIdentifier("onboarding.healthkit.error")
+                OnboardingErrorPanel(
+                    message: errorMessage,
+                    accessibilityIdentifier: "onboarding.healthkit.error"
+                )
+                .padding(.top, 20)
             }
-            Spacer()
-            Button {
-                requestAccess()
-            } label: {
-                if isRequesting {
-                    ProgressView()
-                } else {
-                    Text("Allow Access")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+        } actions: {
+            OnboardingPrimaryButton(
+                title: "Allow Access",
+                isLoading: isRequesting,
+                accessibilityIdentifier: "onboarding.healthkit.allow",
+                action: requestAccess
+            )
             .disabled(isRequesting)
-            .accessibilityIdentifier("onboarding.healthkit.allow")
-            Spacer().frame(height: 16)
         }
-        .padding()
         // No container-level identifier -- see WelcomeView.swift's note:
         // it would override the more specific `onboarding.healthkit.allow`/
-        // `.error` identifiers set on the children below.
+        // `.error` identifiers, which are passed into the themed components
+        // above and applied directly to their own leaf views.
         .task {
             // Gate up front (WP-06's `isAvailable`, `HKHealthStore
             // .isHealthDataAvailable()`) so a device that can never grant

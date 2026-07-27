@@ -35,34 +35,46 @@ struct SyncTypeRow: View {
     let type: GoogleDataType
     let state: SyncState?
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
+    // `TodayMetricRowView`'s geometry, a rust/gray status dot instead of the
+    // green/red SF Symbol, and the 2 pt rust attention bar on errored rows.
+    // Copy, structure and every accessibility identifier are unchanged.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: statusIcon)
-                    .foregroundStyle(statusColor)
-                    .accessibilityIdentifier("dashboard.row.\(type.rawValue).statusIcon")
-                Text(displayName)
-                    .font(.headline)
-                    .accessibilityIdentifier("dashboard.row.\(type.rawValue).name")
-                Spacer()
-                Text(itemCountText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("dashboard.row.\(type.rawValue).itemCount")
+        ZStack(alignment: .leading) {
+            if isErrored { ThemedAttentionBar() }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(statusDotColor)
+                        .frame(width: 6, height: 6)
+                        .accessibilityIdentifier("dashboard.row.\(type.rawValue).statusIcon")
+                    Text(displayName)
+                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .foregroundStyle(Theme.ink)
+                        .accessibilityIdentifier("dashboard.row.\(type.rawValue).name")
+                    Spacer()
+                    Text(itemCountText)
+                        .font(Theme.font(15, .regular, relativeTo: .subheadline))
+                        .foregroundStyle(Theme.secondary)
+                        .monospacedDigit()
+                        .accessibilityIdentifier("dashboard.row.\(type.rawValue).itemCount")
+                }
+                Text(lastSyncedText)
+                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                    .foregroundStyle(Theme.tertiary)
+                    .accessibilityIdentifier("dashboard.row.\(type.rawValue).lastSynced")
+                if let error = state?.lastError, isErrored {
+                    ThemedErrorText(
+                        message: error,
+                        accessibilityIdentifier: "dashboard.row.\(type.rawValue).error"
+                    )
+                }
             }
-            Text(lastSyncedText)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("dashboard.row.\(type.rawValue).lastSynced")
-            if let error = state?.lastError, state?.lastStatus == "error" {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("dashboard.row.\(type.rawValue).error")
-            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
         }
-        .padding(.vertical, 4)
     }
+
+    private var isErrored: Bool { state?.lastStatus == "error" }
 
     private var displayName: String {
         switch type {
@@ -74,24 +86,16 @@ struct SyncTypeRow: View {
         }
     }
 
-    private var statusIcon: String {
-        switch state?.lastStatus {
-        case "ok": return "checkmark.circle.fill"
-        case "error": return "exclamationmark.triangle.fill"
-        default: return "circle.dashed"
-        }
-    }
-
     private var itemCountText: String {
         String(state?.itemCount ?? 0)
     }
 
-    private var statusColor: Color {
-        switch state?.lastStatus {
-        case "ok": return .green
-        case "error": return .red
-        default: return .secondary
-        }
+    /// Rust for a healthy row, gray otherwise -- `TodayHeader`'s own
+    /// freshness-dot vocabulary. An errored row is additionally marked by the
+    /// 2 pt bar and `Theme.accentDeep` error text, so the state is never
+    /// carried by dot color alone. See ThemedChrome.swift's "Status colors".
+    private var statusDotColor: Color {
+        state?.lastStatus == "ok" ? Theme.accent : Theme.gray
     }
 
     private var lastSyncedText: String {
@@ -103,9 +107,13 @@ struct SyncTypeRow: View {
 }
 
 #Preview {
-    List {
+    ThemedPanel {
         SyncTypeRow(type: .steps, state: SyncState(dataType: "steps", lastSyncedAt: Date(), lastStatus: "ok", itemCount: 4213))
+        ThemedRowDivider()
         SyncTypeRow(type: .weight, state: nil)
+        ThemedRowDivider()
         SyncTypeRow(type: .sleep, state: SyncState(dataType: "sleep", lastStatus: "error", lastError: "Google 429: rate limited"))
     }
+    .padding(22)
+    .background(Theme.canvas)
 }

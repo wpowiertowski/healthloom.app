@@ -32,37 +32,46 @@ struct SyncLogView: View {
         SyncLogTextExporter.export(entries)
     }
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation.
+    // Always pushed (from Settings), so it keeps the system navigation bar
+    // for back/swipe; the toolbar's ShareLink moves into the themed header,
+    // since a tab-root-style header replaces the bar's own content.
     var body: some View {
-        List {
-            Section {
-                Text("Recent sync activity, most recent first. Only counts, types, and timestamps are kept here -- never your health data or account credentials.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+        ThemedScreen(title: "Sync Log", chrome: .pushed) {
+            ShareLink(item: exportText, preview: SharePreview("HealthLoom Sync Log")) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 18, weight: .light))
+                    .foregroundStyle(entries.isEmpty ? Theme.tertiary : Theme.ink)
+                    .frame(width: 24, height: 24)
             }
-            .accessibilityIdentifier("synclog.disclaimer")
+            .accessibilityLabel("Export")
+            .accessibilityIdentifier("synclog.export")
+            .disabled(entries.isEmpty)
+        } content: {
+            Text("Recent sync activity, most recent first. Only counts, types, and timestamps are kept here -- never your health data or account credentials.")
+                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 18)
+                .accessibilityIdentifier("synclog.disclaimer")
 
             if entries.isEmpty {
-                Section {
-                    Text(hasLoadedOnce ? "No sync runs recorded yet." : "Loading…")
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityIdentifier("synclog.empty")
+                Text(hasLoadedOnce ? "No sync runs recorded yet." : "Loading…")
+                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .foregroundStyle(Theme.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 24)
+                    .accessibilityIdentifier("synclog.empty")
             } else {
-                Section("Recent Runs") {
-                    ForEach(entries) { entry in
+                ThemedSectionHeader(title: "Recent Runs")
+                ThemedPanel {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 { ThemedRowDivider() }
                         SyncLogRow(entry: entry)
                     }
                 }
-            }
-        }
-        .navigationTitle("Sync Log")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                ShareLink(item: exportText, preview: SharePreview("HealthLoom Sync Log")) {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityIdentifier("synclog.export")
-                .disabled(entries.isEmpty)
             }
         }
         .task {

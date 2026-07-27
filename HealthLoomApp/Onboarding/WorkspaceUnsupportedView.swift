@@ -13,29 +13,23 @@ struct WorkspaceUnsupportedView: View {
     var onTryDifferentAccount: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.orange)
-            Text("Personal Accounts Only")
-                .font(.title.bold())
-            Text("The account you signed in with is a Google Workspace (work or school) account. Google's Health API only supports personal Google accounts. Please sign in with a personal account instead.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-            Spacer()
-            Button("Try a Different Account", action: onTryDifferentAccount)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .accessibilityIdentifier("onboarding.workspace.retry")
-            Spacer().frame(height: 16)
-        }
-        .padding()
+        // No `step:` -- this is a branch off step 3, not a step of its own.
+        OnboardingScaffold(
+            symbol: "exclamationmark.triangle",
+            title: "Personal Accounts Only",
+            message: "The account you signed in with is a Google Workspace (work or school) account. Google's Health API only supports personal Google accounts. Please sign in with a personal account instead.",
+            actions: {
+                OnboardingSecondaryButton(
+                    title: "Try a Different Account",
+                    accessibilityIdentifier: "onboarding.workspace.retry",
+                    action: onTryDifferentAccount
+                )
+            }
+        )
         // No container-level identifier -- see WelcomeView.swift's note: it
         // would override the more specific `onboarding.workspace.retry`
-        // identifier set on the button above.
+        // identifier, which is passed into the themed button above and
+        // applied directly to its own `Button`.
     }
 }
 

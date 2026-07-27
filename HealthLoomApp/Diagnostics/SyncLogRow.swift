@@ -20,42 +20,52 @@ import SyncKit
 struct SyncLogRow: View {
     let entry: SyncLogEntry
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
+    // rust/gray status dot instead of the green/red SF Symbol, plus the 2 pt
+    // rust attention bar on errored rows. Copy and identifiers unchanged.
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: statusIcon)
-                    .foregroundStyle(statusColor)
-                    .accessibilityIdentifier("synclog.row.\(entry.id).statusIcon")
-                Text(displayName)
-                    .font(.headline)
-                    .accessibilityIdentifier("synclog.row.\(entry.id).name")
-                Spacer()
-                Text(entry.timestamp, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("synclog.row.\(entry.id).timestamp")
+        ZStack(alignment: .leading) {
+            if entry.status == .error { ThemedAttentionBar() }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(entry.status == .ok ? Theme.accent : Theme.gray)
+                        .frame(width: 6, height: 6)
+                        .accessibilityIdentifier("synclog.row.\(entry.id).statusIcon")
+                    Text(displayName)
+                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .foregroundStyle(Theme.ink)
+                        .accessibilityIdentifier("synclog.row.\(entry.id).name")
+                    Spacer()
+                    Text(entry.timestamp, style: .relative)
+                        .font(Theme.font(11, .regular, relativeTo: .caption2))
+                        .foregroundStyle(Theme.tertiary)
+                        .accessibilityIdentifier("synclog.row.\(entry.id).timestamp")
+                }
+                Text("\(entry.itemCount) item\(entry.itemCount == 1 ? "" : "s")")
+                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .foregroundStyle(Theme.secondary)
+                    .accessibilityIdentifier("synclog.row.\(entry.id).count")
+                // WP-12b: watch-priority suppression bookkeeping (architecture
+                // .md D13.3 / test-plan.md §2.3 -- "deferred to Apple Watch").
+                // Only rendered when the run actually deferred something.
+                // Deliberately not `Label`: see LocalOnlyTypeRow.swift's note
+                // on `Label` reporting one identifier on two elements.
+                if let suppressedCount = entry.suppressedCount, suppressedCount > 0 {
+                    Text("\(suppressedCount) deferred to Apple Watch")
+                        .font(Theme.font(11, .regular, relativeTo: .caption2))
+                        .foregroundStyle(Theme.tertiary)
+                        .accessibilityIdentifier("synclog.row.\(entry.id).suppressed")
+                }
+                if let errorMessage = entry.errorMessage {
+                    ThemedErrorText(
+                        message: errorMessage,
+                        accessibilityIdentifier: "synclog.row.\(entry.id).error"
+                    )
+                }
             }
-            Text("\(entry.itemCount) item\(entry.itemCount == 1 ? "" : "s")")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("synclog.row.\(entry.id).count")
-            // WP-12b: watch-priority suppression bookkeeping (architecture.md
-            // D13.3 / test-plan.md §2.3 -- "deferred to Apple Watch"). Only
-            // rendered when the run actually deferred something.
-            if let suppressedCount = entry.suppressedCount, suppressedCount > 0 {
-                Label("\(suppressedCount) deferred to Apple Watch", systemImage: "applewatch")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("synclog.row.\(entry.id).suppressed")
-            }
-            if let errorMessage = entry.errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("synclog.row.\(entry.id).error")
-            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
         }
-        .padding(.vertical, 4)
     }
 
     private var displayName: String {
@@ -65,19 +75,6 @@ struct SyncLogRow: View {
             .joined(separator: " ")
     }
 
-    private var statusIcon: String {
-        switch entry.status {
-        case .ok: return "checkmark.circle.fill"
-        case .error: return "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var statusColor: Color {
-        switch entry.status {
-        case .ok: return .green
-        case .error: return .red
-        }
-    }
 }
 
 #Preview {

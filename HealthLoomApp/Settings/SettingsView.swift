@@ -37,6 +37,10 @@ import GoogleHealthClient
 import SwiftUI
 
 struct SettingsView: View {
+    /// Reachable both as a tab root (`HomeView`) and pushed from the Data
+    /// dashboard's gear -- see ThemedChrome.swift's "Navigation chrome".
+    var chrome: ScreenChrome = .tabRoot
+
     @Environment(AppEnvironment.self) private var appEnvironment
     @State private var preferences = SyncPreferences()
     // WP-12b: "Prefer Apple Watch during workouts" (architecture.md D13.5).
@@ -52,72 +56,90 @@ struct SettingsView: View {
             .compactMap { scope in grouped[scope].map { (scope, $0) } }
     }
 
+    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
+    // `List` sections become tracked headers over surface panels, the section
+    // footer becomes a rust-tint callout, and toggles carry the accent tint
+    // instead of the system green. Behavior, copy and every accessibility
+    // identifier are unchanged.
     var body: some View {
-        List {
-            Section {
-                Text("Turn off a type to stop syncing it. Data already written to Apple Health or saved on-device is not deleted -- that's a separate step in a future release.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityIdentifier("settings.disclaimer")
+        ThemedScreen(title: "Sync Settings", chrome: chrome) {
+            Text("Turn off a type to stop syncing it. Data already written to Apple Health or saved on-device is not deleted -- that's a separate step in a future release.")
+                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 18)
+                .accessibilityIdentifier("settings.disclaimer")
 
-            Section {
-                NavigationLink("Sync Log", destination: SyncLogView())
-                    .accessibilityIdentifier("settings.synclog.link")
+            ThemedPanel {
+                ThemedNavRow(
+                    title: "Sync Log",
+                    accessibilityIdentifier: "settings.synclog.link"
+                ) {
+                    SyncLogView()
+                }
             }
+            .padding(.top, 20)
 
             // WP-12b (architecture.md D13.5): watch-priority conflict
-            // resolution toggle, default ON. The footer copy documents the
+            // resolution toggle, default ON. The callout copy documents the
             // one asymmetry D13.5 mandates: OFF is forward-only (previously
             // skipped data isn't restored), ON cleans up duplicates on the
             // next sync (D13.4's retroactive pass).
-            Section {
-                Toggle(isOn: Binding(
-                    get: { watchPriority.isEnabled },
-                    set: { watchPriority.setEnabled($0) }
-                )) {
-                    Text("Prefer Apple Watch during workouts")
-                }
-                .accessibilityIdentifier("settings.watchPriority.toggle")
-            } footer: {
-                Text("When on, activities your Apple Watch recorded win: overlapping Fitbit workouts and their heart rate, steps, energy, and distance aren't duplicated into Apple Health -- the Fitbit session is kept in HealthLoom as a supplement instead. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
+            ThemedPanel {
+                ThemedToggleRow(
+                    title: "Prefer Apple Watch during workouts",
+                    accessibilityIdentifier: "settings.watchPriority.toggle",
+                    isOn: Binding(
+                        get: { watchPriority.isEnabled },
+                        set: { watchPriority.setEnabled($0) }
+                    )
+                )
             }
+            .padding(.top, 20)
+
+            Text("When on, activities your Apple Watch recorded win: overlapping Fitbit workouts and their heart rate, steps, energy, and distance aren't duplicated into Apple Health -- the Fitbit session is kept in HealthLoom as a supplement instead. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
+                .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                .foregroundStyle(Theme.tertiary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
 
             ForEach(groupedByScope, id: \.scope) { group in
-                Section(scopeDisplayName(group.scope)) {
-                    ForEach(group.types, id: \.self) { type in
+                ThemedSectionHeader(title: scopeDisplayName(group.scope))
+                ThemedPanel {
+                    ForEach(Array(group.types.enumerated()), id: \.element) { index, type in
+                        if index > 0 { ThemedRowDivider() }
                         row(for: type)
                     }
                 }
             }
         }
-        .navigationTitle("Sync Settings")
     }
 
     private func row(for type: GoogleDataType) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(isOn: Binding(
-                get: { preferences.isEnabled(type) },
-                set: { toggle(type: type, isOn: $0) }
-            )) {
-                HStack(spacing: 6) {
-                    Text(displayName(type))
-                    if pendingTypes.contains(type) {
-                        ProgressView()
-                            .controlSize(.mini)
-                    }
-                }
-            }
-            .accessibilityIdentifier("settings.toggle.\(type.rawValue)")
+        VStack(alignment: .leading, spacing: 0) {
+            ThemedToggleRow(
+                title: displayName(type),
+                isBusy: pendingTypes.contains(type),
+                accessibilityIdentifier: "settings.toggle.\(type.rawValue)",
+                isOn: Binding(
+                    get: { preferences.isEnabled(type) },
+                    set: { toggle(type: type, isOn: $0) }
+                )
+            )
 
             if let message = scopeErrors[type] {
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("settings.error.\(type.rawValue)")
+                ThemedErrorText(
+                    message: message,
+                    accessibilityIdentifier: "settings.error.\(type.rawValue)"
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
             }
         }
-        .padding(.vertical, 2)
     }
 
     private func toggle(type: GoogleDataType, isOn: Bool) {
