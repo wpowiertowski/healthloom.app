@@ -163,10 +163,7 @@ struct SettingsView: View {
     }
 
     private func displayName(_ type: GoogleDataType) -> String {
-        type.rawValue
-            .split(separator: "_")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
+        type.displayName
     }
 
     private func scopeDisplayName(_ scope: GoogleDataType.Scope) -> String {

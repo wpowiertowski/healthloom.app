@@ -30,7 +30,7 @@ non-editable safety suffix keeps clinical topics pointed at an actual clinician.
 
 ## Features
 
-Shipped (P0 + P1 — the sync pipeline):
+Shipped (P0 + P1 — the sync pipeline — plus WP-33's Today view, pulled forward from P4):
 
 - **Google Health OAuth (PKCE)** — `ASWebAuthenticationSession` consent flow, Keychain-backed token storage, single-flight refresh on 401
 - **Typed Google Health v4 client** — `reconcile`/`dailyRollup` REST calls against `health.googleapis.com`, paged, with exponential backoff + jitter on 429/5xx
@@ -40,12 +40,14 @@ Shipped (P0 + P1 — the sync pipeline):
 - **Historical backfill** — chunked, checkpointed, resumable walk-back (30 d / 90 d / 1 y / all) independent of incremental sync
 - **Background sync** — `BGAppRefreshTask`-driven, with a diagnostics log and manual sync from Settings
 - **Non-writable types surfaced in-app** — ECG, Active Zone Minutes, Irregular Rhythm Notifications stored locally and badged "not in Apple Health"
+- **Apple Watch-priority conflict resolution (D13)** — session- and stream-level dedupe against watch workout coverage windows, retroactive cleanup on ordering hazards, consolidated **Activities view**, and a "Prefer Apple Watch during workouts" Settings toggle
 - **Onboarding + dashboard** — welcome → Google consent → HealthKit permission → first sync, then a per-type sync status dashboard
+- **Today view (Yacht club design)** — readiness tick-scale hero, reorderable metric rows, sync-status header; the readiness score and coach panel render explicit pending states until WP-23/34 land
+- **KnowledgeStore (P2, WP-19)** — derives a human-readable `KnowledgeProfile` from HealthKit + `LocalSample` (steps, resting HR/HRV trend, sleep duration/stage split, workouts merged with linked Fitbit supplements, Active Zone Minutes, presence-only clinical fields), with user-correction pinning and tool-facing summary text — not yet wired into any UI
 
-Architected, not yet built (see [Open Questions](#status--roadmap) below):
+Architected, not yet built (see [Status & Roadmap](#status--roadmap) below):
 
-- Apple Watch-priority conflict resolution during overlapping workouts (D13)
-- On-device AI coach (`CoachKit` is currently a placeholder package)
+- The rest of the on-device AI coach — `ContextAssembler`, `PromptManager`/`SafetyLayer`, `ReadinessEngine`, chat UI (`CoachKit` has real content now, WP-19, but no chat surface yet)
 - Private Cloud Compute / Claude / Gemini model tiers, prompt editor, chat UI
 
 ## Technology Stack
@@ -92,10 +94,14 @@ lives in [architecture.md](architecture.md).
 ```text
 HealthLoomApp/           SwiftUI app target — screens, DI wiring, BGTask registration
 ├── Onboarding/          Welcome → Google consent → HealthKit permission → first sync
+├── Today/               Yacht club Today view — readiness hero, reorderable metric rows
+├── Activities/          Consolidated watch/Fitbit activity view (D13)
 ├── Dashboard/           Per-type sync status
 ├── Backfill/            Historical backfill range picker + per-type progress
-├── Settings/            Sync preferences, incremental consent scopes
-└── Diagnostics/         Sync log viewer
+├── Settings/            Sync preferences, incremental consent scopes, watch-priority toggle
+├── Diagnostics/         Sync log viewer
+├── DI/                  App-wide dependency wiring
+└── Shared/              Shared chrome/theme used across screens
 Packages/                Local Swift packages, dependency-ordered (architecture.md §2)
 ├── CoreModel/            SwiftData models + shared value types — no I/O
 ├── Secrets/              Keychain wrapper (actor KeychainStore)
@@ -103,7 +109,7 @@ Packages/                Local Swift packages, dependency-ordered (architecture.
 ├── SyncKit/              Pull → map → resolve conflicts → write pipeline + scheduling
 └── CoachKit/              Provider abstraction, prompt/knowledge/context layers (placeholder)
 HealthLoomTests/          Unit tests hosted in the app target (@testable import HealthLoom)
-HealthLoomUITests/        XCUITest — onboarding + dashboard flows
+HealthLoomUITests/        XCUITest — onboarding, dashboard, activities, and today flows
 Design/                  Yacht club design system reference (HTML + SwiftUI mockups)
 ```
 
@@ -124,12 +130,18 @@ xcodebuild test -project HealthLoom.xcodeproj \
 
 | Package | Tests | Coverage |
 | --- | --- | --- |
-| CoreModel | 15 | SwiftData model relationships, defaults, Codable value types |
+| CoreModel | 18 | SwiftData model relationships, defaults, Codable value types, shared exercise-payload decoding |
 | Secrets | 14 | Keychain read/write/delete round-trip, accessibility attribute, missing-item handling |
 | GoogleHealthClient | 35 | OAuth PKCE flow, token refresh, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
-| SyncKit | 228 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction |
-| CoachKit | 1 | Placeholder — provider abstraction not yet implemented |
-| **HealthLoomUITests** | **2** | **XCUITest: onboarding happy path, dashboard sync states** |
+| SyncKit | 260 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction, `WatchCoverageIndex`/`ConflictResolver` (D13) |
+| CoachKit | 52 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping |
+| HealthLoomTests | 43 | App-target unit tests — Today metrics/formatting, Activities consolidation, watch-priority preferences |
+| **HealthLoomUITests** | **5 (1 self-skipped)** | **XCUITest: onboarding (skips on this runner's HealthKit-sheet limitation), dashboard sync states, consolidated activities, Today edit mode** |
+
+Verified 2026-09-01 (most recently, after the round-2 code review fixes below): full
+`make test` (all package suites + `xcodebuild build test`) passes on both this repo's
+toolchains (Xcode 27 beta and, for the package matrix, Xcode 26.4.1) with zero warnings
+and zero failures.
 
 ## Requirements
 
@@ -144,16 +156,23 @@ xcodebuild test -project HealthLoom.xcodeproj \
 
 ## Status & Roadmap
 
-P0 (foundations + first vertical slice) and P1 (full sync) are implemented — see
-[progress.md](progress.md) for the per-work-package build log. Remaining phases, in
+P0 (foundations + first vertical slice), P1 (full sync, including WP-12b's watch-priority
+conflict resolution), and WP-33 (Today view, pulled forward from P4) are implemented —
+see [progress.md](progress.md) for the per-work-package build log. Remaining phases, in
 order, per [implementation-plan.md](implementation-plan.md):
 
-- **WP-12b** — Apple Watch-priority conflict resolution (architecture.md D13)
-- **P2** — on-device AI coach (`KnowledgeStore`, `ReadinessEngine`, chat UI)
+- **P2** — on-device AI coach: `KnowledgeStore` (WP-19) is implemented; `ContextAssembler`,
+  `PromptManager`/`SafetyLayer`, `ReadinessEngine`, and the chat UI are not started
 - **P3** — off-device model tiers (Private Cloud Compute / Claude / Gemini), consent +
   key management, coach evals on Apple's Evaluations framework
-- **P4** — product polish, notifications, export/deletion, Siri/Spotlight App Intents,
-  accessibility & launch checklist
+- **P4 remainder** — scheduled insights/notifications, export/deletion, optional
+  Siri/Spotlight App Intents, accessibility & localization pass, launch checklist
+
+**Outstanding human prerequisites (implementation-plan.md Phase P-1), not yet done:**
+a real Google Cloud OAuth client (P-1.3) — every sync-pipeline test so far runs against
+fixtures only, never a real account — plus the Google OAuth verification process (P-1.4)
+and the Private Cloud Compute entitlement application (P-1.5), both called out in the
+plan as launch long poles to start on day one.
 
 ## License
 

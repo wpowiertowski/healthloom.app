@@ -69,10 +69,7 @@ struct SyncLogRow: View {
     }
 
     private var displayName: String {
-        entry.dataType.rawValue
-            .split(separator: "_")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
+        entry.dataType.displayName
     }
 
 }
