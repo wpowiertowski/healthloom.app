@@ -44,11 +44,13 @@ Shipped (P0 + P1 — the sync pipeline — plus WP-33's Today view, pulled forwa
 - **Onboarding + dashboard** — welcome → Google consent → HealthKit permission → first sync, then a per-type sync status dashboard
 - **Today view (Yacht club design)** — readiness tick-scale hero, reorderable metric rows, sync-status header; the readiness score and coach panel render explicit pending states until WP-23/34 land
 - **KnowledgeStore (P2, WP-19)** — derives a human-readable `KnowledgeProfile` from HealthKit + `LocalSample` (steps, resting HR/HRV trend, sleep duration/stage split, workouts merged with linked Fitbit supplements, Active Zone Minutes, presence-only clinical fields), with user-correction pinning and tool-facing summary text — not yet wired into any UI
-- **ContextAssembler (P2, WP-20)** — builds the exact `HealthContext` for one coach turn from the `KnowledgeProfile` only (`excludedFromAI` filtering incl. clinical default-out, chars/4 token-budget trimming vitals > sleep > activity > history, every assembly persisted as a `ContextSnapshot` for the "What did the coach see?" trace) — no UI yet, first consumer is WP-23/25
+- **ContextAssembler (P2, WP-20, hardened in WP-21/22 review)** — builds the exact `HealthContext` for one coach turn from the `KnowledgeProfile` only (`excludedFromAI` filtering incl. clinical default-out, UTF-8-bytes/4 token-budget trimming with user corrections first then vitals > sleep > activity > history, system-prompt tokens reserved out of the budget, every assembly persisted as a `ContextSnapshot` with a hard 200-row retention cap (evicted rows null linked turns first, so no trace link dangles) for the "What did the coach see?" trace) — no UI yet, first consumer is WP-23/25
+- **PromptManager + SafetyLayer (P2, WP-21)** — user-editable base prompt + immutable safety suffix (non-medical disclaimer, no-diagnosis/no-ECG-AFib rule with clinician redirect — ⚠️ wording needs human review, see progress.md), append-only version history with value-snapshot returns — not yet wired into any UI
+- **AvailabilityGate + CoachSession (P2, WP-22)** — on-device availability states with user copy + fallback, `CoachSession` seam over `LanguageModelSession` (incremental-delta streaming, cancellation-safe, observable busy flag), single purpose-driven session factory (cached conversation, fresh one-shots) — first consumer is WP-25
 
 Architected, not yet built (see [Status & Roadmap](#status--roadmap) below):
 
-- The rest of the on-device AI coach — `PromptManager`/`SafetyLayer`, `ReadinessEngine`, chat UI (`CoachKit` has real content now, WP-19/20, but no chat surface yet)
+- The rest of the on-device AI coach — `ReadinessEngine`, chat UI (`CoachKit` has real content now, WP-19/20/21/22, but no chat surface yet)
 - Private Cloud Compute / Claude / Gemini model tiers, prompt editor, chat UI
 
 ## Technology Stack
@@ -135,7 +137,7 @@ xcodebuild test -project HealthLoom.xcodeproj \
 | Secrets | 14 | Keychain read/write/delete round-trip, accessibility attribute, missing-item handling |
 | GoogleHealthClient | 35 | OAuth PKCE flow, token refresh, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
 | SyncKit | 260 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction, `WatchCoverageIndex`/`ConflictResolver` (D13) |
-| CoachKit | 52 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping |
+| CoachKit | 113 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming |
 | HealthLoomTests | 43 | App-target unit tests — Today metrics/formatting, Activities consolidation, watch-priority preferences |
 | **HealthLoomUITests** | **5 (1 self-skipped)** | **XCUITest: onboarding (skips on this runner's HealthKit-sheet limitation), dashboard sync states, consolidated activities, Today edit mode** |
 
@@ -162,8 +164,7 @@ conflict resolution), and WP-33 (Today view, pulled forward from P4) are impleme
 see [progress.md](progress.md) for the per-work-package build log. Remaining phases, in
 order, per [implementation-plan.md](implementation-plan.md):
 
-- **P2** — on-device AI coach: `KnowledgeStore` (WP-19) and `ContextAssembler` (WP-20) are implemented; `PromptManager`/`SafetyLayer`,
-  `PromptManager`/`SafetyLayer`, `ReadinessEngine`, and the chat UI are not started
+- **P2** — on-device AI coach: `KnowledgeStore` (WP-19), `ContextAssembler` (WP-20), `PromptManager`/`SafetyLayer` (WP-21), and `AvailabilityGate`/`CoachSession` (WP-22) are implemented; `ReadinessEngine` and the chat UI are not started
 - **P3** — off-device model tiers (Private Cloud Compute / Claude / Gemini), consent +
   key management, coach evals on Apple's Evaluations framework
 - **P4 remainder** — scheduled insights/notifications, export/deletion, optional

@@ -3675,3 +3675,377 @@ asserts the total equals the reserved shell). CoachKit: 61 → 66 tests.
 `Packages/CoachKit` on this session's Xcode 26.4.1 toolchain -- 66 tests in 16
 suites pass, zero warnings, zero failures. No other package or the app target
 references the changed APIs (verified by grep).
+
+## WP-21 · PromptManager + SafetyLayer
+
+Built `Packages/CoachKit/Sources/CoachKit/Prompt/` per the plan:
+`SafetyLayer.text` (immutable suffix -- non-medical disclaimer, no-diagnosis /
+no-ECG-AFib-irregular-rhythm-interpretation with clinician redirect, scope
+limits, disordered-eating help-seeking nudge) and `PromptManager` (compiled-in
+`defaultPrompt`, pure `effectivePrompt(base:) = base + "\n\n" + suffix` with the
+suffix unconditionally last even when the base already contains it,
+`PromptVersion` history via append-only `save(base:)` / `resetToDefault()`,
+`defaultBase()` / `currentBase()` / `defaultAndCurrent()` for the WP-26 editor).
+`history()` returns value snapshots (`PromptVersionSnapshot`), never live
+SwiftData objects -- every method builds its `ModelContext` locally, so
+returning model rows would fault against a dead context in WP-26's version
+list; history excludes seeded `isDefault` baselines, so "never customized"
+reads empty. Token estimates count UTF-8 bytes/4, the same rule as WP-20's
+context estimator (one canonical estimator, not two). Writes carry
+monotonicized timestamps (1 ms bump on ties) plus a deterministic
+(createdAt-desc, body-asc) read order, so same-instant save+reset can never
+leave "current" ambiguous.
+
+> **⚠️ HUMAN REVIEW REQUIRED (WP-21 step 1 deliverable):** `SafetyLayer.text`
+> is unreviewed medical-disclaimer copy. A human must review the exact wording
+> before launch -- scope limits, the ECG/AFib refusal rule, and the
+> disordered-eating nudge are product/clinical decisions, not code-review
+> calls. This flag stays open until that review happens.
+
+**Tests:** `PromptManagerTests.swift`, 12 tests -- suffix always present/last
+(incl. adversarial base containing the suffix, empty/unicode/10K bases),
+default non-empty, fresh fallback, save/reset history, seeded-default baseline
+with empty history, same-instant ordering, UTF-8 byte counting (family emoji =
+7 tokens, not 1), snapshot return values.
+
+## WP-22 · Availability gate + session factory
+
+Built `Packages/CoachKit/Sources/CoachKit/Session/` per the plan:
+`AvailabilityGate.status(for:)` mapping every
+`SystemLanguageModel.Availability` case to a `CoachAvailability` UI state with
+user-facing copy + next-tier fallback suggestion (pure, injectable; `current()`
+reads the live model); `CoachSession` protocol seam (`isResponding`,
+`prewarm`, `respond`, `stream`) with a documented **incremental-delta**
+contract (joining chunks reproduces the response); `LiveCoachSession` adapter
+(`@Observable` so the chat UI's input-disabled binding re-renders, cumulative
+framework snapshots diffed to deltas, consumer cancellation propagated to the
+driving task so a dismissed turn can't wedge the reused session busy);
+`CoachSessionFactory` with the lifecycle rule load-bearing in a single
+`makeSession(for:instructions:tools:)` (conversation sessions cached per
+instructions, one-shots always fresh, prompt edits bust the cache,
+`resetConversation()` drops it) and an injectable builder so unit tests use a
+scripted double and never touch the model. Deliberately concrete over
+`SystemLanguageModel` -- no generic model-protocol API: that protocol exists
+only in the iOS 27 / macOS 27 SDK while the package matrix builds on macOS 26,
+where the symbol is absent and `@available` cannot gate it. WP-28 generalizes
+when the floor allows. Real generation stays on on-device manual tests (test
+plan §7).
+
+**Tests:** `AvailabilityGateTests.swift`, 5 tests -- every availability case
+maps, unavailable states carry copy + fallback, lifecycle predicate, and a
+factory test with an injected scripted builder asserting identity semantics
+(conversation reuses `===`, one-shots differ, edits bust the cache, reset
+drops it) plus the scripted-stream seam check WP-25's UI test will rely on.
+
+## Code review fixes — WP-21/22 (round 1)
+
+Fifteen findings, all fixed and test-driven; the first was a build-breaker.
+
+1. **Package didn't compile on the repo toolchain (#1, build-breaker):** the
+   generic `<M: LanguageModel>` factory methods referenced a protocol absent
+   from the macOS 26 SDK (`cannot find type 'LanguageModel' in scope` on
+   Xcode 26.4.1; `@available` can't gate a missing declaration), and the same
+   annotation wrongly claimed `watchOS 27` for a watchOS-unavailable
+   framework. Deleted the generics entirely; the factory is concrete over
+   `SystemLanguageModel` with a documented WP-28 generalization note.
+   **Verified on both toolchains:** CoachKit builds and passes on Xcode 26.4.1
+   (Swift 6.3.1, macOS 26 SDK) *and* Xcode 27 beta.
+2. **Stream forwarded cumulative snapshots as deltas (#2, correctness):**
+   `LiveCoachSession.stream` now diffs consecutive snapshot contents and
+   yields only the new suffix (non-monotonic fallback yields full content,
+   never drops text); the delta contract is documented on the protocol and
+   the scripted double already speaks deltas, so WP-25 concatenates safely.
+3. **Unstructured stream task never cancelled (#3, correctness):** the driving
+   task is now held and `continuation.onTermination = { _ in task.cancel() }`
+   set, with per-iteration `checkCancellation()` -- a dismissed turn can't
+   leave `isResponding` true and poison the reused session with
+   `concurrentRequests`.
+4. **Wrapper not `@Observable` (#4, correctness):** `LiveCoachSession` is now
+   `@Observable`, so the chat UI's `isResponding` binding re-renders.
+5. **Trimmer discarded standalone user facts first (#5, correctness):**
+   `ContextAssembler.orderingRank` lifts correction-sourced fields no
+   derivation produces (standalone goals) ahead of rank 0; shadowing
+   corrections keep their derived key's rank (the previously documented
+   invariant, now actually true for both cases).
+6. **Budget ignored the system prompt (#6, correctness):** `assemble` takes
+   `promptTokens` (callers pass `PromptManager.estimatedTokens(for:
+   effectivePrompt)`), reserved before shell + fields; the reported total
+   covers prompt + request, feeding WP-27's escalation signal truthfully.
+7. **`didTrim: false` for lone over-budget fields via the pure API (#7,
+   correctness):** the over-budget check moved inside `selectFields`, so the
+   container-free half WP-27 reads is correct on its own.
+8. **Manager returned dead-context model objects (#8, correctness):**
+   `history()`/`save()`/`resetToDefault()` return `PromptVersionSnapshot`
+   values (id + body + createdAt + isDefault); the type system now makes the
+   WP-26 use-after-fault impossible.
+9. **Grapheme-cluster vs UTF-8-byte estimators disagreed (#9, correctness):**
+   `PromptManager.estimatedTokens` counts `.utf8` bytes, same rule as WP-20.
+10. **Equal-timestamp writes made "current" nondeterministic (#10,
+    correctness):** writes monotonicize timestamps (1 ms bump on ties) and
+    reads use a deterministic (createdAt-desc, body-asc) order.
+11. **Unbounded snapshot persistence (#11, privacy/storage):** `assemble`
+    prunes beyond `maxStoredSnapshots` (working constant 200, oldest-first
+    with deterministic id tie-break, parameterizable); WP-30 owns real trace
+    retention.
+12. **Missing progress.md flag (#12, process):** this entry *is* the WP-21
+    step-1 human-review flag (see the callout above); WP-21/WP-22 entries now
+    exist like every prior WP.
+13. **Factory test touched the model with vacuous asserts (#13, tests):** the
+    lifecycle test now injects a scripted builder (zero model contact) and
+    asserts identity semantics that can actually fail.
+14. **Four factory methods, rule enforced nowhere (#14, design):** collapsed
+    to one purpose-driven `makeSession` with a cached conversation session;
+    `requiresFreshSession` remains as the unit-testable pure rule the method
+    implements.
+15. **Seeded defaults counted as user history (#15, correctness):**
+    `history()` filters `isDefault`, so seeded baselines aren't "restore"
+    entries and `history().isEmpty` means never-customized.
+
+**Tests:** 10 new (`sameInstantWritesAreOrdered`, byte-counting, snapshot
+return, load-bearing lifecycle identities, `correctionsRankFirst`,
+`shadowingCorrectionKeepsRank`, `promptTokensReserve`,
+`selectFieldsReportsLoneOverflow`, `snapshotPruning`, plus seam coverage);
+CoachKit: 66 → 88 tests.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains -- Xcode 26.4.1 (this repo's
+toolchain: 88 tests in 20 suites pass) and Xcode 27 beta (88 pass) -- zero
+warnings, zero failures.
+
+## Code review fixes — WP-21/22 (round 2)
+
+Fifteen more findings over the WP-21/22 branch, all fixed and test-driven.
+
+1. **Prune pass could delete the just-inserted snapshot (#1, correctness):**
+   a past-dated `now` ranked the new row for eviction while its UUID was
+   already returned. `assemble` now passes `exemptIDs: [snapshot.id]`, and the
+   probe from the review (2033 seed + 2001 `now`, cap 1) keeps the returned ID
+   resolvable. Found in passing: same-context fetches don't observe
+   uncommitted inserts, so the insert is saved *before* pruning -- otherwise
+   the keep window is computed over stale rows.
+2. **Cap evicted `ChatTurn`-linked snapshots (#2, correctness):** prune now
+   exempts every snapshot ID still referenced by a `ChatTurn`, so linked rows
+   survive regardless of age (verified: oldest linked row outlives the cap
+   while unlinked peers are deleted). Exemptions can transiently exceed the
+   cap; steady state converges.
+3. **Cache ignored `tools` (#3, correctness):** the conversation cache key is
+   now `(instructions, toolNames)` -- a new tool busts the cache like a prompt
+   edit does. Covered with a minimal stub `Tool` (name-only double).
+4. **Grapheme-prefix diff duplicated emoji/combining-mark text (#4,
+   correctness):** the rule now diffs over UTF-8 bytes (prefix-preserving like
+   scalars, but via the certain `String(decoding:as: UTF8)` API after the
+   scalar-slice conversion failed to compile) -- ZWJ extensions and combining
+   marks yield only the new bytes.
+5. **Seeded default could clobber a user edit (#5, correctness):**
+   `currentBase()` prefers the newest *user* row and consults seeded defaults
+   only when no customization exists; the seed moves the diff baseline, never
+   the effective prompt. Covered by a regression test.
+6. **`@unknown` mapped to download copy (#6, correctness):** new neutral
+   `CoachAvailability.unavailable` case ("isn't available right now", no named
+   cause); the unknown-reason branch maps there. A test asserts the copy never
+   mentions downloading.
+7. **Dropped `eligible` guard regressed empty-context `didTrim` (#7,
+   correctness):** restored -- an empty context with an over-budget prompt
+   reports `false` (remedy: shorten the prompt), while a genuine whole-request
+   overflow with fields present still reports `true`. Covered.
+8. **`save` accepted empty/unbounded bases (#8, correctness):** rejects
+   blank bases (`.emptyBase`) and caps at `maxBaseCharacters` (10k,
+   `.baseTooLong`) -- the single write path, so WP-26 inherits the guard.
+9. **Delta rule untestable inline (#9, tests):** extracted as pure static
+   `LiveCoachSession.delta(previous:snapshot:)` with 6 unit tests (prefix,
+   identical, empty, ZWJ, combining mark, join reconstruction).
+10. **Whole-table prune fetch (#10, perf):** eviction candidates come from a
+    sorted fetch with `fetchOffset = keeping` (the `fetchProfile` idiom) plus
+    one small `ChatTurn` link query -- no whole-table load on the hot path.
+11. **Whole-table prompt reads (#11, perf):** `defaultBase`, `currentBase`,
+    and the monotonicity probe use sorted `fetchLimit = 1` reads; only
+    `history()` (whose job is the list) loads rows.
+12. **Quadratic budget selection (#12, perf):** the accepted candidate's token
+    count is cached per iteration and reused for the report -- no final
+    re-encode, identical results.
+13. **Duplicated doc abstract (#13, docs):** removed the second copy of
+    `assemble`'s summary; one abstract with the `- Parameter` list.
+14. **Misleading `now` parameter (#14, API):** dropped -- instance
+    `effectivePrompt()` takes no arguments; time-bounded reads don't exist.
+15. **No purpose on snapshots (#15, trace/retention):** `ContextSnapshot`
+    gains a `purpose` column (`"chat"`/`"dailyInsight"`, default `"chat"` for
+    pre-column rows); `assemble` threads its `Purpose` through instead of
+    discarding it, so retention and the WP-30 trace can operate per producer.
+
+**Tests:** 13 new (6 delta, past-dated self-eviction probe, linked-survival,
+purpose recording, empty-context prompt overflow, user-wins-over-seed,
+validation trio, tools-bust identity); CoachKit: 88 → 101 tests.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains (Xcode 26.4.1: 101 in 22 suites;
+Xcode 27 beta: 101 in 22 suites), CoreModel 18 pass (schema-additive purpose
+column, defaulted init keeps old call sites), zero warnings, zero failures.
+
+## Code review fixes — WP-21/22 (round 3)
+
+Fourteen findings, all fixed and test-driven.
+
+1. **Migration hazard on the new column (#1, correctness):** `purpose` now
+   carries a declaration-level default (`= "chat"`), which is what the
+   `@Model` macro turns into the store schema default -- the `init`-only
+   default it had does nothing for lightweight migration of on-disk stores
+   (this repo has no migration plan). Documented inline so the next added
+   column follows the same rule.
+2. **Linked exemption removed the bound (#2, correctness/storage):** prune no
+   longer exempts linked rows -- eviction past the window nulls the row's
+   `ChatTurn` links first (nil renders "context expired", never a dangling
+   ID), then deletes. The 200-row bound is real again, README's claim
+   restored to accurate. `assemble` prunes pre-insert with `keeping - 1`,
+   reserving the incoming row's slot.
+3. **Whole chat-history load per turn (#3, perf):** the link pre-fetch is
+   gone. Steady state costs one offset query and zero turn queries; each
+   actually-evicted row costs one targeted nulling query
+   (`contextSnapshotID == <id>`, UUID hoisted to a local because the
+   predicate macro reads member access as a key path).
+4. **Silent prompt-only overflow (#4, correctness):** `didTrim` signals any
+   over-budget request again, and new `AssembledContext.promptOverBudget`
+   (prompt + shell alone exceed budget) separates the remedies -- shorten
+   the prompt vs escalate for dropped fields. The test that had enshrined
+   the guarded behavior now asserts the loud one.
+5. **Byte-based length cap (#5, correctness):** `maxBaseCharacters` is now
+   `maxBaseBytes` (10k UTF-8 bytes ≈ ≤2.5k tokens for any script), validated
+   with the same estimator the budget uses. A 10k-CJK base (30k bytes) is
+   now rejected; covered.
+6. **Hash-order corrections (#6, correctness):** `untouchedCorrections` are
+   key-sorted before appending in `KnowledgeStore.refresh` -- hash order
+   would otherwise make the surviving correction vary across launches now
+   that those fields trim first. Covered.
+7. **Continuation-byte delta (#7, correctness):** the shared prefix walks
+   back past UTF-8 continuation bytes, so a mid-sequence revision can't emit
+   U+FFFD. Covered (revision + shrink cases).
+8. **Double commit (#8, correctness/perf):** single commit -- prune
+   pre-insert (slot reserved arithmetically), then insert + save once. A
+   prune failure can no longer leave a committed-but-unlinked snapshot, and
+   turns pay one store round-trip.
+9. **Duplicated prefix table (#9, reuse):** single `derivedKeyRanks`
+   table consulted by both `priorityRank` and `hasDerivedKeyPrefix` -- drift
+   impossible, existing rank tests unchanged.
+10. **Trim-vs-store mismatch (#10, correctness):** `save` persists the
+    trimmed base it validated (padding collapses to content). Covered.
+11. **Unbounded history reads (#11, perf):** `history(limit: = 100)` uses the
+    descriptor idiom; `ordered(_:)` retired with its last caller gone.
+12. **Quadratic selection (#12, perf):** incremental byte accounting -- each
+    field encoded once, candidate size derived arithmetically
+    (brackets + fields + commas, byte-exact for JSONEncoder's deterministic
+    formatting), report reused without a final re-encode. Existing exact-total
+    tests (`trimmingOrder`, `shellAccounted`, `singleFormula`) prove
+    equivalence with the batched formula.
+13. **Tool-name cache collisions (#13, correctness):** `makeSession` takes an
+    explicit caller-controlled `toolSetID` (nil falls back to joined names);
+    same names + different IDs bust the cache. Covered with the stub tool.
+14. **Inert `@Observable` (#14, docs):** removed, with a comment recording the
+    true mechanism (the wrapped session is observable; the read happens
+    during body evaluation) so no future edit trusts the old rationale.
+
+**Tests:** 3 new (`multibyteRevisionBoundary`, `shrinkingYieldsEmpty`,
+`untouchedCorrectionsAreKeySorted`) plus rewrites (`evictionNullsLinks`,
+prompt-overflow assertions, trim-store/byte-cap validation, toolSetID
+identities); CoachKit: 101 → 104.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
+104 in 23 suites each), CoreModel 18 pass, full `make test` TEST SUCCEEDED,
+zero warnings, zero failures.
+
+## Code review fixes — WP-21/22 (round 4)
+
+Thirteen findings reviewed; ten fixed, three deliberately not (below).
+
+1. **A cap of 0 disabled pruning entirely (#1, correctness):** `assemble`
+   passes `maxStoredSnapshots - 1`, so cap 0 reached `pruneSnapshots` as -1
+   and hit its `guard keeping >= 0` early return -- making 0 the one value
+   that retained *every* row instead of the fewest, inverting the constant's
+   meaning. Now clamped (`max(keeping, 0)`): a negative window means "retain
+   none of the pre-existing rows", and the in-flight row still survives so
+   the returned `snapshotID` always resolves. Covered by
+   `zeroCapPrunesEverythingButTheNewRow`.
+2. **`history(limit:)` treated 0 as unbounded (#2, correctness):**
+   `FetchDescriptor.fetchLimit` reads 0 (and negatives) as *no limit*, so
+   "give me none" returned every stored body. Guarded to return `[]`.
+   Covered by `nonPositiveHistoryLimitReturnsNothing`.
+3. **`promptOverBudget` off by the boundary (#3, correctness):** `>` became
+   `>=` -- at exact equality the field budget is already 0, so no selection
+   can fit and the remedy is a shorter prompt, not escalation. Covered by
+   `promptExactlyFillingBudgetIsOverBudget`.
+4. **Monotonicity probe included seeded defaults (#4, correctness):** a
+   future-dated shipped default stamped every later user edit past it,
+   permanently dating WP-26's version list in the future. The probe is now
+   scoped to the same non-default set whose ordering it protects (matching
+   `currentBase()`). Covered by `seededDefaultDoesNotStampUserEdits`.
+5. **Two copies of the budget formula (#5, correctness/docs):** round 3's
+   incremental accounting hand-rolled JSONEncoder's array framing next to
+   `estimatedTokens(for:)`'s own, and both doc comments still claimed a
+   single shared formula. Extracted `encodedBytes(for:)` and
+   `tokens(forFieldBytes:count:)`; `estimatedTokens(for:)` and
+   `selectFields` now both go through them, so there is genuinely one
+   formula and one place to update if the encoder's formatting ever changes.
+   Keeps round 3's per-field-encoded-once performance. Existing exact-total
+   tests still pass unchanged.
+6. **Unbounded eviction fetch (#6, perf):** the offset descriptor gained
+   `fetchLimit = maxSnapshotEvictionsPerAssembly` (64), so a transition case
+   (pre-cap store, or a lowered cap) can't materialize thousands of
+   health-context blobs on the turn path; the backlog drains over successive
+   assemblies. Steady state is unchanged (one row).
+7. **`delta` copied the response per snapshot (#7, perf):** walks the
+   `utf8` views in place instead of materializing two `[UInt8]` arrays --
+   the old form was O(response bytes x snapshot count) of MainActor churn.
+   Behavior identical; all existing delta tests cover it.
+8. **The streaming pump had no test (#8, test coverage):** extracted the
+   plumbing as `deltaStream(snapshots:)`, generic over the snapshot
+   sequence, so the loop, the error path and the empty case run without a
+   `LanguageModelSession` -- both round-1 bugs lived here and were covered
+   by nothing. New `DeltaStreamTests` suite (3 tests). Cancellation via
+   `onTermination` is still only covered by inspection: every deterministic
+   test for it needs timing assumptions, and a flaky CI test is worse than
+   an honest note.
+9. **`promptTokens` defaulted to 0 (#9, API):** the default made the reserve
+   opt-in, so a caller that simply forgot it reproduced the overflow the
+   parameter exists to prevent. Now required -- no production caller existed
+   yet, and every test site states its intent explicitly.
+10. **Hand-translated purposes (#11, reuse):** `CoachSessionFactory.Purpose`
+    gained `init(_: ContextAssembler.Purpose)`, so the chat -> conversation /
+    insight -> one-shot mapping lives in one place rather than at every
+    future WP-23/WP-25 call site, where a missed mapping would leak chat
+    history into an insight. The enums stay separate (different layers).
+    Covered by `purposeMapping`.
+11. **Cache-key namespace collision (#12, correctness):** `toolSetID ?? joined
+    names` was one flat space, so an explicit ID spelling the same string as
+    a tool name handed back the wrong session. The two forms are now
+    prefixed (`id:` / `names:`). Covered by
+    `toolSetIDIsNamespacedAgainstToolNames`.
+12. **Stale README count (#13, docs):** CoachKit row 88 -> 113.
+
+**Not fixed, deliberately:**
+
+- **Snapshot retention still severs `ChatTurn` trace links (#10).** Round 3
+  moved *from* exempting linked rows (which removed the storage bound
+  entirely) *to* nulling their links on eviction; round 4 objects that this
+  destroys the D7 trace for turns still on screen. Both are true: the two
+  tables need a *joint* retention policy, which is a product decision about
+  how long trace data lives, not a code fix. Flipping the behavior back and
+  forth between review rounds is worse than leaving it stable and stating
+  the tradeoff. Left for WP-30, which owns the trace UI.
+- **`defaultUnitSystem` folds `.uk` into `.metric`.** Raised across three
+  review passes. `Locale.MeasurementSystem` has three cases and the UK
+  conventionally mixes units (miles, stone), so this may well be wrong --
+  but the doc comment states the two-way rule as intended behavior, and
+  changing what units a user's data is described in is a product call.
+  Flagged for a decision rather than silently changed.
+- **Priority is a key-prefix lookup, not a field property.** A future
+  `nutrition.*` family would silently land in rank 3 until someone edits
+  `ContextAssembler`. Real, but the fix is a schema change to `ProfileField`
+  (a `priority`/`category` column minted by `KnowledgeDerivation`), which is
+  a migration, not a review fix.
+
+**Tests:** 9 new (`zeroCapPrunesEverythingButTheNewRow`,
+`promptExactlyFillingBudgetIsOverBudget`, `nonPositiveHistoryLimitReturnsNothing`,
+`seededDefaultDoesNotStampUserEdits`, `toolSetIDIsNamespacedAgainstToolNames`,
+`purposeMapping`, plus the three `DeltaStreamTests`); CoachKit: 104 → 113.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` (113 in 24 suites, zero warnings), CoreModel 18 pass.

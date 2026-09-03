@@ -315,7 +315,13 @@ public final class KnowledgeStore {
         // fields that happened to share a key (duplicate seed data, a
         // migration artifact) would both survive into `profile.sections`
         // every cycle, forever.
-        let untouchedCorrections = corrections.values.filter { !derivedKeys.contains($0.key) }
+        // Deterministic order: `Dictionary.values` iterates in per-process
+        // hash order, and these fields now sort highest-priority at trim time
+        // (ContextAssembler.orderingRank) -- persisting hash order would make
+        // which user correction survives trimming vary across launches.
+        let untouchedCorrections = corrections.values
+            .filter { !derivedKeys.contains($0.key) }
+            .sorted { $0.key < $1.key }
         profile.sections = merged + untouchedCorrections
         profile.updatedAt = now
         try context.save()

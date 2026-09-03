@@ -36,22 +36,51 @@ public final class ContextAssembler {
     public static let privateCloudComputeTokenBudget = 32_000
     public static let largeCloudTokenBudget = 100_000
 
+    /// Working cap on stored `ContextSnapshot` rows (see `assemble`). Every
+    /// assembly persists a full JSON copy of the health context, and turns
+    /// that fail, cancel, or never run leave orphans no `ChatTurn` will ever
+    /// link -- without a cap the store grows ~15k rows/year of its most
+    /// sensitive data. WP-30 (trace UI + retention) owns the real policy;
+    /// until then rows evicted past the window have their `ChatTurn` links
+    /// nulled first, so the bound holds for linked rows too and no ID ever
+    /// dangles (see `pruneSnapshots`). Exposed as an `assemble` parameter
+    /// for testability.
+    public static let maxStoredSnapshots = 200
+
+    /// Upper bound on rows evicted per `assemble` call. Steady state evicts
+    /// at most one, so this only caps the transition cases (a pre-cap store,
+    /// or a lowered `maxStoredSnapshots`), keeping the coach's turn path off
+    /// an unbounded load of health-context blobs; the backlog drains over
+    /// successive assemblies (code review WP-21/22 round 4, #6).
+    static let maxSnapshotEvictionsPerAssembly = 64
+
     /// The assembled payload plus its trace metadata (WP-20 step 3). The
     /// `snapshotID` is what `ChatTurn.contextSnapshotID` links back to for
-    /// the "What did the coach see?" trace UI (architecture.md D7, WP-30);
+    /// the "What did the coach see?" trace UI (architecture.md D7, WP-30)
+    /// (`nil` renders as "context expired" after retention eviction);
     /// `estimatedTokens`/`didTrim` are the overflow report WP-27's
-    /// escalation offer reads (D14.2).
+    /// escalation offer reads (D14.2), and `promptOverBudget` distinguishes
+    /// the remedy: prompt too long (shorten it) vs fields dropped (escalate
+    /// may recover them).
     public struct AssembledContext: Sendable {
         public var context: HealthContext
         public var snapshotID: UUID
         public var estimatedTokens: Int
         public var didTrim: Bool
+        /// True when prompt + shell alone exceed the budget, so no field
+        /// selection could fit. Pairs with `didTrim`: overflow with
+        /// `promptOverBudget == false` means fields were dropped to fit (or
+        /// the full request still overflows with fields present) --
+        /// escalation may help; overflow with it `true` means the prompt
+        /// itself must shrink.
+        public var promptOverBudget: Bool
 
-        public init(context: HealthContext, snapshotID: UUID, estimatedTokens: Int, didTrim: Bool) {
+        public init(context: HealthContext, snapshotID: UUID, estimatedTokens: Int, didTrim: Bool, promptOverBudget: Bool = false) {
             self.context = context
             self.snapshotID = snapshotID
             self.estimatedTokens = estimatedTokens
             self.didTrim = didTrim
+            self.promptOverBudget = promptOverBudget
         }
     }
 
@@ -77,28 +106,46 @@ public final class ContextAssembler {
         self.modelContainer = modelContainer
     }
 
-    /// Token-budget estimate (WP-20 step 2): the JSON-encoded byte size of
-    /// the fields divided by 4, rounded up. Measured over the actual
+    /// Encoded JSON byte size of one field. Measured over the actual
     /// `JSONEncoder` output -- not over `displayText` alone -- so the
     /// per-field framing the model really receives (`asOf`, `source`, the
     /// `excludedFromAI`/`isClinical` flags, and all JSON punctuation) is
     /// counted too (code review WP-20 round 1, #2). UTF-8 multibyte sequences
     /// (the profile's `·`/`—` separators) inflate the byte count, which errs
-    /// conservative -- the safe direction for a budget. Always computed over
-    /// the whole array at once: summing independently rounded per-field costs
-    /// would disagree with the batched value (`ceil(a/4)+ceil(b/4)` is not
-    /// `ceil((a+b)/4)`), giving two "canonical" numbers for one field set
-    /// (code review #3) -- `selectFields` below reuses this exact function
-    /// for every fit check, so there is exactly one formula. Falls back to a
-    /// plain character heuristic only if encoding itself throws (never
-    /// observed for these `Codable` value types; keeps this non-throwing).
-    public static func estimatedTokens(for fields: [ProfileField]) -> Int {
-        if fields.isEmpty { return 0 }
-        if let json = try? JSONEncoder().encode(fields) {
-            return (json.count + 3) / 4
+    /// conservative -- the safe direction for a budget. Falls back to a plain
+    /// character heuristic only if encoding itself throws (never observed for
+    /// these `Codable` value types; keeps the estimate non-throwing).
+    static func encodedBytes(for field: ProfileField) -> Int {
+        if let encoded = try? JSONEncoder().encode(field) {
+            return encoded.count
         }
-        let chars = fields.reduce(0) { $0 + $1.key.count + $1.displayText.count + $1.source.count }
-        return (chars + 3) / 4
+        return field.key.count + field.displayText.count + field.source.count
+    }
+
+    /// **The** budget formula, in one place (code review WP-21/22 round 4,
+    /// #5): `JSONEncoder` frames an array as `[` + objects joined by single
+    /// commas + `]`, so a field array's byte size is `2 + summed field bytes
+    /// + (count - 1)` commas, and tokens are bytes / 4 rounded up. Both
+    /// `estimatedTokens(for:)` and `selectFields`'s incremental fit check go
+    /// through here, so the running total and the reported total can never be
+    /// two disagreeing roundings (`ceil(a/4)+ceil(b/4)` is not
+    /// `ceil((a+b)/4)`, code review WP-20 round 1, #3) and there is no
+    /// second copy of the array framing to drift. If `ProfileField` ever
+    /// gains a custom `encode(to:)`, or the encoder gains `outputFormatting`,
+    /// this is the single function to update.
+    static func tokens(forFieldBytes bytes: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return (2 + bytes + (count - 1) + 3) / 4
+    }
+
+    /// Token-budget estimate (WP-20 step 2) for a field set: the JSON-encoded
+    /// byte size of the array divided by 4, rounded up, via the shared
+    /// `tokens(forFieldBytes:count:)` formula.
+    public static func estimatedTokens(for fields: [ProfileField]) -> Int {
+        tokens(
+            forFieldBytes: fields.reduce(0) { $0 + encodedBytes(for: $1) },
+            count: fields.count
+        )
     }
 
     /// The fixed per-context framing around any field set
@@ -127,52 +174,105 @@ public final class ContextAssembler {
     /// > activity > history"). Matches on `KnowledgeDerivation`'s key-prefix
     /// constants -- not local literals -- so a key rename breaks at compile
     /// time instead of silently demoting the field to rank 3 (code review
-    /// #6). Correction-pinned fields (WP-19) keep their original key, so they
-    /// rank exactly where the field they override would.
+    /// #6). Correction-pinned fields (WP-19) keep their original key, so a
+    /// correction shadowing a derived key ranks exactly where the field it
+    /// overrides would; standalone user content is lifted ahead of every
+    /// derived rank by `orderingRank` (see `selectFields`), so WP-19's
+    /// "corrections beat re-derivation" survives trimming too, not just
+    /// `refresh()`.
+    /// Single ordered table of derived-key prefixes. Both `priorityRank` and
+    /// `hasDerivedKeyPrefix` consult it, so a newly added prefix is visible
+    /// in both -- the set can't silently drift between the two.
+    static let derivedKeyRanks: [(prefix: String, rank: Int)] = [
+        (KnowledgeDerivation.vitalsKeyPrefix, 0),
+        (KnowledgeDerivation.sleepKeyPrefix, 1),
+        (KnowledgeDerivation.stepsKeyPrefix, 2),
+        (KnowledgeDerivation.activityKeyPrefix, 2),
+        (KnowledgeDerivation.clinicalKeyPrefix, 3),
+    ]
     public static func priorityRank(for key: String) -> Int {
-        if key.hasPrefix(KnowledgeDerivation.vitalsKeyPrefix) { return 0 }
-        if key.hasPrefix(KnowledgeDerivation.sleepKeyPrefix) { return 1 }
-        if key.hasPrefix(KnowledgeDerivation.stepsKeyPrefix) || key.hasPrefix(KnowledgeDerivation.activityKeyPrefix) {
-            return 2
-        }
-        return 3
+        derivedKeyRanks.first { key.hasPrefix($0.prefix) }?.rank ?? 3
     }
 
     /// Drops the lowest-priority eligible fields until the remainder fits
     /// `tokenBudget`, preserving profile order within a rank (explicit index
-    /// tie-break, not reliance on sort stability). Strict prefix semantics:
-    /// the scan stops at the first field that doesn't fit, so a smaller
-    /// lower-priority field can never jump the queue ahead of a larger
-    /// higher-priority one (code review #1 -- the previous skip-and-continue
-    /// loop allowed exactly that inversion, and its keep-one fallback never
-    /// triggered because `kept` was already non-empty). Guarantees at least
-    /// the single highest-priority field whenever anything is eligible: a
-    /// zero-field context from a non-empty profile would be useless. Every
-    /// fit check reuses the batched `estimatedTokens(for:)` over the whole
-    /// candidate set, so the running total and the reported total are one
-    /// formula, not two disagreeing roundings (#3).
+    /// tie-break, not reliance on sort stability). Standalone correction-
+    /// sourced fields (`source == KnowledgeStore.correctionSourceLabel` with
+    /// no derived key prefix -- e.g. a WP-30 user goal) sort before rank 0:
+    /// they are the user's own authoritative facts and are dropped last,
+    /// never first. Strict prefix semantics: the scan stops at the
+    /// first field that doesn't fit, so a smaller lower-priority field can
+    /// never jump the queue ahead of a larger higher-priority one (code
+    /// review #1 -- the previous skip-and-continue loop allowed exactly that
+    /// inversion, and its keep-one fallback never triggered because `kept`
+    /// was already non-empty). Guarantees at least the single
+    /// highest-priority field whenever anything is eligible: a zero-field
+    /// context from a non-empty profile would be useless. Every fit check and
+    /// the reported total go through the shared
+    /// `tokens(forFieldBytes:count:)` formula that `estimatedTokens(for:)`
+    /// also uses, so they are one formula, not two disagreeing roundings
+    /// (#3), and each field is encoded once rather than re-encoding the whole
+    /// growing candidate array per iteration.
     public static func selectFields(from eligible: [ProfileField], tokenBudget: Int) -> FieldSelection {
         let ordered = eligible.enumerated()
             .sorted {
-                let leftRank = priorityRank(for: $0.element.key)
-                let rightRank = priorityRank(for: $1.element.key)
+                let leftRank = orderingRank(for: $0.element)
+                let rightRank = orderingRank(for: $1.element)
                 if leftRank != rightRank { return leftRank < rightRank }
                 return $0.offset < $1.offset
             }
             .map(\.element)
+        // Incremental byte accounting through the shared formula: each field
+        // is encoded once, with no per-iteration whole-array re-encode and no
+        // final re-encode for the report, while every fit check and the
+        // reported total go through `tokens(forFieldBytes:count:)` -- one
+        // formula, so the running total and the reported total can never
+        // disagree (code review WP-21/22 round 4, #5).
         var kept: [ProfileField] = []
+        var keptBytes = 0
         for field in ordered {
-            let candidate = kept + [field]
-            if estimatedTokens(for: candidate) <= tokenBudget {
-                kept = candidate
+            let fieldBytes = encodedBytes(for: field)
+            if tokens(forFieldBytes: keptBytes + fieldBytes, count: kept.count + 1) <= tokenBudget {
+                kept.append(field)
+                keptBytes += fieldBytes
             } else {
                 break
             }
         }
         if kept.isEmpty, let first = ordered.first {
             kept = [first]
+            keptBytes = encodedBytes(for: first)
         }
-        return FieldSelection(kept: kept, estimatedTokens: estimatedTokens(for: kept), didTrim: kept.count < eligible.count)
+        let keptTokens = tokens(forFieldBytes: keptBytes, count: kept.count)
+        // Overflow is reported here -- not patched up by callers -- so the
+        // pure container-free API WP-27's escalation offer reads is itself
+        // correct: trimming *or* the surviving fields still exceeding the
+        // budget (e.g. the keep-one fallback holding a single over-budget
+        // top field, where `kept.count < eligible.count` alone would report
+        // "nothing trimmed").
+        let didTrim = kept.count < eligible.count || (!kept.isEmpty && keptTokens > tokenBudget)
+        return FieldSelection(kept: kept, estimatedTokens: keptTokens, didTrim: didTrim)
+    }
+
+    /// Sort rank for one field. A correction *shadowing* a derived key keeps
+    /// that key's rank (the `priorityRank` doc invariant); a
+    /// correction-sourced field no derivation produces (standalone user
+    /// content -- e.g. a WP-30 goal) sorts before rank 0 instead of falling
+    /// to rank 3, so the user's own authoritative facts are dropped last.
+    /// Kept separate from `priorityRank(for:)` so the key-prefix table stays
+    /// testable on keys alone while trimming honors provenance.
+    static func orderingRank(for field: ProfileField) -> Int {
+        if field.source == KnowledgeStore.correctionSourceLabel, !hasDerivedKeyPrefix(field.key) {
+            return -1
+        }
+        return priorityRank(for: field.key)
+    }
+
+    /// Whether `key` carries one of `KnowledgeDerivation`'s prefixes (i.e. a
+    /// derivation could have produced it). Single place that knows the prefix
+    /// set outside `priorityRank` itself.
+    static func hasDerivedKeyPrefix(_ key: String) -> Bool {
+        derivedKeyRanks.contains { key.hasPrefix($0.prefix) }
     }
 
     /// Locale-derived `UnitSystem` default: US locales get imperial, everything
@@ -213,28 +313,48 @@ public final class ContextAssembler {
     /// staleness included -- with every field's `asOf` bounding it. Sharing
     /// the refresh lock here would couple turn latency to HealthKit latency;
     /// revisit if the trace UI (WP-30) needs a "refresh was running" signal.
+    ///
+    /// - Parameter promptTokens: estimated tokens of the effective system
+    ///   prompt (instructions) for this turn -- reserved out of `tokenBudget`
+    ///   before the shell and fields. WP-21's prompt is unbounded user text
+    ///   plus a ~150-token safety suffix; without this reserve a long persona
+    ///   plus a full 4K health context overflows the on-device window while
+    ///   `didTrim` reports `false`. Callers pass
+    ///   `PromptManager.estimatedTokens(for: effectivePrompt)`; pass 0 only
+    ///   for a turn that genuinely carries no instructions. Deliberately has
+    ///   **no default**: a default of 0 made the reserve opt-in, so a caller
+    ///   that simply forgot it silently reproduced the overflow this
+    ///   parameter exists to prevent (code review WP-21/22 round 4, #9).
+    /// - Parameter maxStoredSnapshots: hard retention cap; oldest snapshots
+    ///   beyond it are deleted on each assembly, nulling linked
+    ///   `ChatTurn`s first (see `maxStoredSnapshots` and `pruneSnapshots`).
     public func assemble(
         for purpose: Purpose,
         now: Date = .now,
         locale: Locale = .current,
         unitSystem: UnitSystem? = nil,
-        tokenBudget: Int = ContextAssembler.onDeviceTokenBudget
+        tokenBudget: Int = ContextAssembler.onDeviceTokenBudget,
+        promptTokens: Int,
+        maxStoredSnapshots: Int = ContextAssembler.maxStoredSnapshots
     ) throws -> AssembledContext {
-        _ = purpose
         let resolvedUnitSystem = unitSystem ?? Self.defaultUnitSystem(for: locale)
         let context = ModelContext(modelContainer)
         let sections = try KnowledgeStore.fetchProfile(from: context)?.sections ?? []
         let eligible = sections.filter { !$0.excludedFromAI }
-        // Reserve the fixed shell before selecting fields, so the reported
-        // total covers the whole payload handed to `JSONEncoder` (#2). Off
-        // by two bytes (`[]` in the shell vs `[...]` in the full encoding) --
-        // negligible and conservative.
+        // Reserve the prompt and the fixed shell before selecting fields, so
+        // the reported total covers the whole request, not just the fields
+        // (#2, plus the WP-21 prompt reserve). Off by two bytes (`[]` in the
+        // shell vs `[...]` in the full encoding) -- negligible and
+        // conservative.
         let shell = Self.estimatedShellTokens(
             localeIdentifier: locale.identifier,
             unitSystem: resolvedUnitSystem,
             today: now
         )
-        let selection = Self.selectFields(from: eligible, tokenBudget: max(tokenBudget - shell, 0))
+        let selection = Self.selectFields(
+            from: eligible,
+            tokenBudget: max(tokenBudget - promptTokens - shell, 0)
+        )
         let healthContext = HealthContext(
             fields: selection.kept,
             localeIdentifier: locale.identifier,
@@ -242,20 +362,81 @@ public final class ContextAssembler {
             today: now
         )
         let json = try JSONEncoder().encode(healthContext)
-        let snapshot = ContextSnapshot(json: json, createdAt: now)
+        // Single commit: prune the pre-insert set first -- reserving the new
+        // row's slot arithmetically (`keeping - 1`) so its own assembly can
+        // never evict it, whatever `now` says -- then insert + save once. A
+        // save-prune-save split could commit the snapshot and then throw,
+        // orphaning the health-context row it exists to bound. (A cap of 0
+        // still retains the in-flight row: the returned ID must always
+        // resolve.)
+        try Self.pruneSnapshots(in: context, keeping: maxStoredSnapshots - 1)
+        let snapshot = ContextSnapshot(json: json, createdAt: now, purpose: purpose.rawValue)
         context.insert(snapshot)
         try context.save()
-        // Authoritative overflow signal (code review #1): trimming *or* the
-        // surviving fields still exceeding the budget -- e.g. the keep-one
-        // fallback holding a single over-budget top field, where
-        // `kept.count < eligible.count` alone would report "nothing trimmed".
-        let totalTokens = shell + selection.estimatedTokens
-        let didTrim = selection.didTrim || (!eligible.isEmpty && totalTokens > tokenBudget)
+        // Overflow signal: field trimming (reported by `selectFields`) *or*
+        // the whole request -- prompt + shell + fields -- still exceeding the
+        // budget. `promptOverBudget` separates the remedies: prompt too long
+        // (shorten it) vs fields dropped (escalation may recover them).
+        // Together they are the overflow report WP-27's escalation offer
+        // reads (D14.2).
+        let totalTokens = promptTokens + shell + selection.estimatedTokens
+        let didTrim = selection.didTrim || totalTokens > tokenBudget
         return AssembledContext(
             context: healthContext,
             snapshotID: snapshot.id,
             estimatedTokens: totalTokens,
-            didTrim: didTrim
+            didTrim: didTrim,
+            // `>=`, not `>`: at exact equality the field budget is already 0,
+            // so no field selection can fit and the remedy is a shorter
+            // prompt, not escalation -- the documented contract. `>` reported
+            // "fields were dropped to fit" for a request whose prompt plus
+            // shell consumed the entire window (code review WP-21/22 round 4,
+            // #3).
+            promptOverBudget: promptTokens + shell >= tokenBudget
         )
+    }
+
+    /// Evicts snapshots older than the `keeping`-newest window so the table
+    /// stays bounded *including* chat-linked rows: each evicted row first has
+    /// its `ChatTurn`s' `contextSnapshotID` nulled (nil renders as "context
+    /// expired" -- never a dangling ID), then the row is deleted. Static and
+    /// context-taking so the policy is unit-testable; called pre-insert by
+    /// `assemble` (with `keeping - 1`, reserving the incoming row's slot).
+    ///
+    /// Bounded on the hot path: eviction candidates come from a sorted fetch
+    /// with `fetchOffset = keeping` (the `KnowledgeStore.fetchProfile`
+    /// idiom) -- never a whole-table load -- and each evicted row costs one
+    /// targeted turn-nulling query. Steady state (nothing past the window)
+    /// costs exactly one offset query and zero turn queries.
+    static func pruneSnapshots(in context: ModelContext, keeping: Int) throws {
+        // Clamp rather than bail: a negative window means "retain none of the
+        // pre-existing rows", not "retain all of them". `assemble` passes
+        // `maxStoredSnapshots - 1`, so a cap of 0 arrives here as -1 -- the
+        // early `return` it used to hit made cap 0 the one value that
+        // disabled pruning entirely, inverting the constant's meaning and
+        // growing the store without bound (code review WP-21/22 round 4, #1).
+        let keeping = max(keeping, 0)
+        var descriptor = FetchDescriptor<ContextSnapshot>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchOffset = keeping
+        // Bounded drain: without a limit, any non-steady-state prune (a store
+        // that accumulated rows before the cap existed, or a lowered cap)
+        // materializes every over-cap row *including its `json` payload* on
+        // the turn's hot path. Steady state is one row; the backlog drains
+        // over successive assemblies (round 4, #6).
+        descriptor.fetchLimit = Self.maxSnapshotEvictionsPerAssembly
+        for expired in try context.fetch(descriptor) {
+            // Hoisted: the predicate macro reads `expired.id` member access
+            // as a key path, so the UUID goes through a local first.
+            let targetID = expired.id
+            let turns = try context.fetch(FetchDescriptor<ChatTurn>(
+                predicate: #Predicate { $0.contextSnapshotID == targetID }
+            ))
+            for turn in turns {
+                turn.contextSnapshotID = nil
+            }
+            context.delete(expired)
+        }
     }
 }
