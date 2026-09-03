@@ -16,16 +16,19 @@ import SwiftUI
 
 struct RootView: View {
     @State private var isOnboarded: Bool
-    private let startOnDataTab: Bool
+    private let initialRoute: InitialRoute
 
-    init(startOnDashboard: Bool) {
-        _isOnboarded = State(initialValue: startOnDashboard)
-        self.startOnDataTab = startOnDashboard
+    /// - Parameter initialRoute: `.default` runs onboarding-then-Today;
+    ///   `.data`/`.coach` skip onboarding and land on the named tab
+    ///   (UI-test launches only).
+    init(initialRoute: InitialRoute = .default) {
+        _isOnboarded = State(initialValue: initialRoute != .default)
+        self.initialRoute = initialRoute
     }
 
     var body: some View {
         if isOnboarded {
-            HomeView(initialTab: startOnDataTab ? .data : .today)
+            HomeView(initialTab: initialRoute.homeTab)
         } else {
             OnboardingFlowView(onFinished: { isOnboarded = true })
         }
@@ -33,6 +36,6 @@ struct RootView: View {
 }
 
 #Preview {
-    RootView(startOnDashboard: false)
+    RootView()
         .environment(AppEnvironment())
 }

@@ -120,3 +120,13 @@ struct DailyInsightGeneratorTests {
         }
     }
 }
+
+@Suite("Empty-context legacy wording (WP-25 round-2 review #3)")
+struct EmptyInsightWordingTests {
+    @Test("empty context emits the legacy lines exactly, preamble-free")
+    func emptyPromptExact() {
+        let readiness = Readiness(score: 88, deltaVsAverage: nil, signalsUsed: 4)
+        let prompt = DailyInsight.prompt(readiness: readiness, context: insightContext([]))
+        #expect(prompt == "Morning readiness: 88/100 (based on 4 of 4 signals).\nNo health context available for this insight.")
+    }
+}

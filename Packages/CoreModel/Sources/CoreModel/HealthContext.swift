@@ -41,4 +41,16 @@ public struct HealthContext: Codable, Sendable, Hashable {
         self.unitSystem = unitSystem
         self.today = today
     }
+
+    /// The "data, not instructions" delimiter block both prompt composers
+    /// (`DailyInsight.prompt`, the chat prompt) wrap these fields in (WP-25
+    /// review #14): user-controlled display text must never read as model
+    /// instructions, so the framing lives here -- one definition both call
+    /// sites share, and a future tightening lands once.
+    public func framedAsData(emptyMessage: String) -> [String] {
+        if fields.isEmpty {
+            return [emptyMessage]
+        }
+        return ["---"] + fields.map { "- \($0.displayText) [\($0.source)]" } + ["---"]
+    }
 }
