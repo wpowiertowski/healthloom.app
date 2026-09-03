@@ -69,14 +69,11 @@ struct BackfillTypeRow: View {
         // Every other syncable type falls through to here, and this list has
         // grown well past the hand-written cases above -- rendering the raw
         // `active_minutes`/`blood_glucose` identifiers next to properly
-        // titled rows looked like a bug. Title-cases the identifier the same
-        // way `SettingsView.displayName(_:)` and `SyncLogRow.displayName`
-        // already do for the same enum.
+        // titled rows looked like a bug. `GoogleDataType.displayName` applies
+        // the same title-casing `SettingsView.displayName(_:)` and
+        // `SyncLogRow.displayName` use for the same enum.
         default:
-            return status.dataType.rawValue
-                .split(separator: "_")
-                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-                .joined(separator: " ")
+            return status.dataType.displayName
         }
     }
 

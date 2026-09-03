@@ -3185,3 +3185,407 @@ sample queries bridged via continuations identical to `HealthKitStore`'s), but
 `make test` on a Mac with the Xcode 27 beta remains the authoritative gate and must run
 before merge; likeliest fixups are isolation annotations and any SwiftUI API
 availability drift.
+
+## Verification note — WP-12b / WP-33 confirmed on real Xcode 27 beta toolchain (2026-08-27)
+
+Both entries above (WP-12b, WP-33) were authored in a Linux remote container with no
+Swift toolchain and explicitly flagged themselves as unverified, pending `make test` on
+a Mac with the Xcode 27 beta. That gate has now been run, on a Mac with
+`/Applications/Xcode-beta.app` at Xcode 27.0 (build 27A5218g): all five package suites
+pass under `-warnings-as-errors` (CoreModel 15, Secrets 14 [1 environment-gated
+real-Keychain test self-skips under the sandboxed `swift test` process, as already
+documented in WP-03's entry], GoogleHealthClient 35, SyncKit 260, CoachKit 1), and
+`xcodebuild build test` on an iOS 27.0 simulator passes with zero failures (5 UI tests,
+1 self-skipped — `OnboardingUITests`' HealthKit-sheet test, per the toolchain note above).
+No mechanical fixups were needed; the isolation annotations and API usage both entries
+carried over from prior sessions' precedents compiled as written. This closes the
+verification gap flagged in both entries' headers — nothing else about their content
+changes.
+
+`README.md` was also updated in this pass: it had drifted since WP-12b/WP-33 merged
+(still listed watch-priority conflict resolution as unbuilt, WP-12b as a remaining
+phase item, and stale test counts) — corrected to match the current tree and this
+session's real counts.
+
+## WP-19 · KnowledgeStore
+
+Implemented architecture.md D7's `KnowledgeStore` -- the first real content in `CoachKit`
+(the WP-01 placeholder file/test are deleted; nothing outside CoachKit referenced them).
+**New `Packages/CoachKit/Sources/CoachKit/Knowledge/` folder (5 files):**
+`HealthReadTypes.swift` -- HealthKit-free `Sendable` value types (`DailyQuantityValue`,
+`QuantityReading`, `SleepStageKind`/`SleepStageSegment`, `WorkoutRecord`), every one marked
+`nonisolated` per WP-12b's exact precedent (SyncKit's `MappedMetadata` et al.) since
+CoachKit's package-wide `.defaultIsolation(MainActor.self)` would otherwise make their
+initializers MainActor-isolated and uncallable from the nonisolated HealthKit-query
+completion closures that construct them -- caught by `-warnings-as-errors`, not guessed.
+`HealthReadStore.swift` -- the `HealthReadStore` protocol (steps/resting-HR/HRV/sleep/
+workouts reads over a date window) + `HealthKitReadStore`, the real `#if canImport(HealthKit)`
+adapter (`HKStatisticsCollectionQuery` for daily steps/resting-HR/HRV, `HKSampleQuery` for
+sleep-analysis segments and workouts, `HKWorkout.allStatistics` for energy/distance --
+deliberately not the deprecated `totalEnergyBurned`/`totalDistance` properties). `KnowledgeDerivation.swift`
+-- every pure derivation function (steps daily avg, resting-HR/HRV baseline+trend with a
+documented ±5% "steady" band, sleep duration + stage-split with a night-bucketing rule
+tested across a DST-adjacent midnight boundary, workouts, and one generic `.localOnly`-type
+handler covering all four of AZM/Active Minutes/ECG/IRN). `LocalSamplePayloadDecoding.swift`
+-- `ExerciseSupplement` (mirrors `ActivitiesModels.FitbitActivitySupplement`'s exact,
+already-proven `JSONSerialization` decode contract for `LocalSample.payloadJSON`'s
+`sessionPayload` field verbatim, rather than inventing a second one) and `sumPayloadValues`
+(sums every numeric value in the payload's top-level `values` dict -- a deliberate
+judgment call, documented inline: no fixture exists for `active_zone_minutes` to pin its
+exact key name, and AZM is a single-field interval type per base-knowledge.md §3/§5, so
+summing is equivalent to reading that one field regardless of its name). `KnowledgeStore.swift`
+-- the orchestrator: `refresh(now:)` fetches all five HealthKit windows concurrently
+(`async let`), fetches every `LocalSample`, derives one `ProfileField` per signal that has
+data (never a placeholder "no data" field), and persists to the single `KnowledgeProfile`
+row. `KnowledgeRefreshTrigger.swift` -- `KnowledgeRefreshThrottle.shouldFire` (the pure,
+always-compiled "at most hourly" rule) plus `KnowledgeRefreshTrigger` (the real
+`HistoryObserver`-wired class, `#if compiler(>=6.4)`-gated -- see toolchain note below).
+
+**Design decisions beyond the plan's literal text, all judgment calls:**
+(1) **Read-authorization stays inside CoachKit, no app-target change.** The plan's step 1
+says "Request HK read authorization here... via WP-06's `requestRead`"; WP-14's own
+`ClinicalClassification.swift` header separately instructs this WP to call
+`isClinicalType` rather than re-deriving it. Both together settle a real ambiguity this
+WP would otherwise have had to stop and ask about: architecture.md §2's module-map
+ordering (`CoreModel, Secrets, GoogleHealthClient, SyncKit, CoachKit` -- "each depends
+only on packages above it") permits CoachKit to depend on SyncKit, so `CoachKit`'s
+manifest now does (added to both the `CoachKit` and `CoachKitTests` targets), and
+`KnowledgeStore.requestReadAuthorization()` calls SyncKit's real `HealthKitAuth
+.requestRead(_:)` directly -- no onboarding/app-target UI change, since this WP's own
+"Touches" line names only `CoachKit`. The method exists and is called by nothing yet;
+flagged as a real gap for whichever future WP first gives the coach an app-target
+surface (WP-25's Chat UI is the next candidate) to wire up, with its own copy. This
+degrades safely in the meantime because HealthKit read-denial is invisible regardless
+(HealthKitAuth.swift's documented rule) -- un-requested and denied authorization both
+just mean fewer signals, never a crash or a broken intermediate state.
+(2) **Heart-rate zone configuration -- omitted, real deviation.** Step 1 also names "the
+user's heart-rate zone configuration (new iOS 27 HealthKit zones API)." Searched the
+actual iOS 27.0 SDK headers (`HealthKit.framework/Headers`, Xcode 27.0 build 27A5218g)
+for "zone": the only hit is `HKLiveWorkoutZoneUpdate`, a live in-workout zone-*crossing*
+event, not a readable configuration object. No such API exists to call. Omitted entirely
+rather than guessed, per the plan's own "Blocked?" clause; flagged here for whoever
+revisits architecture.md D6's zones mention once/if Apple ships the real API.
+(3) **Correction pinning implemented via the existing `ProfileField.source` field, no
+CoreModel change.** WP-19 step 2 requires "pinned user corrections... beat re-derivation,"
+but the actual correction-writing UI is WP-30's (P3, not yet built). Rather than add a new
+stored flag to `ProfileField` (CoreModel, out of this WP's declared scope) or invent a
+UI, this WP defines `KnowledgeStore.correctionSourceLabel = "User correction"`: any field
+in the persisted profile carrying that exact `source` string survives `refresh()`
+untouched, including for keys this cycle didn't derive anything for (e.g. a future goal
+field with no HealthKit counterpart). The mechanism is real and tested end-to-end now;
+WP-30 only needs to write fields with that `source` value, nothing more.
+(4) **D13.6's "never describing both copies of one activity"** is implemented as: every
+`HKWorkout` counts once; a linked `.exercise`-type `LocalSample` (WP-12b's deferred-session
+supplement) contributes nothing extra when its `linkedWatchWorkoutUUID` matches a counted
+workout, but *does* count as an additional activity when unlinked or linked to a workout
+outside the current window (mirrors D13.2's "surfaces standalone rather than vanishing" at
+the Activities view, in prose form here) -- pinned by three dedicated tests including the
+outside-window case, which is easy to get wrong (naively re-checking link presence alone
+would silently drop a real activity whenever its watch workout ages out of the read
+window before the Fitbit supplement does).
+(5) **Sleep gets duration + stage-split only, no efficiency field.** Architecture D6 (a
+different WP's concern, ReadinessEngine/WP-23) mentions "sleep duration/efficiency," but
+WP-19's own step 1 text says only "sleep duration/stage split" -- efficiency needs
+`inBed`/`awake` category segments this WP deliberately doesn't fetch (matching
+`TodayMetricsProvider`'s WP-33 precedent of asleep-stages-only), so no efficiency number
+is invented here; WP-23 owns that if/when it needs `inBed` reads.
+(6) **Toolchain split, verified against both real SDKs, not assumed:** `HistoryObserver`
+does not exist at all in Xcode 26.4.1's SwiftData module (grepped its macOS
+`.swiftinterface` -- zero matches; it is new in the iOS/macOS 27 SDK). CI's `packages`
+job deliberately pins CoachKit's `swift test` to Xcode 26.4.1 (this file's own "Toolchain
+note"), so referencing `HistoryObserver` unconditionally would have broken that job.
+`KnowledgeRefreshTrigger` (the `HistoryObserver`-wired class) is gated `#if compiler(>=6.4)`
+-- Xcode 26.4.1 ships Swift 6.3.1, Xcode 27 beta ships Swift 6.4, so this exactly (if a
+little coincidentally) tracks SDK availability today; the pure throttle rule
+(`KnowledgeRefreshThrottle.shouldFire`) lives outside the guard so it compiles and is
+tested identically on both toolchains. Also hit and fixed along the way: even under
+Xcode 27 beta, `HistoryObserver` initially failed with "only available in macOS 27 or
+newer" because this package's *deployment target* stays at macOS 26.0 on purpose (same
+toolchain note) even though the SDK itself is 27.0 -- fixed with an explicit
+`@available(macOS 27, iOS 27, *)` on the class, exactly as the compiler's own fix-it
+suggested.
+**Tests (39, up from CoachKit's 1-test placeholder):** `KnowledgeDerivationTests.swift`
+(avg/trend math incl. steady/higher/lower bands, empty input, single-day input, sleep
+night-bucketing across a midnight boundary, the three workout/supplement merge cases
+above, clinical-vs-non-clinical `.localOnly` field shape incl. asserting the clinical
+path never leaks an aggregated value); `LocalSamplePayloadDecodingTests.swift` (full
+decode, missing `sessionPayload`, garbage `payloadJSON`, `sumPayloadValues` against
+missing/empty payloads); `KnowledgeRefreshTriggerTests.swift` (the pure throttle's four
+boundary cases); `KnowledgeStoreTests.swift` (end-to-end `refresh()` against an in-memory
+`ModelContainer` + a scripted `MockHealthReadStore` -- persistence round-trip via a
+second, fresh `ModelContext`; staleness/`asOf` propagation across two refresh cycles;
+correction pinning wins, both for a re-derived key and an untouched one; clinical default-
+exclusion through the full persisted profile; all four tool-facing summaries, including
+their "no data" sentences). **VERIFIED, not just written:** this session had the actual
+Xcode 27 beta *and* Xcode 26.4.1 both installed -- ran `swift build`/`swift test -Xswiftc
+-warnings-as-errors` for CoachKit under both toolchains directly (catching the
+`nonisolated`, access-control, and `HistoryObserver`-availability issues above for real,
+before they could reach CI), then ran the repo's full `make test` end to end: all five
+package suites (CoreModel 15, Secrets 14, GoogleHealthClient 35, SyncKit 260, CoachKit 39),
+the app target's `HealthLoomTests` (43), and `xcodebuild build test` on an iOS 27.0
+simulator (5 UI tests, 1 self-skipped per the existing toolchain note) all pass, zero
+warnings, zero failures. **Deliberately deferred (later WPs' explicit scope):**
+`ContextAssembler` (WP-20, reads the persisted `KnowledgeProfile` this WP produces);
+wiring `KnowledgeRefreshTrigger`/`requestReadAuthorization()` into the app's DI/onboarding
+(no app-target WP claims this yet -- flagged above); user goals as profile fields (WP-19's
+step 2 mentions them, but no settings UI or owning WP exists for entering one, so none is
+invented); a real payload schema for `LocalSample.payloadJSON` (still none exists anywhere
+in the codebase; this WP adds a third independent decoder against the same undocumented
+wire shape rather than a fourth wrong guess -- consolidating into one shared, public type
+is flagged as a good, but out-of-scope, follow-up for whoever next touches this).
+
+## Code review fixes — WP-19 Knowledge module (code-review-findings.md, 2026-08-28)
+
+Addressed all 15 findings from the 2026-08-28 code review of `Packages/CoachKit/Sources/CoachKit/Knowledge/`
+(9-parallel-angle review + direct verification against a local toolchain). 14 fixed; one
+(#8) investigated, a real fix attempted and rejected because it does not compile, and
+documented as an accepted, bounded limitation instead of a false "fixed."
+
+**`KnowledgeStore.swift`:**
+- **#1 (`Dictionary(uniqueKeysWithValues:)` traps on a duplicate correction key):** switched
+  to `Dictionary(_:uniquingKeysWith:)` keeping the first occurrence -- degrades
+  deterministically instead of crashing if two correction-sourced fields ever share a key.
+- **#2 (`try? context.save()` swallows failures):** `refresh(now:)` is now `async throws`;
+  `performRefresh` calls `try context.save()` and lets the error propagate. No caller existed
+  yet to update besides this WP's own tests (nothing wires `refresh()` into app/UI code yet).
+- **#3 (no reentrancy guard -- a slow earlier call could save after and overwrite a faster
+  later one):** added a FIFO async lock (`isRefreshing`/`refreshWaiters`, `CheckedContinuation`-
+  based) around `performRefresh` -- overlapping calls now execute strictly in call order, never
+  interleaved. **Could not** implement this as `Task<KnowledgeProfile, Error>` chaining (the
+  obvious approach): confirmed by direct compilation that `KnowledgeProfile` (a `@Model`
+  reference type) has its `Sendable` conformance explicitly marked unavailable by SwiftData,
+  so it can never be a `Task`'s/`async let`'s result type. The lock pattern sidesteps this
+  entirely (nothing Sendable-constrained crosses a task boundary). Verified with a real timing
+  test (`KnowledgeStoreReentrancyTests`, `MockHealthReadStore.nextDailyStepsDelayNanoseconds`)
+  that reproduces the exact regression shape and confirms the fix under real `Task` scheduling,
+  not just code inspection.
+- **#4 (unlinked-workout count ignored the 30-day window) / #10 (`refresh()` fetched every
+  `LocalSample` row ever stored, unbounded):** one fix covers both -- the `LocalSample` fetch
+  is now bounded by a `#Predicate` to `min(workoutsStart, localOnlyStart)` (the widest window
+  any derivation actually needs), so `cachedExerciseSupplements` can no longer contain a
+  sample older than `workoutsWindowDays` in the first place. `ExerciseSupplement` gained a
+  `start: Date` field (see LocalSamplePayloadDecoding.swift below) so `workoutsSummary(days:)`
+  can also re-slice it directly instead of a secondary lookup back into `cachedLocalSamples`
+  by `externalID` (that lookup is gone now, a simplification alongside the fix).
+- **#5 (tool-facing summaries windowed against wall-clock `.now` instead of `refresh()`'s
+  `now`):** added `referenceNow`, set to `now` at the top of each `performRefresh`; every
+  summary method's window/`asOf` now reads `referenceNow`, never `.now`.
+
+**`HealthReadStore.swift`:**
+- **#6 (workout distance only ever read from `distanceWalkingRunning`):** added the other
+  eight activity-specific distance `HKQuantityTypeIdentifier`s (cycling, swimming, wheelchair,
+  downhill/cross-country skiing, paddle sports, rowing, skating) and take whichever one is
+  actually present in `workout.allStatistics` -- verified every identifier exists in the real
+  iOS 27.0 SDK headers before using it, not assumed.
+- **#7 (`HKQuery.predicateForSamples` default options match on any overlap, diverging from
+  `MockHealthReadStore`'s start-date-only filter and from both methods' own "for [start, end]"
+  doc comments):** added `.strictStartDate` to `sleepStageSegments`'s and `workouts`'s
+  predicates so production semantics match the documented contract and the mock exactly.
+- **#15 (`HealthKitReadStore` implicitly MainActor-isolated, serializing every `async let` in
+  `KnowledgeStore.refresh()` through MainActor before its first suspension point):** marked
+  `nonisolated`, same precedent as `HealthReadTypes.swift`'s value types.
+
+**`KnowledgeDerivation.swift`:**
+- **#9 (`localOnlyField`'s window had no upper bound -- a future-dated sample, e.g. from
+  device clock skew, would count forever):** added `$0.start <= asOf` alongside the existing
+  lower bound.
+- **#11 (unlinked exercise sessions hardcoded the literal word "Fitbit" in coach-facing
+  text):** now names the actual `ExerciseSupplement.source`; when every unlinked supplement
+  shares one source it's named, a genuinely mixed set falls back to "other" rather than
+  asserting any one of them.
+- **#12 (`localOnlyField`'s device-label pick, `matching.first?.source`, was nondeterministic
+  over SwiftData's unordered fetch):** now picks the most-recent sample's source
+  (`matching.max(by: start)`), a pure function of the input set regardless of array order.
+- **#13 (independently-rounded sleep-stage percentages could sum to 99% or 101%):**
+  implemented the largest-remainder method (`largestRemainderRounding`) -- floors every
+  percentage, then distributes the shortfall to the largest fractional remainders first,
+  guaranteeing the displayed breakdown always sums to exactly 100.
+
+**`LocalSamplePayloadDecoding.swift` / new `CoreModel/ExercisePayloadDecoding.swift`:**
+- **#14 (the exercise-payload JSON decoder was hand-duplicated, byte-for-byte, between
+  `ExerciseSupplement` here and the app target's `ActivitiesModels.FitbitActivitySupplement`):**
+  extracted the shared decode logic to `LocalSample.decodedExercisePayload` (new
+  `ExercisePayloadFields` struct) in CoreModel -- the common ancestor package both CoachKit and
+  the app target already depend on. Both `ExerciseSupplement.init(sample:)` and
+  `FitbitActivitySupplement.init(sample:)` now call this one implementation. Hit and fixed
+  the same MainActor-default-isolation issue as #15 along the way: `@Model`-generated types
+  are themselves `nonisolated` (to support SwiftData's background contexts), so
+  `LocalSample.decodedExercisePayload`'s isolation is inferred from `LocalSample`, not from
+  CoreModel's package-wide MainActor default -- `ExercisePayloadFields` needed an explicit
+  `nonisolated` to be constructible from that context (confirmed by direct compilation, same
+  category of issue WP-19's own entry already hit once for `HealthReadTypes.swift`). Added
+  `ExercisePayloadDecodingTests.swift` (CoreModel) pinning the shared contract directly.
+- `ExerciseSupplement` also gained `start: Date` and `source: String` fields (see #4/#11
+  above) via its `init(sample:)`.
+
+**`KnowledgeRefreshTrigger.swift` -- #8 (a change landing between `onChange` firing and the
+deferred `observeChanges()` re-registration completing is silently missed), investigated, not
+"fixed":** the seemingly obvious fix -- re-register tracking synchronously inside `onChange`,
+before the `Task`/MainActor hop, so the gap shrinks to near-zero -- **does not compile**:
+verified by direct compilation that `onChange`'s closure runs in a nonisolated context
+(`withObservationTracking` is a plain nonisolated global function), so calling this class's
+MainActor-isolated `observeChanges()` from it is a hard compiler error, not a style choice.
+Closing the gap for real would need a different mechanism entirely (e.g. an AsyncSequence-
+based observation bridge), which is out of proportion to a WP-19 follow-up fix. Left as
+Apple's own documented recursive-registration idiom (matches the WWDC/Observation-framework
+sample verbatim) with its same known, narrow limitation, now spelled out in the code comment
+instead of silently present: the window is one MainActor hop wide, and a missed write is a
+deferred refresh, not lost data -- it self-corrects the moment any other write lands.
+
+**Tests:** 7 new/expanded test cases across `KnowledgeDerivationTests.swift` (duplicate-key
+degradation is exercised at the store level; sleep-percentage-sums-to-100, future-dated-
+sample exclusion, deterministic source label, actual-vs-generic unlinked-source label),
+`KnowledgeStoreTests.swift` (duplicate correction keys don't trap, old unlinked exercise
+sample excluded from the bounded fetch, a genuine timing-based reentrancy regression test),
+and `CoreModelTests/ExercisePayloadDecodingTests.swift` (3, pinning the newly-shared decoder).
+CoachKit: 39 → 46 tests. CoreModel: 15 → 18 tests.
+
+**VERIFIED, not just written (same standard as WP-19's own entry):** every fix was compiled
+and test-driven on this session's real Xcode 27 beta *and* Xcode 26.4.1 toolchains directly
+(catching the `Sendable`/`Task` and `nonisolated`-inference issues above for real, before they
+could reach CI), then the repo's full `make test` was run end to end: all package suites
+(CoreModel 18, Secrets 14, GoogleHealthClient 35, SyncKit 260, CoachKit 46), the app target's
+`HealthLoomTests` (43, including `ActivityConsolidatorTests` against the now-shared decoder),
+and `xcodebuild build test` on an iOS 27.0 simulator all pass, zero warnings, zero failures.
+
+## Code review fixes, round 2 — WP-19 Knowledge module (2026-09-01)
+
+A second review pass (5-parallel-angle review + direct verification against a local toolchain)
+over the same `Packages/CoachKit/Sources/CoachKit/Knowledge/` module the 2026-08-28 round
+covered, once more with fresh eyes now that the module has settled. 17 findings; 14 fixed, 3
+deliberately left as documented, out-of-proportion cleanups rather than false "fixed"s.
+
+**`KnowledgeStore.swift`:**
+- **`fetchOrCreateProfile`'s `try? context.fetch(...)` swallowed a real fetch error the same
+  as "no profile exists yet":** now `throws` and propagates, matching `refresh()`'s own
+  already-documented "propagate `ModelContext.save()`'s error, don't swallow it" posture (round
+  1's #2) instead of contradicting it one call away. A genuine fetch failure could otherwise
+  insert a second `KnowledgeProfile` row, breaking the store's documented single-row invariant.
+- **The bounded `LocalSample` fetch (round 1's #4/#10) had a lower bound only, no upper
+  bound:** added `&& $0.start <= now` to the `#Predicate`, matching `localOnlyField`'s own
+  `asOf` bound (round 1's #9) a layer downstream -- a future-dated sample (device clock skew)
+  no longer ages into the cache forever. Its `try? ... ?? []` was swallowing real fetch errors
+  too, the same bug as `fetchOrCreateProfile` above and with a worse consequence: since
+  `profile.sections` is rebuilt from scratch every cycle, a transient failure silently erased
+  every previously-persisted local-only/clinical field instead of leaving it stale. Now
+  propagates via `throws` as well.
+- **`untouchedCorrections` re-filtered `profile.sections` directly, with no dedup of its
+  own** (unlike the `corrections` dictionary a few lines above it, which already dedups via
+  `Dictionary(_:uniquingKeysWith:)` for round 1's #1): two correction-sourced fields sharing a
+  key this cycle never derives anything for (e.g. a user goal) would both survive into
+  `profile.sections`, forever. Now built from `corrections.values` -- the already-deduped set --
+  instead of re-scanning the raw array.
+- **The tool-facing summaries (`stepsSummary`/`sleepSummary`/`workoutsSummary`) read
+  `cachedSteps`/`cachedSleepSegments`/`cachedWorkouts`/`referenceNow` directly with no
+  coordination with the round 1 `acquireRefreshLock()`/`releaseRefreshLock()` pair, which only
+  guards `performRefresh` itself:** a concurrent summary call mid-`performRefresh` could observe
+  a cache straddling two different refresh generations (one array already updated to the new
+  cycle, another still from the old one). Fixed by committing every cached array + `referenceNow`
+  together with zero `await` between the assignments, instead of assigning each as its own
+  `async let` resolves -- Swift's cooperative scheduling guarantees no other MainActor task can
+  interleave between two statements with no suspension point between them, so the commit is
+  effectively atomic from a reader's perspective.
+- **Same three summary methods also didn't clamp the caller's requested `days`/`nights`
+  against the fixed window `refresh()` actually cached** (`stepsWindowDays`/`sleepWindowNights`/
+  `workoutsWindowDays`): a request wider than the cache was a no-op over the real data yet still
+  rendered a wider-sounding label (e.g. `stepsSummary(days: 90)` claiming "(90-day avg)" backed
+  by ≤30 days of real data). Now clamped before both the slice and the displayed label.
+
+**`KnowledgeDerivation.swift`:**
+- **`localOnlyField`'s device-label tie-break (round 1's #12, `matching.max(by: { $0.start <
+  $1.start } })`) wasn't actually order-independent on a tie:** the surrounding comment claimed
+  determinism "independent of array order," but Swift's `max(by:)` breaks a genuine tie by
+  traversal order, not a rule that ignores it. Paired `externalID` in as a secondary key
+  (`@Attribute(.unique)` on `LocalSample`, so it can never itself tie) -- the comparator is now a
+  true strict ordering with no remaining ties, genuinely order-independent rather than usually so.
+- **`Int(total.rounded())` in the non-clinical branch had no bounds check:** `sumPayloadValues`
+  is deliberately unbounded by design (its own doc comment: sums every numeric value present,
+  "would only overcount, never throw") -- but the `Int` conversion downstream traps once that sum
+  exceeds `Int`'s range, contradicting the same "never throw" contract one layer up. Clamped to
+  `0...1_000_000_000` before rounding/converting.
+- **`duration(seconds:)` had no clamp for negative input:** a `SleepStageSegment` with `end <
+  start` (clock-skewed/malformed HealthKit data) produced a negative `totalMinutes`, and Swift's
+  truncating `/`/`%` on a negative dividend yielded misleading text (e.g. a -25 hour skew
+  rendering as "0m" -- silently hiding the error rather than flagging it). Clamped to `0`.
+
+**`HealthReadStore.swift`:**
+- **`distance(for:)` (round 1's #6) assumed a workout populates at most one activity-specific
+  distance type and returned the first match:** true for single-sport workouts, false for a
+  multisport one (e.g. a triathlon `HKWorkout`, which populates `distanceSwimming`,
+  `distanceCycling`, and `distanceWalkingRunning` simultaneously) -- silently dropping every leg
+  but the first. Now sums whichever of the nine distance types are actually present.
+- **`dailyCollection` (backing `dailySteps`/`dailyRestingHeartRate`/`dailyHeartRateVariability`)
+  never got round 1's #7 `.strictStartDate` fix**, applied at the time only to
+  `sleepStageSegments`/`workouts` -- the identical any-overlap-vs-start-date-only divergence from
+  `MockHealthReadStore`'s semantics was left live here. Added.
+- **`dailyCollection` anchors its statistics buckets at `start`'s calendar-day midnight, but
+  `quantitySamplePredicate` only counts samples from the exact (non-midnight) `start` instant
+  onward:** the oldest bucket in every window is therefore a genuinely partial day, yet
+  `stepsField`/`vitalsField` downstream average every returned day equally -- systematically
+  biasing the reported "~N/day" average low on essentially every refresh, not just as a rare edge
+  case. Dropped that leading partial bucket (`guard statistics.startDate >= start else { return
+  }`) rather than let it masquerade as a full one.
+
+**`ExercisePayloadDecoding.swift` (CoreModel) / three app-target views:**
+- **The snake_case→Title Case transform round 1's #14 shared as `LocalSample
+  .decodedExercisePayload` was itself a fourth independent copy of an algorithm already
+  hand-duplicated three more times** (`SettingsView.displayName(_:)`, `SyncLogRow.displayName`,
+  `BackfillTypeRow.displayName`'s `default:` case -- the last of which even comments that it's
+  copying the first two "the same way"). This diff's own stated purpose (round 1's #14) was
+  eliminating exactly this kind of duplication, one level up; it had reintroduced it one level
+  down. Added `GoogleDataType.displayName`/`.titleCased(_:)` (mirroring the existing
+  `.filterName`/`.endpointName` pattern on the same enum) as the one shared implementation; all
+  four call sites -- the three app-target views plus `ExercisePayloadDecoding.swift` itself --
+  now call it. `titleCased(_:)` needed an explicit `nonisolated` for the same reason round 1's
+  #14 entry already hit once for `ExercisePayloadFields`: it's called from
+  `decodedExercisePayload`'s own `nonisolated` context (inferred from `LocalSample`), not from
+  CoreModel's package-wide MainActor default.
+
+**`MockHealthReadStore.swift` (CoachKitTests):**
+- **Missing `nonisolated`, unlike the production `HealthKitReadStore` (round 1's #15, marked
+  `nonisolated` for exactly this reason):** CoachKitTests carries the same package-wide
+  `.defaultIsolation(MainActor.self)` as CoachKit itself, so the mock's methods were implicitly
+  MainActor-isolated under test. That mismatch meant the `async let` reads in
+  `KnowledgeStore.performRefresh()` never actually ran concurrently off-MainActor under test the
+  way they do in production -- a regression that accidentally removed `nonisolated` from
+  `HealthKitReadStore` (silently reintroducing round 1's #15) would go uncaught by every test
+  here. Added.
+
+**Investigated, left as documented, accepted gaps rather than false "fixed"s:**
+- **`HealthKitReadStore.displayName(for:)` (HK-only, coach-facing text) duplicates
+  `ActivitiesProvider.activityName(_:)` (app-target, Activities-view text) over the same ~13
+  `HKWorkoutActivityType` cases, with different label choices for several ("Running" vs. "Run",
+  "Cycling" vs. "Ride")**: not merged. The two differences look deliberate, not accidental --
+  one surface is a natural-language coach sentence, the other a compact list-row label -- and
+  collapsing them into one shared table means either picking one register for both surfaces (a
+  product call, not a code-review call) or introducing new plumbing neither module currently has
+  (`HealthReadStore.swift` and `ActivitiesProvider.swift` don't import SyncKit's canonical
+  `MappedWorkoutActivityType`, and reverse-mapping the real `HKWorkoutActivityType` back onto it
+  safely is itself close to the ~80-case fragile-switch problem `MappedWorkoutActivityType` was
+  introduced to avoid). Flagged here for whoever next touches either label list.
+- **The bounded `LocalSample` fetch (`KnowledgeStore.performRefresh`) is inlined directly via
+  `ModelContext`/`FetchDescriptor` instead of going through a protocol seam the way every
+  HealthKit read does (`HealthReadStore`)**: left as is. Introducing a second protocol seam
+  purely to make one call site swappable is a real architectural improvement but a bigger one
+  than this fix-pass's scope -- no second `LocalSample` consumer exists yet to motivate it, and
+  `KnowledgeStoreTests` already exercises this path directly against a real in-memory
+  `ModelContainer`.
+- **`KnowledgeStore.calendar` and `HealthKitReadStore.calendar` are independently injectable
+  (both default to `.current`) with nothing enforcing they agree**: left as is -- both default
+  identically today, so this is a latent risk (a future caller wiring the two with different
+  calendars would see silently disagreeing day boundaries), not a live bug, and there's no
+  actionable fix short of a larger composition-root redesign forcing one shared `Calendar`
+  through both.
+
+**Tests:** 6 new test cases -- `KnowledgeDerivationTests.swift` (a genuine `start`-tie resolved
+deterministically via `externalID`, an extreme payload value that no longer traps `Int(...)`,
+negative-seconds clamping to `"0m"`, positive-seconds regression coverage for the same function),
+`KnowledgeStoreTests.swift` (duplicate untouched-correction keys collapse to one instead of both
+surviving, all three tool-facing summaries clamp their label to the actual cached window).
+CoachKit: 46 → 52 tests.
+
+**VERIFIED, not just written:** every fix was compiled and test-driven against this session's
+real Xcode 27 beta toolchain (`DEVELOPER_DIR` pointed at `/Applications/Xcode-beta.app`, matching
+`Makefile`'s `test` target exactly), package tests run with `-warnings-as-errors` for CoreModel/
+SyncKit/CoachKit, then the full `xcodebuild build test` against an iOS 27.0 simulator (app build +
+`HealthLoomTests` + `HealthLoomUITests`) -- all pass, zero warnings, zero failures.

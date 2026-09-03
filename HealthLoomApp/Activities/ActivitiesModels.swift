@@ -55,12 +55,10 @@ struct FitbitActivitySupplement: Identifiable, Hashable {
 
     var id: String { externalID }
 
-    /// Decodes the shapes `SyncEngine`/`BackfillCoordinator` persist:
-    /// `payloadJSON` is a JSON object whose `sessionPayload` key (base64
-    /// `Data` under `JSONEncoder`'s default strategy) holds the Google
-    /// Exercise session's own fields (`exercise.activity_type` /
-    /// `exercise.distance` (m) / `exercise.energy` (kcal) -- the wire shape
-    /// `ExerciseSessionDecoding.swift` documents). Every level degrades to
+    /// Decodes via the shared `LocalSample.decodedExercisePayload` (CoreModel
+    /// -- code review 2026-08-28 finding #14: this was a hand-duplicated copy
+    /// of the same decode contract CoachKit's `KnowledgeStore` also needs;
+    /// both now call the one shared implementation). Every level degrades to
     /// `nil` rather than failing -- the row still renders with dates and
     /// source alone.
     init(sample: LocalSample) {
@@ -70,22 +68,10 @@ struct FitbitActivitySupplement: Identifiable, Hashable {
         self.source = sample.source
         self.linkedWatchWorkoutUUID = sample.linkedWatchWorkoutUUID
 
-        var activityName: String?
-        var distanceMeters: Double?
-        var energyKilocalories: Double?
-        if let envelope = try? JSONSerialization.jsonObject(with: sample.payloadJSON) as? [String: Any],
-           let sessionBase64 = envelope["sessionPayload"] as? String,
-           let sessionData = Data(base64Encoded: sessionBase64),
-           let session = try? JSONSerialization.jsonObject(with: sessionData) as? [String: Any] {
-            activityName = (session["exercise.activity_type"] as? String).map { wire in
-                wire.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
-            }
-            distanceMeters = session["exercise.distance"] as? Double
-            energyKilocalories = session["exercise.energy"] as? Double
-        }
-        self.activityName = activityName
-        self.distanceMeters = distanceMeters
-        self.energyKilocalories = energyKilocalories
+        let fields = sample.decodedExercisePayload
+        self.activityName = fields.activityName
+        self.distanceMeters = fields.distanceMeters
+        self.energyKilocalories = fields.energyKilocalories
     }
 }
 

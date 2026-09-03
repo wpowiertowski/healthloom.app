@@ -7,9 +7,15 @@
 import PackageDescription
 
 // CoachKit: provider abstraction, prompt/knowledge/context layers, readiness.
-// Depends on CoreModel and Secrets. Reads health data only through KnowledgeStore
-// (HealthKit queries + LocalSample) -- never through GoogleHealthClient.
-// See architecture.md §2 (module map) and §3 (concurrency model).
+// Depends on CoreModel, Secrets, and (as of WP-19) SyncKit -- reuses
+// `HealthKitAuth.requestRead(_:)` (WP-06) for KnowledgeStore's own read
+// authorization and `isClinicalType` (WP-14's `Routing/ClinicalClassification
+// .swift`, whose header explicitly asks WP-19 to call it rather than
+// re-deriving the ECG/IRN list). Module map ordering (architecture.md §2)
+// allows this: SyncKit sits above CoachKit, so CoachKit may depend on it.
+// Reads health data only through KnowledgeStore (HealthKit queries +
+// LocalSample) -- never through GoogleHealthClient. See architecture.md §2
+// (module map) and §3 (concurrency model).
 
 let package = Package(
     name: "CoachKit",
@@ -20,11 +26,12 @@ let package = Package(
     dependencies: [
         .package(path: "../CoreModel"),
         .package(path: "../Secrets"),
+        .package(path: "../SyncKit"),
     ],
     targets: [
         .target(
             name: "CoachKit",
-            dependencies: ["CoreModel", "Secrets"],
+            dependencies: ["CoreModel", "Secrets", "SyncKit"],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
@@ -33,7 +40,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CoachKitTests",
-            dependencies: ["CoachKit"],
+            dependencies: ["CoachKit", "SyncKit"],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("NonisolatedNonsendingByDefault"),

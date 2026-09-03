@@ -64,6 +64,28 @@ public enum GoogleDataType: String, CaseIterable, Sendable, Hashable, Codable {
         rawValue.replacingOccurrences(of: "_", with: "-")
     }
 
+    /// Title-cased, space-separated identifier for UI display, e.g. `body_fat` ->
+    /// "Body Fat". Previously hand-duplicated in three app-target views
+    /// (`SettingsView`, `SyncLogRow`, `BackfillTypeRow`); shared here as the one
+    /// implementation so a future formatting change (e.g. acronym handling)
+    /// doesn't have to be made in four places.
+    public var displayName: String {
+        Self.titleCased(rawValue)
+    }
+
+    /// Splits a snake_case identifier into space-separated Title Case words.
+    /// Also used by `LocalSample.decodedExercisePayload` (ExercisePayloadDecoding.swift)
+    /// to title-case a wire-format activity type that isn't itself a `GoogleDataType`.
+    ///
+    /// `nonisolated`: a pure `String -> String` transform with no actor-isolated
+    /// state, called from `LocalSample.decodedExercisePayload`'s own `nonisolated`
+    /// context (that property's doc comment explains why) -- without this, passing
+    /// it as a function value there fails to build under CoreModel's package-wide
+    /// `.defaultIsolation(MainActor.self)`.
+    nonisolated static func titleCased(_ snakeCase: String) -> String {
+        snakeCase.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+    }
+
     /// The Google Health API OAuth scope family this data type belongs to
     /// (base-knowledge §3, right-most column). Read and write are separate scopes
     /// (`.readonly`/`.writeonly`) per data type; this enum identifies only the family.
