@@ -49,7 +49,7 @@ struct ContextAssemblerFilteringTests {
             field("user.goal", sentinel, excluded: true),
         ])
 
-        let assembled = try assembler.assemble(for: .chat)
+        let assembled = try assembler.assemble(for: .chat, promptTokens: 0)
         #expect(assembled.context.fields.allSatisfy { !$0.excludedFromAI })
         #expect(!assembled.context.fields.contains { $0.key == "user.goal" })
 
@@ -69,7 +69,7 @@ struct ContextAssemblerFilteringTests {
             field("steps.dailyAverage", "~8,200 steps/day (30-day avg)"),
         ])
 
-        let assembled = try assembler.assemble(for: .chat)
+        let assembled = try assembler.assemble(for: .chat, promptTokens: 0)
         #expect(!assembled.context.fields.contains { $0.isClinical })
         #expect(assembled.context.fields.contains { $0.key == "steps.dailyAverage" })
     }
@@ -85,7 +85,7 @@ struct ContextAssemblerFilteringTests {
             ),
         ])
 
-        let assembled = try assembler.assemble(for: .dailyInsight)
+        let assembled = try assembler.assemble(for: .dailyInsight, promptTokens: 0)
         #expect(assembled.context.fields.count == 1)
         #expect(assembled.context.fields[0].isClinical)
     }
@@ -118,7 +118,8 @@ struct ContextAssemblerTrimmingTests {
             for: .chat,
             now: now,
             locale: locale,
-            tokenBudget: shell + twoHighestCost
+            tokenBudget: shell + twoHighestCost,
+            promptTokens: 0
         )
 
         #expect(assembled.didTrim)
@@ -144,7 +145,7 @@ struct ContextAssemblerTrimmingTests {
         ]
         let (assembler, _) = try makeAssembler(sections: sections)
 
-        let assembled = try assembler.assemble(for: .chat, tokenBudget: .max)
+        let assembled = try assembler.assemble(for: .chat, tokenBudget: .max, promptTokens: 0)
         #expect(!assembled.didTrim)
         #expect(assembled.context.fields.map(\.key) == ["vitals.restingHeartRate", "activity.workouts"])
     }
@@ -158,7 +159,8 @@ struct ContextAssemblerTrimmingTests {
 
         let assembled = try assembler.assemble(
             for: .chat,
-            tokenBudget: ContextAssembler.estimatedTokens(for: [sleep])
+            tokenBudget: ContextAssembler.estimatedTokens(for: [sleep]),
+            promptTokens: 0
         )
         #expect(assembled.context.fields.map(\.key) == ["vitals.restingHeartRate"])
         #expect(assembled.didTrim)
@@ -171,7 +173,8 @@ struct ContextAssemblerTrimmingTests {
 
         let assembled = try assembler.assemble(
             for: .chat,
-            tokenBudget: ContextAssembler.estimatedTokens(for: [big])
+            tokenBudget: ContextAssembler.estimatedTokens(for: [big]),
+            promptTokens: 0
         )
         #expect(assembled.context.fields.map(\.key) == ["vitals.restingHeartRate"])
         #expect(assembled.didTrim)
@@ -197,7 +200,7 @@ struct ContextAssemblerTrimmingTests {
             field("sleep.duration", "7h 12m avg (14 nights)"),
         ])
 
-        let assembled = try assembler.assemble(for: .chat, tokenBudget: 0)
+        let assembled = try assembler.assemble(for: .chat, tokenBudget: 0, promptTokens: 0)
         #expect(assembled.context.fields.map(\.key) == ["sleep.duration"])
         #expect(assembled.didTrim)
     }
@@ -213,7 +216,7 @@ struct ContextAssemblerSnapshotTests {
         ])
 
         let now = Date(timeIntervalSince1970: 1_700_000_100)
-        let assembled = try assembler.assemble(for: .chat, now: now)
+        let assembled = try assembler.assemble(for: .chat, now: now, promptTokens: 0)
 
         // The exact bytes handed out decode back to the exact struct: the
         // trace UI renders what was sent, never a reconstruction.
@@ -241,7 +244,7 @@ struct ContextAssemblerSnapshotTests {
         let now = Date(timeIntervalSince1970: 1_700_000_100)
         let locale = Locale(identifier: "en_US")
 
-        let assembled = try assembler.assemble(for: .dailyInsight, now: now, locale: locale)
+        let assembled = try assembler.assemble(for: .dailyInsight, now: now, locale: locale, promptTokens: 0)
         #expect(assembled.context.fields.isEmpty)
         #expect(!assembled.didTrim)
         #expect(assembled.estimatedTokens == ContextAssembler.estimatedShellTokens(
@@ -269,7 +272,8 @@ struct ContextAssemblerSnapshotTests {
             for: .chat,
             now: now,
             locale: locale,
-            tokenBudget: shell + ContextAssembler.estimatedTokens(for: [vitals])
+            tokenBudget: shell + ContextAssembler.estimatedTokens(for: [vitals]),
+            promptTokens: 0
         )
         #expect(assembled.context.fields.map(\.key) == ["vitals.restingHeartRate"])
         #expect(assembled.didTrim)
@@ -283,14 +287,298 @@ struct ContextAssemblerSnapshotTests {
         ])
 
         let usAssembled = try assembler.assemble(
-            for: .chat, locale: Locale(identifier: "en_US"), unitSystem: nil
+            for: .chat, locale: Locale(identifier: "en_US"), unitSystem: nil, promptTokens: 0
         )
         #expect(usAssembled.context.localeIdentifier == "en_US")
         #expect(usAssembled.context.unitSystem == .imperial)
 
         let explicit = try assembler.assemble(
-            for: .chat, locale: Locale(identifier: "en_US"), unitSystem: .metric
+            for: .chat, locale: Locale(identifier: "en_US"), unitSystem: .metric, promptTokens: 0
         )
         #expect(explicit.context.unitSystem == .metric)
+    }
+}
+
+@Suite("ContextAssembler review fixes (WP-21/22 pass)")
+@MainActor
+struct ContextAssemblerReviewTests {
+    @Test("correction-sourced fields outrank every derived field")
+    func correctionsRankFirst() throws {
+        // A standalone user goal (WP-19 pinning: source-marked, no derivation
+        // produces its key) plus a full derived set, budget fitting exactly
+        // two fields. The goal must survive with the top derived field --
+        // previously it sorted dead last (rank 3 + appended-last tie-break)
+        // and was dropped first, inverting \"corrections beat re-derivation\".
+        let goal = ProfileField(
+            key: "user.goal",
+            displayText: "Run a 10K in spring",
+            source: KnowledgeStore.correctionSourceLabel,
+            asOf: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let vitals = field("vitals.restingHeartRate", "Resting HR ~58 bpm (30-day avg)")
+        let sleep = field("sleep.duration", "7h 12m avg (14 nights)")
+        let steps = field("steps.dailyAverage", "~8,200 steps/day (30-day avg)")
+        let workouts = field("activity.workouts", "3 workouts in the last 30 days")
+        let (assembler, _) = try makeAssembler(sections: [workouts, steps, sleep, vitals, goal])
+
+        let now = Date(timeIntervalSince1970: 1_700_000_100)
+        let shell = ContextAssembler.estimatedShellTokens(
+            localeIdentifier: "en_US",
+            unitSystem: .imperial,
+            today: now
+        )
+        let assembled = try assembler.assemble(
+            for: .chat,
+            now: now,
+            locale: Locale(identifier: "en_US"),
+            tokenBudget: shell + ContextAssembler.estimatedTokens(for: [goal, vitals]),
+            promptTokens: 0
+        )
+        #expect(assembled.didTrim)
+        #expect(assembled.context.fields.map(\.key) == ["user.goal", "vitals.restingHeartRate"])
+    }
+
+    @Test("a shadowing correction keeps its derived key's rank")
+    func shadowingCorrectionKeepsRank() throws {
+        // A correction overriding a derived key still orders with that key's
+        // rank (here: sleep, rank 1) -- ahead of steps, behind vitals.
+        let correctedSleep = ProfileField(
+            key: "sleep.duration",
+            displayText: "Actually 6h -- tracker overcounts",
+            source: KnowledgeStore.correctionSourceLabel,
+            asOf: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let vitals = field("vitals.restingHeartRate", "Resting HR ~58 bpm (30-day avg)")
+        let steps = field("steps.dailyAverage", "~8,200 steps/day (30-day avg)")
+        let (assembler, _) = try makeAssembler(sections: [steps, correctedSleep, vitals])
+
+        let assembled = try assembler.assemble(for: .chat, tokenBudget: .max, promptTokens: 0)
+        #expect(!assembled.didTrim)
+        #expect(assembled.context.fields.map(\.key) == [
+            "vitals.restingHeartRate", "sleep.duration", "steps.dailyAverage",
+        ])
+    }
+
+    @Test("prompt tokens reserve budget and report overflow")
+    func promptTokensReserve() throws {
+        let vitals = field("vitals.restingHeartRate", "Resting HR ~58 bpm (30-day avg)")
+        let sleep = field("sleep.duration", "7h 12m avg (14 nights)")
+        let (assembler, _) = try makeAssembler(sections: [sleep, vitals])
+        let now = Date(timeIntervalSince1970: 1_700_000_100)
+        let shell = ContextAssembler.estimatedShellTokens(
+            localeIdentifier: "en_US",
+            unitSystem: .imperial,
+            today: now
+        )
+        let fieldsCost = ContextAssembler.estimatedTokens(for: [vitals, sleep])
+        let budget = shell + fieldsCost
+
+        // Without a prompt reserve the full context fits, untrimmed.
+        let unreserved = try assembler.assemble(
+            for: .chat, now: now, locale: Locale(identifier: "en_US"), tokenBudget: budget, promptTokens: 0
+        )
+        #expect(!unreserved.didTrim)
+        #expect(!unreserved.promptOverBudget)
+        #expect(unreserved.context.fields.count == 2)
+
+        // A prompt as large as the whole budget leaves no room for fields:
+        // top-1 fallback, overflow reported, total covers prompt + request.
+        let reserved = try assembler.assemble(
+            for: .chat,
+            now: now,
+            locale: Locale(identifier: "en_US"),
+            tokenBudget: budget,
+            promptTokens: budget
+        )
+        #expect(reserved.didTrim)
+        #expect(reserved.promptOverBudget)
+        #expect(reserved.context.fields.map(\.key) == ["vitals.restingHeartRate"])
+        #expect(reserved.estimatedTokens == budget + shell + ContextAssembler.estimatedTokens(
+            for: reserved.context.fields
+        ))
+    }
+
+    @Test("selectFields reports overflow for a lone over-budget field")
+    func selectFieldsReportsLoneOverflow() throws {
+        let big = field("vitals.restingHeartRate", String(repeating: "y", count: 400))
+        let selection = ContextAssembler.selectFields(from: [big], tokenBudget: 10)
+        #expect(selection.kept.count == 1)
+        #expect(selection.didTrim)
+    }
+
+    @Test("assemble prunes snapshots beyond the cap")
+    func snapshotPruning() throws {
+        let (assembler, container) = try makeAssembler(sections: [
+            field("steps.dailyAverage", "~8,200 steps/day (30-day avg)"),
+        ])
+        let seedContext = ModelContext(container)
+        for day in 1 ... 5 {
+            seedContext.insert(ContextSnapshot(
+                json: Data("{\"fields\":[]}".utf8),
+                createdAt: Date(timeIntervalSince1970: 1_600_000_000 + Double(day * 86_400))
+            ))
+        }
+        try seedContext.save()
+
+        let assembled = try assembler.assemble(for: .chat, promptTokens: 0, maxStoredSnapshots: 3)
+        let remaining = try ModelContext(container).fetch(FetchDescriptor<ContextSnapshot>())
+        #expect(remaining.count == 3)
+        #expect(remaining.map(\.id).contains(assembled.snapshotID))
+        #expect(remaining.allSatisfy {
+            $0.createdAt >= Date(timeIntervalSince1970: 1_600_000_000 + Double(3 * 86_400))
+        })
+    }
+}
+
+@Suite("ContextAssembler prune correctness (round 2)")
+@MainActor
+struct ContextAssemblerPruneTests {
+    @Test("a past-dated assembly never evicts its own snapshot")
+    func pastDatedNowKeepsOwnSnapshot() throws {
+        // The review probe: a future-dated row plus a past `now` (WP-23's
+        // morning insight, clock skew). The returned ID must always resolve.
+        let (assembler, container) = try makeAssembler(sections: [
+            field("steps.dailyAverage", "~8,200 steps/day (30-day avg)"),
+        ])
+        let seedContext = ModelContext(container)
+        seedContext.insert(ContextSnapshot(
+            json: Data("{\"fields\":[]}".utf8),
+            createdAt: Date(timeIntervalSince1970: 2_000_000_000)
+        ))
+        try seedContext.save()
+
+        let assembled = try assembler.assemble(
+            for: .chat,
+            now: Date(timeIntervalSince1970: 1_700_000_100),
+            promptTokens: 0,
+            maxStoredSnapshots: 1
+        )
+        let remaining = try ModelContext(container).fetch(FetchDescriptor<ContextSnapshot>())
+        #expect(remaining.map(\.id).contains(assembled.snapshotID))
+    }
+
+    @Test("eviction nulls linked turns instead of dangling")
+    func evictionNullsLinks() throws {
+        let (assembler, container) = try makeAssembler(sections: [
+            field("steps.dailyAverage", "~8,200 steps/day (30-day avg)"),
+        ])
+        // Five old snapshots, the oldest linked from a chat turn.
+        let seedContext = ModelContext(container)
+        var linkedID = UUID()
+        for day in 1 ... 5 {
+            let row = ContextSnapshot(
+                json: Data("{\"fields\":[]}".utf8),
+                createdAt: Date(timeIntervalSince1970: 1_600_000_000 + Double(day * 86_400))
+            )
+            if day == 1 { linkedID = row.id }
+            seedContext.insert(row)
+        }
+        seedContext.insert(ChatTurn(
+            role: "assistant",
+            content: "Old turn.",
+            provider: "test",
+            contextSnapshotID: linkedID
+        ))
+        try seedContext.save()
+
+        // Six rows in, cap three: d3, d2, d1 evicted. The bound holds for
+        // linked rows too -- d1's turn is nulled (renders "context expired",
+        // never a dangling ID) instead of pinning its snapshot forever.
+        let assembled = try assembler.assemble(for: .chat, promptTokens: 0, maxStoredSnapshots: 3)
+        let remaining = try ModelContext(container).fetch(FetchDescriptor<ContextSnapshot>())
+        #expect(remaining.count == 3)
+        #expect(remaining.map(\.id).contains(assembled.snapshotID))
+        #expect(!remaining.map(\.id).contains(linkedID))
+        let turns = try ModelContext(container).fetch(FetchDescriptor<ChatTurn>())
+        #expect(turns.count == 1)
+        #expect(turns[0].contextSnapshotID == nil)
+    }
+
+    @Test("assemblies record their producer purpose")
+    func purposeRecorded() throws {
+        let (assembler, container) = try makeAssembler(sections: [
+            field("steps.dailyAverage", "~8,200 steps/day (30-day avg)"),
+        ])
+        let chat = try assembler.assemble(for: .chat, promptTokens: 0)
+        let insight = try assembler.assemble(for: .dailyInsight, promptTokens: 0)
+        let byID = try ModelContext(container)
+            .fetch(FetchDescriptor<ContextSnapshot>())
+            .reduce(into: [UUID: String]()) { $0[$1.id] = $1.purpose }
+        #expect(byID[chat.snapshotID] == "chat")
+        #expect(byID[insight.snapshotID] == "dailyInsight")
+    }
+
+    @Test("an over-budget prompt overflows loudly, flagged as the prompt")
+    func emptyContextPromptOverflowReported() throws {
+        // No eligible fields at all; the prompt alone overflows ten times
+        // over. didTrim must signal (the request cannot fit), and
+        // promptOverBudget names the remedy: shorten the prompt, don't
+        // escalate for context that never existed.
+        let (assembler, _) = try makeAssembler()
+        let assembled = try assembler.assemble(
+            for: .chat,
+            tokenBudget: 100,
+            promptTokens: 1_000
+        )
+        #expect(assembled.context.fields.isEmpty)
+        #expect(assembled.didTrim)
+        #expect(assembled.promptOverBudget)
+    }
+
+    @Test("a prompt that exactly fills the budget is flagged as the prompt, not as trimming")
+    func promptExactlyFillingBudgetIsOverBudget() throws {
+        // Round-4 #3: at `promptTokens + shell == tokenBudget` the field
+        // budget is already 0, so no field selection can fit and the remedy
+        // is a shorter prompt. `>` reported "fields were dropped to fit" for
+        // a request whose prompt plus shell consumed the entire window.
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let locale = Locale(identifier: "en_US")
+        let (assembler, _) = try makeAssembler(sections: [
+            field("vitals.restingHeartRate", "Resting HR ~58 bpm (30-day avg)"),
+        ])
+        let shell = ContextAssembler.estimatedShellTokens(
+            localeIdentifier: locale.identifier, unitSystem: .imperial, today: now
+        )
+        let promptTokens = 500
+        let assembled = try assembler.assemble(
+            for: .chat,
+            now: now,
+            locale: locale,
+            tokenBudget: promptTokens + shell,
+            promptTokens: promptTokens
+        )
+        #expect(assembled.promptOverBudget)
+    }
+
+    @Test("a cap of zero retains only the in-flight snapshot, never every row")
+    func zeroCapPrunesEverythingButTheNewRow() throws {
+        // Round-4 #1: `assemble` passes `maxStoredSnapshots - 1`, so cap 0
+        // reached `pruneSnapshots` as -1 and hit a `guard keeping >= 0`
+        // early return -- making 0 the one value that disabled pruning
+        // entirely and grew the store without bound. Cap 0 must retain the
+        // in-flight row (its ID has to resolve) and nothing else.
+        let (assembler, container) = try makeAssembler(sections: [
+            field("steps.dailyAverage", "~8,200 steps/day (30-day avg)"),
+        ])
+        let seed = ModelContext(container)
+        for offset in 0..<3 {
+            seed.insert(ContextSnapshot(
+                json: Data("{}".utf8),
+                createdAt: Date(timeIntervalSince1970: 1_600_000_000 + Double(offset)),
+                purpose: "chat"
+            ))
+        }
+        try seed.save()
+
+        let assembled = try assembler.assemble(
+            for: .chat,
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            promptTokens: 0,
+            maxStoredSnapshots: 0
+        )
+
+        let remaining = try ModelContext(container).fetch(FetchDescriptor<ContextSnapshot>())
+        #expect(remaining.count == 1)
+        #expect(remaining.map(\.id) == [assembled.snapshotID])
     }
 }

@@ -321,3 +321,29 @@ struct ReadDataTypesTests {
         }
     }
 }
+
+@Suite("KnowledgeStore correction ordering")
+@MainActor
+struct KnowledgeStoreCorrectionOrderTests {
+    @Test("standalone corrections persist in key-sorted order")
+    func untouchedCorrectionsAreKeySorted() async throws {
+        // `Dictionary.values` order is per-process random; these fields now
+        // trim highest-priority with array-index tie-breaks, so hash order
+        // would make the surviving correction vary across launches.
+        let (store, container) = try makeStore()
+        let context = ModelContext(container)
+        let zebra = ProfileField(
+            key: "user.zebra", displayText: "Zebra goal",
+            source: KnowledgeStore.correctionSourceLabel, asOf: .now
+        )
+        let apple = ProfileField(
+            key: "user.apple", displayText: "Apple goal",
+            source: KnowledgeStore.correctionSourceLabel, asOf: .now
+        )
+        context.insert(KnowledgeProfile(sections: [zebra, apple]))
+        try context.save()
+
+        let profile = try await store.refresh(now: .now)
+        #expect(profile.sections.map(\.key) == ["user.apple", "user.zebra"])
+    }
+}

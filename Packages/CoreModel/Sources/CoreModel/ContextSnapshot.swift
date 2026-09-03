@@ -20,9 +20,21 @@ public final class ContextSnapshot {
 
     public var createdAt: Date
 
-    public init(id: UUID = UUID(), json: Data, createdAt: Date = .now) {
+    /// Which producer assembled this context (`ContextAssembler.Purpose`
+    /// raw value: `"chat"` or `"dailyInsight"`). Lets the retention policy
+    /// and the WP-30 trace distinguish per producer instead of by age alone.
+    /// Defaults to `"chat"` so pre-column rows read as chat assemblies.
+    /// The declaration-level default is load-bearing: it becomes the store
+    /// schema default, so lightweight migration of on-disk stores (which have
+    /// no migration plan in this repo) succeeds when the column is added.
+    /// An `init`-only default would NOT do this -- the `@Model` macro reads
+    /// the declaration initializer, not the init parameter default.
+    public var purpose: String = "chat"
+
+    public init(id: UUID = UUID(), json: Data, createdAt: Date = .now, purpose: String = "chat") {
         self.id = id
         self.json = json
         self.createdAt = createdAt
+        self.purpose = purpose
     }
 }
