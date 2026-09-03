@@ -322,6 +322,25 @@ public final class KnowledgeStore {
         return profile
     }
 
+    /// Shared single-row read for the persisted profile (code review WP-20
+    /// round 1, #4): `fetchOrCreateProfile(context:)` below and
+    /// `ContextAssembler.assemble(for:...)` both resolve through here, so a
+    /// future change to how the row is located lands in one place. Newest
+    /// `updatedAt` first with `fetchLimit` 1: a no-op while the single-row
+    /// invariant holds, and a deterministic choice (the freshest row -- the
+    /// one the last successful `refresh()` wrote) if it is ever violated,
+    /// instead of whichever row SwiftData happens to return first. A
+    /// schema-level `@Attribute(.unique)` constraint would enforce rather
+    /// than resolve the invariant, but it needs a synthetic key plus a store
+    /// migration -- left for whoever next touches this model's schema.
+    static func fetchProfile(from context: ModelContext) throws -> KnowledgeProfile? {
+        var descriptor = FetchDescriptor<KnowledgeProfile>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first
+    }
+
     private func fetchOrCreateProfile(context: ModelContext) throws -> KnowledgeProfile {
         // Code review (2026-09-01): propagate a real fetch failure instead of
         // swallowing it via `try?` -- treating "fetch threw" the same as "no
@@ -329,7 +348,7 @@ public final class KnowledgeStore {
         // alongside the real one already on disk, breaking this store's
         // documented single-row invariant (this type's header, and this
         // method's own name).
-        if let existing = try context.fetch(FetchDescriptor<KnowledgeProfile>()).first {
+        if let existing = try Self.fetchProfile(from: context) {
             return existing
         }
         let created = KnowledgeProfile()
