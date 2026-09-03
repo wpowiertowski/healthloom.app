@@ -44,10 +44,11 @@ Shipped (P0 + P1 — the sync pipeline — plus WP-33's Today view, pulled forwa
 - **Onboarding + dashboard** — welcome → Google consent → HealthKit permission → first sync, then a per-type sync status dashboard
 - **Today view (Yacht club design)** — readiness tick-scale hero, reorderable metric rows, sync-status header; the readiness score and coach panel render explicit pending states until WP-23/34 land
 - **KnowledgeStore (P2, WP-19)** — derives a human-readable `KnowledgeProfile` from HealthKit + `LocalSample` (steps, resting HR/HRV trend, sleep duration/stage split, workouts merged with linked Fitbit supplements, Active Zone Minutes, presence-only clinical fields), with user-correction pinning and tool-facing summary text — not yet wired into any UI
+- **ContextAssembler (P2, WP-20)** — builds the exact `HealthContext` for one coach turn from the `KnowledgeProfile` only (`excludedFromAI` filtering incl. clinical default-out, chars/4 token-budget trimming vitals > sleep > activity > history, every assembly persisted as a `ContextSnapshot` for the "What did the coach see?" trace) — no UI yet, first consumer is WP-23/25
 
 Architected, not yet built (see [Status & Roadmap](#status--roadmap) below):
 
-- The rest of the on-device AI coach — `ContextAssembler`, `PromptManager`/`SafetyLayer`, `ReadinessEngine`, chat UI (`CoachKit` has real content now, WP-19, but no chat surface yet)
+- The rest of the on-device AI coach — `PromptManager`/`SafetyLayer`, `ReadinessEngine`, chat UI (`CoachKit` has real content now, WP-19/20, but no chat surface yet)
 - Private Cloud Compute / Claude / Gemini model tiers, prompt editor, chat UI
 
 ## Technology Stack
@@ -161,7 +162,7 @@ conflict resolution), and WP-33 (Today view, pulled forward from P4) are impleme
 see [progress.md](progress.md) for the per-work-package build log. Remaining phases, in
 order, per [implementation-plan.md](implementation-plan.md):
 
-- **P2** — on-device AI coach: `KnowledgeStore` (WP-19) is implemented; `ContextAssembler`,
+- **P2** — on-device AI coach: `KnowledgeStore` (WP-19) and `ContextAssembler` (WP-20) are implemented; `PromptManager`/`SafetyLayer`,
   `PromptManager`/`SafetyLayer`, `ReadinessEngine`, and the chat UI are not started
 - **P3** — off-device model tiers (Private Cloud Compute / Claude / Gemini), consent +
   key management, coach evals on Apple's Evaluations framework

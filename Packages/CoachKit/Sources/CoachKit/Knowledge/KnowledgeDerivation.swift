@@ -20,9 +20,23 @@ import Foundation
 import SyncKit
 
 public enum KnowledgeDerivation {
+    // MARK: - Key prefixes
+    //
+    // Shared with `ContextAssembler.priorityRank(for:)` (WP-20): the rank
+    // function matches on these prefixes rather than its own literals, and
+    // every key below is composed from them, so renaming a prefix breaks the
+    // composition site at compile time instead of silently demoting a field
+    // to rank 3 ("history") at trim time. Code review (WP-20 round 1) #6.
+
+    public static let stepsKeyPrefix = "steps."
+    public static let vitalsKeyPrefix = "vitals."
+    public static let sleepKeyPrefix = "sleep."
+    public static let activityKeyPrefix = "activity."
+    public static let clinicalKeyPrefix = "clinical."
+
     // MARK: - Steps
 
-    public static let stepsFieldKey = "steps.dailyAverage"
+    public static let stepsFieldKey = stepsKeyPrefix + "dailyAverage"
 
     /// "~8,240 steps/day (30-day avg)" -- architecture.md D7's own example
     /// text. Average is over days that have *any* data, not the window
@@ -43,8 +57,8 @@ public enum KnowledgeDerivation {
 
     // MARK: - Vitals (resting heart rate, HRV)
 
-    public static let restingHeartRateFieldKey = "vitals.restingHeartRate"
-    public static let heartRateVariabilityFieldKey = "vitals.heartRateVariability"
+    public static let restingHeartRateFieldKey = vitalsKeyPrefix + "restingHeartRate"
+    public static let heartRateVariabilityFieldKey = vitalsKeyPrefix + "heartRateVariability"
 
     /// Trend threshold: ±5% around the window's own average counts as
     /// "steady." A starting point, not a tuned constant -- same "beta-tunable
@@ -127,8 +141,8 @@ public enum KnowledgeDerivation {
 
     // MARK: - Sleep
 
-    public static let sleepDurationFieldKey = "sleep.duration"
-    public static let sleepStageSplitFieldKey = "sleep.stageSplit"
+    public static let sleepDurationFieldKey = sleepKeyPrefix + "duration"
+    public static let sleepStageSplitFieldKey = sleepKeyPrefix + "stageSplit"
 
     /// Segments belong to the night that started the evening before their
     /// start time -- a segment starting anywhere from noon on day D through
@@ -219,7 +233,7 @@ public enum KnowledgeDerivation {
     // MARK: - Workouts (architecture.md D13.6: merge linked Fitbit supplements,
     // never describing both copies of one activity)
 
-    public static let workoutsFieldKey = "activity.workouts"
+    public static let workoutsFieldKey = activityKeyPrefix + "workouts"
 
     /// One HealthKit workout is one activity, full stop -- `exerciseSupplements`
     /// only ever *adds* to the count when a supplement links to no workout in
@@ -318,7 +332,7 @@ public enum KnowledgeDerivation {
             let text = "\(matching.count) \(name) record\(matching.count == 1 ? "" : "s") "
                 + "in the last \(windowDays) days \u{2014} view in the Health app."
             return ProfileField(
-                key: "clinical.\(dataType.rawValue)",
+                key: clinicalKeyPrefix + dataType.rawValue,
                 displayText: text,
                 source: source,
                 asOf: asOf,
@@ -339,7 +353,7 @@ public enum KnowledgeDerivation {
         // `Int`, keeps that "never throw" contract true end to end.
         let safeTotal = total.isFinite ? min(max(total, 0), 1_000_000_000) : 0
         let text = "~\(Int(safeTotal.rounded())) \(name)\(unitSuffix) in the last \(windowDays) days."
-        return ProfileField(key: "activity.\(dataType.rawValue)", displayText: text, source: source, asOf: asOf)
+        return ProfileField(key: activityKeyPrefix + dataType.rawValue, displayText: text, source: source, asOf: asOf)
     }
 
     private static func localOnlyDisplayName(_ type: GoogleDataType) -> String {

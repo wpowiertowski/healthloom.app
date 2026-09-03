@@ -3589,3 +3589,89 @@ real Xcode 27 beta toolchain (`DEVELOPER_DIR` pointed at `/Applications/Xcode-be
 `Makefile`'s `test` target exactly), package tests run with `-warnings-as-errors` for CoreModel/
 SyncKit/CoachKit, then the full `xcodebuild build test` against an iOS 27.0 simulator (app build +
 `HealthLoomTests` + `HealthLoomUITests`) -- all pass, zero warnings, zero failures.
+
+## WP-20 · ContextAssembler
+
+Built `Packages/CoachKit/Sources/CoachKit/Knowledge/ContextAssembler.swift` per the
+plan: `@MainActor final class ContextAssembler` reading the persisted
+`KnowledgeProfile` only (never HealthKit/`LocalSample` directly, architecture.md §2).
+`assemble(for: .chat|.dailyInsight)` drops every `excludedFromAI` field (the single
+exclusion rule -- clinical default-out falls out of `ProfileField`'s init mapping nil
+to `isClinical`, so opted-in clinical fields pass with no second rule to drift),
+trims to a token budget via the chars/4 heuristic in priority order vitals > sleep >
+activity (steps + activity prefixes) > history/everything-else (unknown keys degrade
+to last), and persists every assembled `HealthContext` as a `ContextSnapshot`
+(same-`now` `createdAt`) returning its ID for `ChatTurn.contextSnapshotID` (WP-30/32
+trace join). Pure/impure split mirrors WP-19: static `selectFields(from:tokenBudget:)`
++ `estimatedTokens(for:)` + `priorityRank(for:)` are SwiftData-free; only `assemble`
+touches `ModelContext`. Overflow is reported (`estimatedTokens` + `didTrim`), never
+acted on -- escalation offers are WP-27's call (D14.2). Guarantees at least the top
+field when anything is eligible (a zero-field context from a non-empty profile would
+be useless); missing profile assembles an empty-but-snapshotted context. Working
+budgets: on-device 4K, PCC 32K, cloud 100K (WP-27 replaces with per-model queries).
+One compiler fix during build: `Self` in a default-argument expression
+(`tokenBudget: Int = Self.onDeviceTokenBudget`) is rejected -- used the explicit
+`ContextAssembler.onDeviceTokenBudget`.
+
+**Tests:** `ContextAssemblerTests.swift`, 9 tests -- excluded-field substring assert
+over the serialized snapshot JSON, clinical default-out + explicit opt-in, trimming
+order (seeded lowest-priority-first, budget fits exactly vitals+sleep), fitting
+budget keeps all in rank order, zero budget keeps top-1 with overflow reported,
+snapshot JSON decodes back to the exact struct + `ChatTurn` link resolves, missing
+profile snapshots empty, locale/unit flow (US default imperial, explicit override).
+CoachKit: 52 → 61 tests.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on this session's Xcode 26.4.1 toolchain -- 61 tests in 16
+suites pass, zero warnings, zero failures. (Full `make test` + `xcodebuild build
+test` not re-run: no other package or the app target was touched.)
+
+## Code review fixes — WP-20 ContextAssembler (round 1)
+
+Six findings over `ContextAssembler.swift`, all fixed and test-driven; two
+touched neighboring files where the finding demanded a shared source of truth.
+
+1. **Trim loop could drop a higher-priority field (#1, correctness):** the old
+   skip-and-continue scan kept a smaller lower-priority field while dropping a
+   larger higher-priority one, and the keep-one fallback never triggered because
+   `kept` was already non-empty. `selectFields` is now strict-prefix: the scan
+   `break`s at the first non-fitting field, so nothing ever jumps the queue.
+   Same rewrite fixes the sibling edge (single eligible field alone over budget
+   reported `didTrim == false`): `AssembledContext.didTrim` is now
+   `trimmed-anything || (non-empty && total > budget)`.
+2. **Estimate omitted serialized framing (#2, correctness):**
+   `estimatedTokens(for:)` now measures the actual `JSONEncoder` byte size / 4
+   (rounded up) instead of `key+displayText+source` chars, so `asOf`/flags/JSON
+   punctuation count; new `estimatedShellTokens(localeIdentifier:unitSystem:today:)`
+   covers the per-context `localeIdentifier`/`unitSystem`/`today` framing, and
+   `assemble` reserves the shell before selecting fields. Reported total = shell
+   + fields (off by two `[]`-vs-`[...]` bytes -- noted in code, conservative).
+3. **Per-field ceiling sum vs batched formula (#3, correctness):** eliminated by
+   construction -- every fit check calls the batched `estimatedTokens(for:)` over
+   the whole candidate set; no per-field summation remains anywhere.
+4. **Duplicated single-row fetch (#4, reuse):** new internal
+   `KnowledgeStore.fetchProfile(from:)` (newest-`updatedAt`-first, `fetchLimit`
+   1 -- a no-op while the invariant holds, deterministic freshest-row choice if
+   violated); `fetchOrCreateProfile` and `assemble` both resolve through it. A
+   schema-level unique constraint would enforce rather than resolve the invariant
+   but needs a synthetic key + migration -- documented, deferred.
+5. **No coordination with in-flight `refresh()` (#5, plausible):** accepted and
+   documented in `assemble`'s doc comment (graceful-degradation posture; the
+   snapshot records what was actually sent, `asOf`-bounded; sharing the refresh
+   lock would couple turn latency to HealthKit latency; revisit if WP-30 needs a
+   "refresh was running" signal). No behavior change.
+6. **Rank prefixes duplicated derivation literals (#6, reuse):** `KnowledgeDerivation`
+   gained `steps/vitals/sleep/activity/clinicalKeyPrefix` constants; all six full
+   keys and both `localOnly` constructions compose from them, and `priorityRank`
+   matches on them -- a rename now breaks compilation, not trimming.
+
+**Tests:** 5 new (`topFieldNeverJumped`, `loneOverBudgetReportsTrim`,
+`singleFormula`, `rankTracksDerivationKeys`, `shellAccounted`); 2 updated to the
+new accounting (`trimmingOrder` now passes explicit `now`/`locale` with an exact
+shell+fields budget and asserts the exact total; `emptyProfileSnapshotsEmpty`
+asserts the total equals the reserved shell). CoachKit: 61 → 66 tests.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on this session's Xcode 26.4.1 toolchain -- 66 tests in 16
+suites pass, zero warnings, zero failures. No other package or the app target
+references the changed APIs (verified by grep).
