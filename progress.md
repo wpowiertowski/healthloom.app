@@ -4176,3 +4176,150 @@ freshness + error generator tests); CoachKit: 113 → 132.
 `Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
 132 in 29 suites each -- incl. the `@Guide(..., .count(2...3))` composition
 on the macOS 26 SDK), zero warnings, zero failures.
+
+## WP-24 · Coach tools
+
+Built `Packages/CoachKit/Sources/CoachKit/Tools/` per the plan (depends on
+WP-19/WP-22): four `Tool`s backed by the `KnowledgeStore` summaries --
+`getSteps(days:)`, `getRecentSleep(nights:)`, `getWorkouts(days:)`,
+`getVitals()` (no arguments) -- plus a `CoachTools.all(store:)` builder for
+registration on session creation (WP-25 wires it into chat; one-shot insight
+sessions stay tool-free).
+
+Tool output is the stores' own user-visible summary text, untransformed
+(live answers equal the summary call, pinned by test); numbers and prose
+flow end to end from seeded HealthKit reads. Arguments clamp to 1...30 at
+the tool layer (summaries clamp further to their cache windows); the vitals
+tool's empty `@Generable` arguments struct compiles on both toolchains.
+
+Exclusions are enforced by a gate, not by the summaries: the summary
+methods re-derive from raw caches that know nothing of `excludedFromAI`, so
+each tool checks `KnowledgeStore.isAnyExcludedFromAI(coveredKeys)` first
+(new, small method on the store) and refuses with a settings sentence on
+any match -- one excluded sleep/vitals subfield silences the whole topic
+rather than leaking its substance. Covered: exact refusal text, excluded
+numbers absent from output, unrelated exclusions passing through, gate
+defaults (no profile / empty keys → false).
+
+Isolation pattern (new for this package): the tool structs stay `@MainActor`
+with the store captured in an injected `@MainActor @Sendable` answer
+closure, while every `Tool` witness (`name`, `parameters`, `call`, clamps)
+is explicitly `nonisolated` for the framework's executor contexts --
+`Arguments` is a nonisolated `@Generable` struct for the same reason. Tests
+inject scripted closures, never a store read they don't seed.
+
+**Tests:** `CoachToolsTests.swift` (wiring incl. output-equals-summary and
+data-flow phrases, clamp helpers + clamped-call equivalence, four exclusion
+cases + gate defaults); CoachKit: 132 → 143 tests.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
+143 in 32 suites each -- incl. empty `@Generable` arguments and the
+nonisolated witnesses on the macOS 26 SDK), zero warnings, zero failures.
+
+## Code review — WP-24 (round 1)
+
+Thirteen findings (3 correctness, 1 structural flag, 6 reuse, 1 efficiency,
+1 consistency note, plus ruled-out checks), all addressed and test-driven.
+
+**Correctness:**
+
+1. **Fail-open gate (#1, High):** the four `live()` closures no longer
+   `try?`-swallow gate fetch errors into answering -- `answer` closures are
+   now `async throws`, and both the gate and the shared helper propagate, so
+   a fetch failure surfaces as a tool error instead of silently defaulting
+   to "not excluded". Covered by an injected-throw propagation test.
+2. **Sleep 1-30 promise vs 14-night cache (#2):** `GetRecentSleepTool`
+   clamps to `KnowledgeStore.sleepWindowNights` (now internal, one
+   compiler-tied constant) and its `@Guide` text says 1-14 -- the schema
+   promises only what the store can deliver. Covered (500 ≡ 14).
+3. **Fallbacks echoed unclamped windows (#3):** all three summary
+   no-data sentences now render the clamped window actually examined.
+   Existing in-window assertions unchanged.
+
+**Structural flag (#4, no behavior change):** documented on
+`isAnyExcludedFromAI` -- no write path sets these flags yet, and a naive
+settings flip would be wiped by the next `refresh()` (only
+correction-sourced fields survive); durable exclusion needs a WP-30 design
+that accounts for that.
+
+**Reuse:** one `Clamping.window(_:maximum:)` helper serves all six clamp
+sites (tool `call()` bodies + the three summary methods -- the per-tool
+`clampDays/clampNights` methods are gone, covered behaviorally); one
+`KnowledgeStore.gatedAnswer(coveredKeys:excludedMessage:summary:)` collapses
+the four `live()` bodies to one line each and fixes #1 in one place;
+`call(arguments _:)` on vitals; `CoachTools.toolNames` deleted as an unused
+third copy; `coveredKeys` lists carry update-both-together pointers against
+future derivation-key drift (compiler-tied to the key constants, but list
+membership itself can't be compiler-checked). Redundant `parameters` /
+`includesSchemaInInstructions` overrides removed (defaults verified on both
+SDKs); `name` stays explicit (model dispatch contract), `Output` /
+`description` have no defaults and stay.
+
+**Efficiency (#12):** the gate reads a per-refresh cached excluded-key set
+(populated from the just-written profile, and on cold checks from the
+fetched row) -- steady state costs zero store fetches; out-of-band
+mutations (tests, future settings UI) call
+`invalidateCachedExclusions()`, covered by a refresh-populated-cache test
+(correction-sourced exclusion surviving refresh silences with no
+invalidation call).
+
+**Consistency (#13):** topic-level tool refusal vs per-field context
+filtering asymmetry documented on `CoachTools` for WP-25's UI copy review.
+
+**Tests:** 2 new (`errorsPropagate`, `refreshCacheSilences`) plus rewrites
+(behavioral clamping incl. sleep-14, invalidation contract);
+CoachKit: 143 → 145.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
+145 in 32 suites each), zero warnings, zero failures.
+
+## Code review — WP-24 (round 2)
+
+Ten findings (2 correctness, 1 structural flag, 5 reuse, 2 trivial,
+plus re-checked-clean notes), all addressed and test-driven.
+
+**Correctness:**
+
+1. **Cache populated before save (#14, High):** `cachedExcludedKeys` is now
+   assigned only after `try context.save()` succeeds -- on throw the previous
+   generation's set (matching the still-persisted row) stays put, so the gate
+   can never report "not excluded" for a still-excluded row. Raw caches stay
+   assigned pre-save deliberately: a failed save leaves summaries answering
+   from an unpersisted generation (transient staleness, self-healing on the
+   next refresh), not a privacy leak -- re-plumbing derivation reads around
+   that would be disproportionate churn.
+2. **Cold-path cache warming (#15):** the no-profile branch sets
+   `cachedExcludedKeys = []` (safe: `refresh()` overwrites on first write),
+   so pre-first-refresh turns cost one fetch ever, not one per call.
+3. **Steps/workouts ceilings tied (#18):** `stepsWindowDays` /
+   `workoutsWindowDays` dropped `private`; both tools clamp to them, so a
+   narrowed window breaks compilation, not the schema promise.
+
+**Structural flag (#16):** converted from convention to API -- new
+`KnowledgeStore.setExcludedFromAI(_:forKey:)` persists the flag *and*
+refreshes the cache together, so the gate and `ContextAssembler`'s live read
+agree immediately. Tests use it instead of direct mutation; WP-30's settings
+UI calls it instead of flipping rows. `invalidateCachedExclusions()` stays
+as the escape hatch, documented.
+
+**Reuse:** one `Clamping.window` helper (dropped from the tools' own clamp
+methods, covered behaviorally); one `windowStart(daysBack:from:)` covering
+all 8 date-arithmetic sites; one `joinedDisplayText` for the two joins; one
+`excludedKeys`/`includedInAI()` definition on `[ProfileField]` serving the
+store (×3 sites) and `ContextAssembler`; one shared `DaysArguments` for both
+day-windowed tools; one `excludedMessage(forTopic:)` template (per-tool lets
+kept as stable API). Removed the redundant `parameters` /
+`includesSchemaInInstructions` overrides (SDK defaults verified on both
+SDKs); `name` stays explicit as the model dispatch contract, `Output` /
+`description` have no defaults. Deleted unused `toolNames`. Vitals
+`call(arguments _:)`.
+
+**Tests:** 3 new (`setExcludedRoundTrip` incl. both directions with no
+invalidation call, `sharedArgumentsShape`, `refusalTemplate`);
+CoachKit: 145 → 148.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
+148 in 33 suites each), zero warnings, zero failures.

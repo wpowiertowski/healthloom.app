@@ -137,7 +137,7 @@ xcodebuild test -project HealthLoom.xcodeproj \
 | Secrets | 14 | Keychain read/write/delete round-trip, accessibility attribute, missing-item handling |
 | GoogleHealthClient | 35 | OAuth PKCE flow, token refresh, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
 | SyncKit | 260 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction, `WatchCoverageIndex`/`ConflictResolver` (D13) |
-| CoachKit | 132 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming, `ReadinessEngine` golden vectors + monotonicity, `DailyInsight` prompt/generator seam |
+| CoachKit | 148 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming, `ReadinessEngine` golden vectors + monotonicity, `DailyInsight` prompt/generator seam, coach tools wiring + clamping + exclusion gating |
 | HealthLoomTests | 43 | App-target unit tests — Today metrics/formatting, Activities consolidation, watch-priority preferences |
 | **HealthLoomUITests** | **5 (1 self-skipped)** | **XCUITest: onboarding (skips on this runner's HealthKit-sheet limitation), dashboard sync states, consolidated activities, Today edit mode** |
 
@@ -164,7 +164,7 @@ conflict resolution), and WP-33 (Today view, pulled forward from P4) are impleme
 see [progress.md](progress.md) for the per-work-package build log. Remaining phases, in
 order, per [implementation-plan.md](implementation-plan.md):
 
-- **P2** — on-device AI coach: `KnowledgeStore` (WP-19), `ContextAssembler` (WP-20), `PromptManager`/`SafetyLayer` (WP-21), `AvailabilityGate`/`CoachSession` (WP-22), and `ReadinessEngine`/`DailyInsight` (WP-23) are implemented; the chat UI is not started
+- **P2** — on-device AI coach: `KnowledgeStore` (WP-19), `ContextAssembler` (WP-20), `PromptManager`/`SafetyLayer` (WP-21), `AvailabilityGate`/`CoachSession` (WP-22), and `ReadinessEngine`/`DailyInsight` (WP-23), and coach tools (WP-24) are implemented; the chat UI is not started
 - **P3** — off-device model tiers (Private Cloud Compute / Claude / Gemini), consent +
   key management, coach evals on Apple's Evaluations framework
 - **P4 remainder** — scheduled insights/notifications, export/deletion, optional
