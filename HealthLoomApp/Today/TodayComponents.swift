@@ -45,10 +45,10 @@ struct TodayHeader: View {
 // MARK: - Readiness hero instrument
 
 /// What the hero renders. `.pending` is WP-33 step 4's "readiness
-/// insufficient signals" family: until WP-23's `ReadinessEngine` lands
-/// there is no score at all, and even after it lands, sparse data renders
-/// the same shape with a "based on N of 4 signals" caption --
-/// `.scored(score:delta:signalsUsed:)` is already plumbed for it so WP-23
+/// insufficient signals" family: until WP-33 binds it there is no score at
+/// all (WP-23's `ReadinessEngine` has landed in CoachKit), and sparse data
+/// renders the same shape with a "based on N of 4 signals" caption --
+/// `.scored(score:delta:signalsUsed:)` is already plumbed for it so WP-33
 /// binds without reshaping this view.
 enum ReadinessDisplay: Equatable {
     case pending
@@ -209,8 +209,9 @@ struct InstrumentPanel: View {
 
 // MARK: - Coach panel
 
-/// The rust-tint coach panel. Until WP-23/34 produce a real `DailyInsight`
-/// this renders the placeholder state -- same panel, quieter copy, no
+/// The rust-tint coach panel. Until WP-25/34 surface a real `DailyInsight`
+/// (WP-23's struct + generator exist in CoachKit) this renders the
+/// placeholder state -- same panel, quieter copy, no
 /// action chevron -- so the layout is final and P2 only swaps the text
 /// binding in.
 struct CoachPanel: View {

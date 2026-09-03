@@ -21,8 +21,10 @@ private func makeAssembler(sections: [ProfileField] = []) throws -> (ContextAsse
     return (ContextAssembler(modelContainer: container), container)
 }
 
+// Shared fixture builder (same module: DailyInsightTests reuses it instead
+// of a second private copy).
 @MainActor
-private func field(
+func field(
     _ key: String,
     _ displayText: String,
     excluded: Bool? = nil,

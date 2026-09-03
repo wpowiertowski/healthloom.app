@@ -3701,6 +3701,12 @@ leave "current" ambiguous.
 > before launch -- scope limits, the ECG/AFib refusal rule, and the
 > disordered-eating nudge are product/clinical decisions, not code-review
 > calls. This flag stays open until that review happens.
+>
+> **✅ REVIEWED 2026-09-03 -- approved by Wojtek Powiertowski (repo owner)
+> in review session, as written** (no edits; text byte-identical since).
+> Recorded here as the sign-off of record: approver identity + date +
+> exact-text review (full text was surfaced in-session). Any future edit to
+> `SafetyLayer.text` re-opens this flag: re-review required before launch.
 
 **Tests:** `PromptManagerTests.swift`, 12 tests -- suffix always present/last
 (incl. adversarial base containing the suffix, empty/unicode/10K bases),
@@ -4049,3 +4055,124 @@ Thirteen findings reviewed; ten fixed, three deliberately not (below).
 
 **VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
 `Packages/CoachKit` (113 in 24 suites, zero warnings), CoreModel 18 pass.
+
+## WP-23 · ReadinessEngine + @Generable DailyInsight
+
+Built `Packages/CoachKit/Sources/CoachKit/Readiness/` per the plan (depends on
+WP-19/WP-22, no new dependencies): `ReadinessEngine`, a pure deterministic
+scorer (D6 -- the Today hero's 0-100 comes from here, never the LLM), plus the
+`DailyInsight` guided-generation shape, its prompt composer, and the generator
+seam.
+
+`ReadinessEngine.score(inputs:recentScores:)` takes numeric `ReadinessInputs`
+(HRV ratio, resting-HR delta, sleep hours + efficiency fraction, 0-1
+prior-day strain -- all optional) and returns `Readiness(score 0-100,
+deltaVsAverage?, signalsUsed)`. One constant weight table (HRV .30, RHR .25,
+sleep .30, strain .15); missing or invalid readings (non-finite, negative
+ratios/hours, out-of-range fractions) count as missing and renormalize, with
+`signalsUsed` rendering "based on N of 4 signals"; zero signals yields
+neutral 50 with nil delta (callers gate the hero's pending state on
+`signalsUsed`). Subscore maps are monotone in the healthy direction with
+documented working constants, pinned by golden vectors (93 / 76 / 56). The
+engine keeps no history -- `recentScores` is caller-supplied. Sourcing the
+numeric inputs from HealthKit reads is later wiring (WP-33's hero); the
+engine takes them as parameters so the formula stays store-free and
+testable.
+
+`DailyInsight` is the plan's exact `@Generable` shape (headline, suggestions,
+`effortLevel` with `.anyOf(low/moderate/high)` + `effortLevels` source of
+truth); `prompt(readiness:fields:)` composes the deterministic turn prompt
+(readiness line + field display text, data only -- instructions ride the
+session); `DailyInsightGenerator` wraps generation in an injectable closure
+(tests script it) with a `live(session:)` path requiring a fresh one-shot
+session. `LiveCoachSession` gained a `respond(to:generating:)` variant using
+the iOS 26 / macOS 26 generics API, so it stays available on the package's
+macOS 26 matrix. Real generation is on-device manual tests (test plan §7) +
+the WP-31 eval set, never unit tests.
+
+**Tests:** `ReadinessEngineTests.swift` (3 golden vectors incl. delta math,
+renormalization to 76 on two signals, unknown-50, efficiency-alone-is-nothing,
+HRV + RHR monotonicity grids, 0/100 clamps, delta rounding) and
+`DailyInsightTests.swift` (prompt composition incl. empty-context line,
+effort-level validity, injected generation incl. error propagation);
+CoachKit: 113 → 127 tests.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
+127 in 28 suites each) -- the `@Generable` macro and the generic
+`respond(to:generating:)` both compile on the macOS 26 SDK -- zero warnings,
+zero failures.
+
+## Code review — WP-23 (round 1)
+
+Eight findings (2 critical, 6 correctness) plus informational and
+simplification notes, all addressed and test-driven.
+
+**Critical:**
+
+1. **Generator's live path uncallable (#1):** `respond(to:generating:)` is
+   now a `CoachSession` protocol requirement (generic over `Content`, no
+   `Self`/associated-type involvement -- stays callable through `any
+   CoachSession`), implemented on the scripted double, and
+   `DailyInsightGenerator` holds a session *source* so every `insight` call
+   builds a fresh one-shot session -- the no-history-leak invariant is
+   structural now, not a doc comment. Covered end to end: scripted factory →
+   live generator → fixture insight, plus a build-count test proving two
+   insights build two sessions.
+2. **Safety-gate sign-off (#2):** the approval record now names the approver
+   (repo owner, 2026-09-03 in-session review of the exact surfaced text,
+   byte-identical since) instead of a bare "owner". Code comment updated to
+   match. CI-skips-md / no-CODEOWNERS hardening (CODEOWNERS file for the
+   Prompt dir) offered to the owner, not unilaterally imposed.
+
+**Correctness:**
+
+3. **Instruction in the "data-only" prompt (#3):** the imperative tail line
+   is gone (the generation schema already injects the shape via
+   `includeSchemaInPrompt`), field lines sit inside explicit DATA markers,
+   and the doc comment no longer claims instruction-freedom it didn't have.
+4. **NaN equality (#4):** custom `Equatable`/`Hashable` (NaN == NaN, hashes
+   as nil) -- safe in sets and SwiftUI identity positions. Covered.
+5. **History overflow trap (#5):** averaging accumulates in `Double` and the
+   delta clamps back via `Int(exactly:)`, so corrupt histories degrade
+   instead of trapping -- matching the engine's stated posture. Covered
+   (Int.min histories both directions).
+6. **Suggestion-count schema (#6):** `.count(2...3)` guide composed on the
+   array property (verified compiling on the macOS 26 SDK) plus an
+   `isValidSuggestionCount` check mirroring `effortLevels`. Covered.
+7. **Zero-ratio doc gap (#7):** documented alongside negatives; boundary
+   covered (ratio 0 → missing).
+8. **Raw-array prompt parameter (#8):** `prompt` takes the filtered
+   `HealthContext`, not `[ProfileField]` -- a raw `KnowledgeProfile.sections`
+   array no longer compiles as an argument.
+
+**Deliberate non-change:** the `@MainActor` on `prompt()` stays -- the
+review's rationale against it is factually wrong (`ProfileField` members
+*are* MainActor-bound via CoreModel's package-wide default isolation;
+removing the annotation breaks the build, verified). The comment now records
+the true mechanism instead.
+
+**Informational (no code change):** `DerivedInsight` flattening stays a
+WP-25/34 integration task; weight-sum float epsilon is inherent to any float
+formula and pinned deterministically by golden vectors on both toolchains;
+`hrvRatio` sourcing shares logic with `KnowledgeDerivation` only when WP-33
+wires it (noted there, not duplicated now); `delta == 0` renders
+"unchanged" (polished + tested); Today placeholders repointed to WP-25/33/34.
+
+**Simplification (all applied):** shared `clamped` (uniform call shapes, no
+more vestigial asymmetry); `valid(_:in:)` single validity pattern (HRV's
+zero-exclusion stays inline, documented); local `average(of:)` (Knowledge
+-derivation consolidation left as a follow-up -- minimal diff); 4-line
+`accumulate` blocks collapsed; delta ternary → plain if/var; prompt paren
+written once; `field()` fixture helper shared across test files instead of
+reimplemented.
+
+**Tests:** 19 new (3 golden vectors + delta/renormalization/unknown cases,
+HRV + RHR monotonicity grids, clamps, NaN/overflow/zero boundaries, prompt
+composition incl. zero-delta + markers, schema-guard checks, live-seam +
+freshness + error generator tests); CoachKit: 113 → 132.
+
+**VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
+132 in 29 suites each -- incl. the `@Guide(..., .count(2...3))` composition
+on the macOS 26 SDK), zero warnings, zero failures.

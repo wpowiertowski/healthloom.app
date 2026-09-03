@@ -23,6 +23,13 @@ public protocol CoachSession: AnyObject, Sendable {
     func prewarm()
     func respond(to prompt: String) async throws -> String
     func stream(to prompt: String) -> AsyncThrowingStream<String, Error>
+    /// Structured (guided-generation) answers for `@Generable` targets.
+    /// A protocol requirement -- not a concrete-class extension -- so every
+    /// model-touching capability stays behind the seam and `any CoachSession`
+    /// holders (factories, generators) can use it; the generic parameter
+    /// touches neither `Self` nor an associated type, so it remains callable
+    /// through the existential. Test doubles answer from scripted values.
+    func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content
 }
 
 /// Live `LanguageModelSession` adapter. Constructed only through
@@ -51,6 +58,18 @@ public final class LiveCoachSession: CoachSession {
 
     public func respond(to prompt: String) async throws -> String {
         try await session.respond(to: prompt).content
+    }
+
+    /// Structured (guided-generation) variant for `@Generable` targets such
+    /// as `DailyInsight` (WP-23). The generic `respond(to:generating:)` is
+    /// iOS 26 / macOS 26 API, so this stays available on the package's macOS
+    /// 26 test matrix -- unlike the `LanguageModel`-protocol generics, which
+    /// don't exist there at all (WP-22).
+    public func respond<Content: Generable>(
+        to prompt: String,
+        generating type: Content.Type
+    ) async throws -> Content {
+        try await session.respond(to: prompt, generating: type).content
     }
 
     /// Pure cumulative-to-delta rule (see the protocol contract): the suffix
