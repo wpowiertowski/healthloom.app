@@ -16,9 +16,9 @@ public enum SafetyLayer {
     /// no-ECG-AFib-interpretation rule with clinician redirect, scope limits,
     /// and a disordered-eating help-seeking nudge.
     ///
-    /// Human review required before launch -- flagged in progress.md
-    /// (WP-21 step 1). Treat any edit here as a product/clinical decision,
-    /// not a code-review call.
+    /// Owner-reviewed and approved 2026-09-03 (see progress.md WP-21) --
+    /// treat any edit here as a product/clinical decision requiring
+    /// re-review before launch, not a code-review call.
     public static let text = """
         Safety guidance (not editable, always applies): I am a wellness coach, \
         not a medical professional, and nothing I say is medical advice, diagnosis, \

@@ -168,6 +168,13 @@ final class ScriptedCoachSession: CoachSession, Sendable {
     private(set) var receivedPrompts: [String] = []
     var isResponding: Bool { false }
 
+    /// Scripted answer for the structured (`@Generable`) requirement, as
+    /// `Any` because the protocol method is generic. Unset (or wrong-typed)
+    /// throws, so unconfigured structured calls fail loudly, never silently.
+    var scriptedStructured: Any?
+
+    struct NoStructuredResponse: Error {}
+
     init(chunks: [String]) {
         self.chunks = chunks
     }
@@ -177,6 +184,12 @@ final class ScriptedCoachSession: CoachSession, Sendable {
     func respond(to prompt: String) async throws -> String {
         receivedPrompts.append(prompt)
         return chunks.joined()
+    }
+
+    func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
+        receivedPrompts.append(prompt)
+        guard let value = scriptedStructured as? Content else { throw NoStructuredResponse() }
+        return value
     }
 
     func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {

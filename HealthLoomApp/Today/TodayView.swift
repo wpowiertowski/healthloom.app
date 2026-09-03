@@ -8,10 +8,12 @@
 //     (TodayHeaderModel.swift);
 //   - metric rows <- HealthKit today-values (TodayMetricsProvider.swift),
 //     ordered/filtered by `TodayMetricPreferences` (UserDefaults);
-//   - readiness hero <- `.pending` until WP-23's ReadinessEngine lands
-//     (`ReadinessDisplay` is already shaped for `.scored`, including the
-//     insufficient-signals caption, so WP-23 binds without reshaping);
-//   - coach panel <- placeholder until WP-23/34 produce a `DailyInsight`.
+//   - readiness hero <- `.pending` until WP-33 binds it (WP-23's
+//     `ReadinessEngine` has landed in CoachKit; `ReadinessDisplay` is
+//     already shaped for `.scored`, including the insufficient-signals
+//     caption, so WP-33 binds without reshaping);
+//   - coach panel <- placeholder until WP-25/34 surface a `DailyInsight`
+//     (WP-23's struct + generator exist in CoachKit; no chat surface yet).
 //
 // **Edit mode (WP-33 step 2) -- documented deviation:** the plan names
 // "SwiftUI's iOS 27 reorderable-content API (no custom Edit-mode drag
