@@ -52,10 +52,17 @@ public final class KnowledgeStore {
     /// once written -- see `refresh()`'s doc comment.
     public static let correctionSourceLabel = "User correction"
 
-    private static let stepsWindowDays = 30
+    // Internal (not private): the steps/workouts tools clamp to these same
+    // windows so each schema promises only what the store caches -- one
+    // compiler-tied constant per topic, not two numbers to keep in sync
+    // (same treatment `sleepWindowNights` already has).
+    static let stepsWindowDays = 30
     private static let vitalsWindowDays = 30
-    private static let sleepWindowNights = 14
-    private static let workoutsWindowDays = 30
+    // Internal (not private): `GetRecentSleepTool` clamps to this same
+    // window so the schema the model sees matches what the store caches --
+    // one compiler-tied constant, not two numbers to keep in sync.
+    static let sleepWindowNights = 14
+    static let workoutsWindowDays = 30
     private static let localOnlyWindowDays = 7
 
     private let modelContainer: ModelContainer
@@ -82,6 +89,15 @@ public final class KnowledgeStore {
     /// reference point, never real wall-clock `.now`, or a summary call can
     /// silently disagree with the data actually sitting in the cache.
     private var referenceNow: Date = .distantPast
+
+    /// Cached excluded-key set for the WP-24 tool gate, populated at the end
+    /// of every `refresh()` from the just-written profile (and on a cold
+    /// gate check from the fetched row). Lets the gate answer without a
+    /// store fetch per tool call. Anyone mutating `excludedFromAI` outside
+    /// `refresh()` (tests, the future WP-30 settings UI) must call
+    /// `invalidateCachedExclusions()` first -- the cache cannot observe
+    /// external writes.
+    private var cachedExcludedKeys: Set<String>?
 
     /// Serializes `refresh(now:)` calls -- code review (2026-08-28) finding
     /// #3: see `refresh(now:)`'s doc comment. A plain FIFO async lock, not a
@@ -188,11 +204,11 @@ public final class KnowledgeStore {
     }
 
     private func performRefresh(now: Date) async throws -> KnowledgeProfile {
-        let stepsStart = calendar.date(byAdding: .day, value: -Self.stepsWindowDays, to: now) ?? now
-        let vitalsStart = calendar.date(byAdding: .day, value: -Self.vitalsWindowDays, to: now) ?? now
-        let sleepStart = calendar.date(byAdding: .day, value: -Self.sleepWindowNights, to: now) ?? now
-        let workoutsStart = calendar.date(byAdding: .day, value: -Self.workoutsWindowDays, to: now) ?? now
-        let localOnlyStart = calendar.date(byAdding: .day, value: -Self.localOnlyWindowDays, to: now) ?? now
+        let stepsStart = windowStart(daysBack: Self.stepsWindowDays, from: now)
+        let vitalsStart = windowStart(daysBack: Self.vitalsWindowDays, from: now)
+        let sleepStart = windowStart(daysBack: Self.sleepWindowNights, from: now)
+        let workoutsStart = windowStart(daysBack: Self.workoutsWindowDays, from: now)
+        let localOnlyStart = windowStart(daysBack: Self.localOnlyWindowDays, from: now)
 
         async let steps = healthReadStore.dailySteps(from: stepsStart, to: now)
         async let restingHeartRate = healthReadStore.dailyRestingHeartRate(from: vitalsStart, to: now)
@@ -325,7 +341,19 @@ public final class KnowledgeStore {
         profile.sections = merged + untouchedCorrections
         profile.updatedAt = now
         try context.save()
+        // Populated only after the save succeeds: caching the about-to-be-
+        // attempted write would stick on a throw while the disk row stays
+        // old, reopening the fail-open leak the gate exists to close. On
+        // throw the previous generation's set (matching the still-persisted
+        // row) simply stays put.
+        cachedExcludedKeys = profile.sections.excludedKeys
         return profile
+    }
+
+    /// Drops the cached exclusion set; the next gate check re-reads it.
+    /// Call after any out-of-band `excludedFromAI` mutation.
+    public func invalidateCachedExclusions() {
+        cachedExcludedKeys = nil
     }
 
     /// Shared single-row read for the persisted profile (code review WP-20
@@ -345,6 +373,57 @@ public final class KnowledgeStore {
         )
         descriptor.fetchLimit = 1
         return try context.fetch(descriptor).first
+    }
+
+    /// Exclusion gate for WP-24 tools (D7/D8): whether ANY listed profile
+    /// key is currently excluded from AI. Tools check this before answering
+    /// and refuse with a settings message instead of speaking excluded data
+    /// -- the summary methods below re-derive from raw caches that know
+    /// nothing of exclusions, so the gate (not the summary) enforces them.
+    /// ANY-match, not ALL: a tool answers a topic, and one excluded field
+    /// in that topic poisons the whole answer. Missing profile (never
+    /// refreshed) means no exclusions known -- tools answer normally and
+    /// the summaries' own "no data" fallbacks apply.
+    ///
+    /// Write-path warning for WP-30: no settings UI mutates these flags yet,
+    /// and a naive one (flipping `excludedFromAI` on the persisted row)
+    /// would be wiped by the next `refresh()`, which rebuilds every
+    /// non-correction field from scratch. Correction-sourced fields are the
+    /// only ones whose flags survive a refresh today -- durable exclusion
+    /// needs a design that accounts for that, not a direct flip.
+    public func isAnyExcludedFromAI(_ keys: [String]) throws -> Bool {
+        guard !keys.isEmpty else { return false }
+        if let cachedExcludedKeys {
+            return keys.contains(where: cachedExcludedKeys.contains)
+        }
+        let context = ModelContext(modelContainer)
+        guard let profile = try Self.fetchProfile(from: context) else {
+            // Warm the cache even here: no profile means no exclusions, and
+            // `refresh()` overwrites the set the moment it writes a row, so
+            // the empty placeholder can't go stale.
+            cachedExcludedKeys = []
+            return false
+        }
+        let excluded = profile.sections.excludedKeys
+        cachedExcludedKeys = excluded
+        return keys.contains(where: excluded.contains)
+    }
+
+    /// The funneled write path for `excludedFromAI` (WP-30's settings UI
+    /// should call this, never flip flags on the row directly): mutates the
+    /// key's field, persists, and refreshes the exclusion cache in the same
+    /// breath, so the gate and `ContextAssembler`'s live read agree
+    /// immediately. Lasts until the next `refresh()` for derived fields
+    /// (which rebuilds them -- see the gate's write-path warning);
+    /// correction-sourced flags survive refreshes untouched.
+    public func setExcludedFromAI(_ excluded: Bool, forKey key: String) throws {
+        let context = ModelContext(modelContainer)
+        guard let profile = try Self.fetchProfile(from: context),
+              let index = profile.sections.firstIndex(where: { $0.key == key })
+        else { return }
+        profile.sections[index].excludedFromAI = excluded
+        try context.save()
+        cachedExcludedKeys = profile.sections.excludedKeys
     }
 
     private func fetchOrCreateProfile(context: ModelContext) throws -> KnowledgeProfile {
@@ -389,29 +468,42 @@ public final class KnowledgeStore {
     // was a no-op over the actual cached data yet still rendered a claim
     // like "(90-day avg)" -- a wider window than the data underneath it.
 
+    /// Window-start helper shared by the fetch windows above and the three
+    /// cache-slicing summaries below (WP-24 deduplication): `daysBack` days
+    /// before the reference point, falling back to the reference itself when
+    /// the calendar computation fails.
+    private func windowStart(daysBack: Int, from reference: Date) -> Date {
+        calendar.date(byAdding: .day, value: -daysBack, to: reference) ?? reference
+    }
+
+    /// Joins derived field text for tool answers (WP-24 deduplication).
+    private func joinedDisplayText(_ fields: [ProfileField]) -> String {
+        fields.map(\.displayText).joined(separator: " ")
+    }
+
     public func stepsSummary(days: Int, locale: Locale = .current) -> String {
-        let clampedDays = min(max(days, 1), Self.stepsWindowDays)
-        let start = calendar.date(byAdding: .day, value: -clampedDays, to: referenceNow) ?? referenceNow
+        let clampedDays = Clamping.window(days, maximum: Self.stepsWindowDays)
+        let start = windowStart(daysBack: clampedDays, from: referenceNow)
         let sliced = cachedSteps.filter { $0.day >= calendar.startOfDay(for: start) }
         return KnowledgeDerivation.stepsField(
             dailyValues: sliced, windowDays: clampedDays, asOf: referenceNow, source: "HealthKit", locale: locale
-        )?.displayText ?? "No step data available for the last \(days) days."
+        )?.displayText ?? "No step data available for the last \(clampedDays) days."
     }
 
     public func sleepSummary(nights: Int) -> String {
-        let clampedNights = min(max(nights, 1), Self.sleepWindowNights)
-        let start = calendar.date(byAdding: .day, value: -clampedNights, to: referenceNow) ?? referenceNow
+        let clampedNights = Clamping.window(nights, maximum: Self.sleepWindowNights)
+        let start = windowStart(daysBack: clampedNights, from: referenceNow)
         let sliced = cachedSleepSegments.filter { $0.start >= start }
         let fields = KnowledgeDerivation.sleepFields(
             segments: sliced, nights: clampedNights, asOf: referenceNow, source: "HealthKit", calendar: calendar
         )
-        guard !fields.isEmpty else { return "No sleep data available for the last \(nights) nights." }
-        return fields.map(\.displayText).joined(separator: " ")
+        guard !fields.isEmpty else { return "No sleep data available for the last \(clampedNights) nights." }
+        return joinedDisplayText(fields)
     }
 
     public func workoutsSummary(days: Int) -> String {
-        let clampedDays = min(max(days, 1), Self.workoutsWindowDays)
-        let start = calendar.date(byAdding: .day, value: -clampedDays, to: referenceNow) ?? referenceNow
+        let clampedDays = Clamping.window(days, maximum: Self.workoutsWindowDays)
+        let start = windowStart(daysBack: clampedDays, from: referenceNow)
         let workouts = cachedWorkouts.filter { $0.start >= start }
         // `supplement.start` directly (code review finding #4's `ExerciseSupplement`
         // addition) -- no more looking the sample back up in `cachedLocalSamples`.
@@ -419,7 +511,7 @@ public final class KnowledgeStore {
         return KnowledgeDerivation.workoutsField(
             workouts: workouts, exerciseSupplements: supplements, windowDays: clampedDays,
             asOf: referenceNow, source: "HealthKit"
-        )?.displayText ?? "No workouts recorded in the last \(days) days."
+        )?.displayText ?? "No workouts recorded in the last \(clampedDays) days."
     }
 
     public func vitalsSummary(locale: Locale = .current) -> String {
@@ -434,6 +526,6 @@ public final class KnowledgeStore {
             ),
         ].compactMap { $0 }
         guard !fields.isEmpty else { return "No recent vitals available." }
-        return fields.map(\.displayText).joined(separator: " ")
+        return joinedDisplayText(fields)
     }
 }

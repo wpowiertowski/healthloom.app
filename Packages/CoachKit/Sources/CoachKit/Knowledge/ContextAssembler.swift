@@ -340,7 +340,7 @@ public final class ContextAssembler {
         let resolvedUnitSystem = unitSystem ?? Self.defaultUnitSystem(for: locale)
         let context = ModelContext(modelContainer)
         let sections = try KnowledgeStore.fetchProfile(from: context)?.sections ?? []
-        let eligible = sections.filter { !$0.excludedFromAI }
+        let eligible = sections.includedInAI()
         // Reserve the prompt and the fixed shell before selecting fields, so
         // the reported total covers the whole request, not just the fields
         // (#2, plus the WP-21 prompt reserve). Off by two bytes (`[]` in the
