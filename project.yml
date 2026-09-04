@@ -19,8 +19,12 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
-    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    # NOTE: warnings-as-errors intentionally lives on each first-party
+    # target below, NOT here and NOT on the `make test` command line:
+    # project/command-line scope leaks `-warnings-as-errors` into SPM
+    # package targets, conflicting with upstream `-suppress-warnings`
+    # (WP-28b: ClaudeForFoundationModels). Target scope keeps our
+    # discipline without dictating upstream builds.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
@@ -38,6 +42,13 @@ packages:
     path: Packages/SyncKit
   CoachKit:
     path: Packages/CoachKit
+  # WP-28b: Anthropic's official `LanguageModel` conformance (D9 route rule:
+  # no REST clients). App-target only -- the package requires macOS/iOS 27,
+  # which CoachKit's macOS 26 floor + stable matrix toolchain can't link
+  # (see progress.md WP-28). Pinned exact for reproducible builds.
+  ClaudeForFoundationModels:
+    url: https://github.com/anthropics/ClaudeForFoundationModels
+    version: 0.1.4
 
 targets:
   HealthLoom:
@@ -51,6 +62,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.healthloom.app
         PRODUCT_NAME: HealthLoom
         ENABLE_PREVIEWS: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        GCC_TREAT_WARNINGS_AS_ERRORS: YES
     info:
       path: HealthLoomApp/Info.plist
       properties:
@@ -111,6 +124,7 @@ targets:
       - package: GoogleHealthClient
       - package: SyncKit
       - package: CoachKit
+      - package: ClaudeForFoundationModels
 
   HealthLoomTests:
     type: bundle.unit-test
@@ -121,6 +135,8 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        GCC_TREAT_WARNINGS_AS_ERRORS: YES
     # WP-17: this target previously had no `dependencies:` entry -- harmless
     # while every test in it was a self-contained placeholder (WP-01), but
     # this WP's first real `@testable import HealthLoom` unit test
@@ -152,6 +168,8 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        GCC_TREAT_WARNINGS_AS_ERRORS: YES
         # XCTestCase's own lifecycle methods (setUpWithError, its
         # initializers, ...) are nonisolated in the XCTest framework; the
         # project-wide `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor` (this

@@ -24,14 +24,6 @@
     @available(tvOS, unavailable)
     @MainActor
     public func makePrivateCloudComputeBuild() -> @MainActor @Sendable (String, [any Tool]) -> any CoachSession {
-        { instructions, tools in
-            LiveCoachSession(
-                session: LanguageModelSession(
-                    model: PrivateCloudComputeLanguageModel(),
-                    tools: tools,
-                    instructions: instructions
-                )
-            )
-        }
+        makeProviderSessionBuild(model: PrivateCloudComputeLanguageModel())
     }
 #endif

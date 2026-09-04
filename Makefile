@@ -29,9 +29,9 @@ test:
 	DEVELOPER_DIR="$(XCODE_BETA)" xcodebuild build test \
 		-project HealthLoom.xcodeproj \
 		-scheme HealthLoom \
-		-destination "platform=iOS Simulator,id=$$udid" \
-		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-		GCC_TREAT_WARNINGS_AS_ERRORS=YES
+		-destination "platform=iOS Simulator,id=$$udid"
+	# NOTE: warnings-as-errors is scoped per-target in project.yml (not
+	# here): command-line scope would leak into SPM package targets.
 
 clean:
 	rm -rf HealthLoom.xcodeproj
