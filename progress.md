@@ -4323,3 +4323,108 @@ CoachKit: 145 → 148.
 **VERIFIED, not just written:** `swift test -Xswiftc -warnings-as-errors` in
 `Packages/CoachKit` on **both** toolchains (Xcode 26.4.1 and Xcode 27 beta:
 148 in 33 suites each), zero warnings, zero failures.
+
+## WP-25: Chat UI
+
+Coach tab (`HealthLoomApp/Coach/`): message list over persisted `ChatTurn`s,
+token streaming into a draft bubble (incremental deltas per the WP-22
+contract), input disabled while responding, `prewarm()` + best-effort
+knowledge refresh on appear, stop button (cancels the stream; a visible
+partial persists so the stored turn matches what the user saw), and
+error/unavailable states from `AvailabilityGate`. Each assistant message
+carries a "What did the coach see?" expander reading its linked
+`ContextSnapshot` (field list; full UI in WP-30), cached per snapshot ID
+(snapshots are immutable/prune-only, so the cache never invalidates).
+Toolbar holds a static "On-device" label as WP-32's tier-switcher slot.
+One `CoachSessionFactory` conversation session per app lifetime (the WP-22
+"transcript is the memory" rule) with `CoachTools.all(store:)` registered
+under tool-set ID `wp25-chat-v1`; instructions are the effective prompt
+(D10); per-turn context assembled + snapshotted for `.chat`.
+
+UI tests (`CoachUITests`, via `-UITestScriptedCoach` + a Debug-only scripted
+session through WP-22's `build:` seam): send → in-flight stop button →
+scripted reply streams → turn persisted → relaunch shows history (the flag
+deliberately uses the on-disk store; runs assert on a UUID-marked message).
+Two simulator-ground-truth corrections during implementation: the iOS 27
+simulator's model reports `.available`, so unavailable rendering takes a
+forced `.modelNotReady` flag (`-UITestCoachUnavailable`), and the scripted
+stream runs 6 chunks × 500ms so the in-flight state survives XCUI polling.
+`make test` green (all suites incl. the 2 new UI tests).
+
+## Code review — WP-25 (chat UI)
+
+Twenty findings, all addressed and test-driven.
+
+**Correctness:** newest-first capped read (descending fetch + display
+reverse; sends append in hand, `onAppear` is the only re-fetch); the stop /
+error paths rewritten so every non-empty-draft exit persists (success,
+cancellation before first token leaves no empty turn, mid-stream model
+error persists the visible partial *and* reports, persist failures surface
+instead of silently dropping); warm-up and streaming get separate task
+handles (`send` cancels best-effort warm-up first -- same shared session,
+no `concurrentRequests` overlap); `send` returns `Bool` and the view keeps
+typed text on `false`; snapshot resolution moved from render into row
+expansion tasks, with transcript/draft reads scoped to sibling views so a
+token re-renders the bubble, not the list.
+
+**Seams/consistency:** `CoachAvailabilityChecking` protocol (live + fixed)
+replaces the bare closure; `-UITestCoachUnavailable[=<case>]` forces any
+unavailable case (unknown values fall back to `.modelNotReady`);
+`InitialRoute` replaces the boolean matrix; the scripted double is a plain
+always-compiled type (StubGoogle precedent) with single-flight enforcement,
+`isResponding` across all call kinds, and a scriptable structured reply;
+`HealthContext.framedAsData` is the one "data, not instructions" definition
+(`DailyInsight.prompt` adopts it); `ContextAssembler.decodeSnapshot` is the
+one snapshot reader; banner/error/bubbles use `ThemedCallout` /
+`ThemedErrorText` / `Theme` tokens; refresh failures log via `Logger`
+(warm-up stays silent by design, send surfaces); warm-up refresh throttled
+hourly via `KnowledgeRefreshThrottle`.
+
+**Tests:** 6 new `HealthLoomTests` view-model tests (in-memory container,
+stubbed reads/factory/availability -- stream+link, 505-turn cap ordering,
+stop-before-first-token, mid-stream error, stop truncation, send-false);
+`framedAsData` (CoreModel) + `decodeSnapshot` round-trip/reject (CoachKit)
+tests. Counts: CoreModel 18 → 20, CoachKit 148 → 150, HealthLoomTests
+43 → 49.
+
+**Simulator ground truth (kept):** the iOS 27 simulator's model reports
+`.available`, so unavailable rendering stays flag-forced; the scripted
+stream stays 6 × 500ms so the in-flight state survives XCUI polling.
+
+**VERIFIED, not just written:** full `make test` green (packages on both
+toolchains, `xcodebuild TEST SUCCEEDED` incl. all UI suites).
+
+## Code review — WP-25 (round 2)
+
+Fifteen findings (the round re-reviewed the amended commit rather than
+trusting round-1 annotations -- and caught two real round-1 gaps), all
+addressed and test-driven.
+
+**Correctness:** tab switches no longer truncate replies -- `onDisappear`
+cancels warm-up only, the stream survives on the AppEnvironment-owned view
+model and the remounted view reattaches (warm-up skips while streaming);
+`-UITestStubGoogle` routing restored to onboarding (the `.data` branch is
+`seedDashboardData` only again); `DailyInsight`'s empty-context wording
+restored exactly (preamble stays in the non-empty branch) and locked by an
+exact-text test; `send` re-queries the live gate as the stream task's first
+step (stale `.available` aborts with an error, covered); warm-up prompt
+failures log like refresh failures; one long-lived view-model
+`ModelContext` replaces all throwaway contexts (single `persist(_:)`
+path); `-UITestScriptedCoach` wins the in-memory decision unconditionally;
+`endCall()` precedes `finish()` (no spurious `concurrentRequest`);
+`onAppear` cancels a previous warm-up first; `scriptedStructured` is
+lock-guarded; one `CoachSessionMode` drives session + availability +
+store selection; chat input lives on the view model (survives unmounts).
+
+**Consistency/docs:** `CoachChatView` joins the `ThemedScreen` scaffold
+(`isScrollable: false`, transcript owns its scroll; tier slot is a header
+action) -- which exposed an accessibility subtlety (container identifiers
+override children without explicit `.contain`); `HomeView` header and all
+stale README "coach has no UI" passages swept.
+
+**Tests:** 3 new view-model tests (tab-switch survival, stale-cache abort,
+launch-flag matrix incl. the stubGoogle regression) + 1 exact-text insight
+test. Counts: CoachKit 150 → 151, HealthLoomTests 49 → 52.
+
+**VERIFIED, not just written:** full `make test` green (packages on both
+toolchains, `xcodebuild TEST SUCCEEDED` incl. all UI suites).

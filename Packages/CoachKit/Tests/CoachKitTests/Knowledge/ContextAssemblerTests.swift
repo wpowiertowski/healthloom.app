@@ -584,3 +584,34 @@ struct ContextAssemblerPruneTests {
         #expect(remaining.map(\.id) == [assembled.snapshotID])
     }
 }
+
+@Suite("Snapshot decode accessor (WP-25 review #20)")
+struct SnapshotDecodeTests {
+    @Test("decodeSnapshot round-trips what assemble persists")
+    func decodeRoundTrip() throws {
+        let (assembler, container) = try makeAssembler(sections: [
+            field("steps.dailyAverage", "8,000 steps", excluded: false),
+        ])
+        let assembled = try assembler.assemble(
+            for: .chat,
+            promptTokens: 10
+        )
+        let snapshotID = assembled.snapshotID
+        var descriptor = FetchDescriptor<ContextSnapshot>(
+            predicate: #Predicate { $0.id == snapshotID }
+        )
+        descriptor.fetchLimit = 1
+        let rows = try ModelContext(container).fetch(descriptor)
+        #expect(rows.count == 1)
+        let decoded = try ContextAssembler.decodeSnapshot(rows[0])
+        #expect(decoded == assembled.context)
+    }
+
+    @Test("decodeSnapshot throws on non-context bytes")
+    func decodeRejectsGarbage() {
+        let snapshot = ContextSnapshot(json: Data("not json".utf8))
+        #expect(throws: (any Error).self) {
+            try ContextAssembler.decodeSnapshot(snapshot)
+        }
+    }
+}

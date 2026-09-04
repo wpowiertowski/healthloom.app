@@ -6,12 +6,10 @@
 // Today view alongside the app's existing screens.
 //
 // **Documented deviation from the mockup's tab set:** the design shows
-// today / coach / you / settings. Coach (WP-25) and You (WP-30) are P2/P3
-// deliverables that don't exist yet -- shipping dead tabs would be worse
-// than shipping the real navigation, so until those land the shell is
-// Today / Data (the WP-10 sync dashboard) / Activities (WP-12b) /
-// Settings, using the same tab-bar component. Swapping the middle tabs
-// for Coach/You in P2/P3 is a two-line change here.
+// today / coach / you / settings. Coach (WP-25) now ships in its real tab
+// slot; You (WP-30) is still a P3 deliverable that doesn't exist yet, so
+// the shell is Today / Coach / Data (the WP-10 sync dashboard) /
+// Activities (WP-12b) / Settings, using the same tab-bar component.
 //
 // The custom tab bar (not `TabView`) is design-locked per D12: hairline
 // top rule on surface, light-weight icons, ink/tertiary selection states.
@@ -20,6 +18,7 @@ import SwiftUI
 
 enum HomeTab: CaseIterable {
     case today
+    case coach
     case data
     case activities
     case settings
@@ -27,6 +26,7 @@ enum HomeTab: CaseIterable {
     var title: String {
         switch self {
         case .today: return "Today"
+        case .coach: return "Coach"
         case .data: return "Data"
         case .activities: return "Activities"
         case .settings: return "Settings"
@@ -36,6 +36,7 @@ enum HomeTab: CaseIterable {
     var icon: String {
         switch self {
         case .today: return "square.split.1x2"
+        case .coach: return "message"
         case .data: return "arrow.triangle.2.circlepath"
         case .activities: return "figure.run"
         case .settings: return "slider.horizontal.3"
@@ -45,6 +46,7 @@ enum HomeTab: CaseIterable {
     var accessibilityIdentifier: String {
         switch self {
         case .today: return "tabbar.today"
+        case .coach: return "tabbar.coach"
         case .data: return "tabbar.data"
         case .activities: return "tabbar.activities"
         case .settings: return "tabbar.settings"
@@ -53,6 +55,7 @@ enum HomeTab: CaseIterable {
 }
 
 struct HomeView: View {
+    @Environment(AppEnvironment.self) private var appEnvironment
     @State private var selection: HomeTab
 
     init(initialTab: HomeTab = .today) {
@@ -65,6 +68,8 @@ struct HomeView: View {
                 switch selection {
                 case .today:
                     TodayView()
+                case .coach:
+                    CoachChatView(viewModel: appEnvironment.coachChatViewModel)
                 case .data:
                     // DashboardView owns its own NavigationStack (WP-10).
                     DashboardView()

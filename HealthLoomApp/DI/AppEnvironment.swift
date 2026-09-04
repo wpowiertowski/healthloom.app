@@ -23,6 +23,7 @@
 //     SyncKit's `GoogleReconcileClient` (`GoogleHealthClient+SyncEngine
 //     .swift`), so the real, non-stubbed path needs no adapter at all.
 
+import CoachKit
 import CoreModel
 import Foundation
 import GoogleHealthClient
@@ -113,7 +114,14 @@ final class AppEnvironment {
     /// `SyncLogPersistence.swift`'s header for why a second SwiftData model
     /// wasn't used instead).
     let syncLogStore: SyncLogStore
-
+    /// WP-25 (implementation-plan.md): the Coach tab's view model, owning
+    /// the conversation stack (one factory per app lifetime -- its cached
+    /// conversation session is the WP-22 "transcript is the memory" rule).
+    /// The only coach piece that stays stored: the store/manager/
+    /// assembler/factory are `init`-time locals, since nothing outside this
+    /// initializer reads them (review minor). Additive properties only --
+    /// the WP-15/WP-18 coordination-point convention.
+    let coachChatViewModel: CoachChatViewModel
     init(launchConfiguration: LaunchConfiguration = .current) {
         self.launchConfiguration = launchConfiguration
 
@@ -226,6 +234,44 @@ final class AppEnvironment {
         if launchConfiguration.seedDashboardData {
             Self.seedDashboardFixtures(in: container)
         }
+
+        // WP-25: production chat stack. `HealthKitReadStore()` takes its own
+        // `HKHealthStore` (its documented posture); authorization for the
+        // read set stays with the app's existing HealthKit screens, and
+        // `refresh()` simply reads empty until granted.
+        let knowledgeStore = KnowledgeStore(
+            modelContainer: container,
+            healthReadStore: HealthKitReadStore(),
+            healthKitAuth: healthKitAuth
+        )
+        let promptManager = PromptManager(modelContainer: container)
+        let contextAssembler = ContextAssembler(modelContainer: container)
+        // Both selections switch on the one precomputed mode (round-2
+        // #11) -- no re-derived flag precedence here. The scripted double
+        // is a plain always-compiled type (the `StubGoogleReconcileClient`
+        // precedent), so selection is purely runtime, identical in Debug
+        // and Release.
+        let coachSessionFactory: CoachSessionFactory
+        let availabilityChecker: any CoachAvailabilityChecking
+        switch launchConfiguration.coachSessionMode {
+        case .live:
+            coachSessionFactory = CoachSessionFactory()
+            availabilityChecker = LiveCoachAvailabilityChecker()
+        case .scripted:
+            coachSessionFactory = CoachSessionFactory(build: { _, _ in UITestScriptedCoachSession() })
+            availabilityChecker = FixedCoachAvailabilityChecker(availability: .available)
+        case .forced(let availability):
+            coachSessionFactory = CoachSessionFactory()
+            availabilityChecker = FixedCoachAvailabilityChecker(availability: availability)
+        }
+        self.coachChatViewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
+            container: container,
+            store: knowledgeStore,
+            prompts: promptManager,
+            assembler: contextAssembler,
+            factory: coachSessionFactory,
+            availability: availabilityChecker
+        ))
     }
 
     /// Seeds `SyncState` rows spanning every render state the WP-10 dashboard

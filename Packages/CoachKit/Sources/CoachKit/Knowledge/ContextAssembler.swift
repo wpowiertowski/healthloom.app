@@ -396,6 +396,15 @@ public final class ContextAssembler {
         )
     }
 
+    /// Decodes a persisted snapshot back to its health context -- the single
+    /// reader for the encoding this type writes in `assemble` (WP-25 review
+    /// #20): the chat UI's "What did the coach see?" expander goes through
+    /// here, so a future encoding change breaks one call site, not a
+    /// hand-rolled decode elsewhere.
+    public static func decodeSnapshot(_ snapshot: ContextSnapshot) throws -> HealthContext {
+        try JSONDecoder().decode(HealthContext.self, from: snapshot.json)
+    }
+
     /// Evicts snapshots older than the `keeping`-newest window so the table
     /// stays bounded *including* chat-linked rows: each evicted row first has
     /// its `ChatTurn`s' `contextSnapshotID` nulled (nil renders as "context

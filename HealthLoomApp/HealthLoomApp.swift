@@ -76,7 +76,7 @@ struct HealthLoomApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(startOnDashboard: appEnvironment.launchConfiguration.initialRouteIsDashboard)
+            RootView(initialRoute: appEnvironment.launchConfiguration.initialRoute)
                 .environment(appEnvironment)
                 .modelContainer(appEnvironment.modelContainer)
         }
