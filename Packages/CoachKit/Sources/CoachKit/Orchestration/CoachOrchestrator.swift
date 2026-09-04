@@ -91,6 +91,13 @@ public final class CoachOrchestrator: Sendable {
         guard catalog.isEnabled(tier) else {
             throw .tierUnavailable(tier: tier, reason: Self.unavailableReason(for: tier, in: catalog))
         }
+        // Defense in depth (WP-27 review §4): the catalog gate should have
+        // stopped a keyless tier first, but a TOCTOU key deletion (or a
+        // miswired `hasKey`) must throw before any dispatch, never build a
+        // keyless session.
+        guard !tier.requiresAPIKey || catalog.hasKey(tier) else {
+            throw CoachError.missingCredential(tier: tier)
+        }
         // PromptManager is the ONLY source of instructions (D10/D8): every
         // tier, every turn, user base + immutable safety suffix. A store
         // failure is a turn failure, not a silent suffix-less fallback.
@@ -132,7 +139,8 @@ public final class CoachOrchestrator: Sendable {
             for: CoachSessionFactory.Purpose(purpose),
             instructions: instructions,
             tools: tools,
-            toolSetID: toolSetID
+            toolSetID: toolSetID,
+            tier: tier
         )
         do {
             // Framing via the shared composer (R1): the user message plus
@@ -140,7 +148,15 @@ public final class CoachOrchestrator: Sendable {
             let text = try await session.respond(to: assembled.context.promptBlock(message: message))
             return .reply(text: text, snapshotID: assembled.snapshotID, didTrim: assembled.didTrim)
         } catch {
-            throw Self.normalize(error)
+            // Tier-dependent escalation flag (WP-27 review §2): a
+            // mid-generation overflow on a cloud tier has nowhere bigger to
+            // go, so the offer bit is cleared -- only on-device overflows
+            // offer PCC.
+            var normalized = Self.normalize(error)
+            if tier != .onDevice, case .contextOverflow = normalized {
+                normalized = .contextOverflow(offerEscalation: false)
+            }
+            throw normalized
         }
     }
 

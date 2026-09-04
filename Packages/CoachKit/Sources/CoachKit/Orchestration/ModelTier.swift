@@ -17,7 +17,7 @@ import Foundation
 import Secrets
 
 /// One rung of the coach model ladder (D14).
-public enum ModelTier: String, Sendable, CaseIterable, Identifiable {
+public enum ModelTier: String, Sendable, Hashable, CaseIterable, Identifiable {
     case onDevice
     case privateCloudCompute
     case claude

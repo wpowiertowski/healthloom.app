@@ -50,7 +50,7 @@ public final class CoachSessionFactory: Sendable {
     }
 
     private let build: @MainActor @Sendable (String, [any Tool]) -> any CoachSession
-    private var cachedConversation: (instructions: String, toolSetKey: String, session: any CoachSession)?
+    private var cachedConversation: (tier: ModelTier, instructions: String, toolSetKey: String, session: any CoachSession)?
 
     /// - Parameter build: session constructor. Defaults to a live on-device
     ///   session; tests inject a scripted double so no unit test touches the
@@ -90,11 +90,17 @@ public final class CoachSessionFactory: Sendable {
     ///   namespaced, so an explicit ID can never collide with a name-derived
     ///   key that happens to spell the same string (code review WP-21/22
     ///   round 4, #12).
+    /// - Parameter tier: the model tier the session runs on (WP-28). Part of
+    ///   the conversation cache key alongside instructions and tool set: the
+    ///   same prompt on PCC must not reuse the on-device session (wrong
+    ///   model, wrong privacy boundary, D11/D14.1). Defaults to on-device so
+    ///   pre-tier call sites are unaffected.
     public func makeSession(
         for purpose: Purpose,
         instructions: String,
         tools: [any Tool] = [],
-        toolSetID: String? = nil
+        toolSetID: String? = nil,
+        tier: ModelTier = .onDevice
     ) -> any CoachSession {
         let cacheKey = if let toolSetID {
             "id:\(toolSetID)"
@@ -103,6 +109,7 @@ public final class CoachSessionFactory: Sendable {
         }
         if !Self.requiresFreshSession(for: purpose),
            let cached = cachedConversation,
+           cached.tier == tier,
            cached.instructions == instructions,
            cached.toolSetKey == cacheKey
         {
@@ -110,7 +117,7 @@ public final class CoachSessionFactory: Sendable {
         }
         let session = build(instructions, tools)
         if !Self.requiresFreshSession(for: purpose) {
-            cachedConversation = (instructions, cacheKey, session)
+            cachedConversation = (tier, instructions, cacheKey, session)
         }
         return session
     }

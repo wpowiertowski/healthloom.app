@@ -63,6 +63,32 @@ private func seedBulkyProfile(into container: ModelContainer) throws {
     try context.save()
 }
 
+/// Simulates a key deleted between the gate and the dispatch check
+/// (WP-27 review §4): the two guards run synchronously back-to-back, so
+/// only a key that vanishes mid-turn -- or a future refactor that
+/// decouples the predicates -- reaches the second one.
+final class FlakyKey: @unchecked Sendable {
+    // `nonisolated(unsafe)`: guarded by `lock` by hand (or immutable),
+    // safe under the class's `@unchecked Sendable`.
+    private let lock = NSLock()
+    nonisolated(unsafe) private var calls = 0
+    // Explicitly nonisolated: the test target defaults to MainActor
+    // isolation, and the catalog's `hasKey` seam is nonisolated `@Sendable`.
+    nonisolated private func hasKey(_: ModelTier) -> Bool {
+        lock.withLock {
+            calls += 1
+            return calls == 1
+        }
+    }
+    // Nonisolated factory: a bare `flaky.hasKey` reference formed in a
+    // `@MainActor` context inherits MainActor isolation and won't
+    // convert to the catalog's nonisolated `@Sendable` seam.
+    nonisolated func check() -> @Sendable (ModelTier) -> Bool {
+        { [self] in self.hasKey($0) }
+    }
+}
+
+
 @Suite("CoachOrchestrator")
 @MainActor
 struct CoachOrchestratorTests {
@@ -255,6 +281,74 @@ struct CoachOrchestratorTests {
             guard case .reply = turn else { break }
         }
         Issue.record("no probed budget produced a trimmed reply -- trimming window collapsed?")
+    }
+
+    /// Cloud-tier gating without real providers (WP-28 foundation):
+    /// `liveTiers` flips a row live in-test; the scripted factory means no
+    /// test ever constructs a model.
+    private func cloudCatalog(
+        consent: Bool = true,
+        key: Bool = true
+    ) -> ModelCatalog {
+        ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { _ in consent },
+            hasKey: { _ in key },
+            liveTiers: [.onDevice, .claude]
+        )
+    }
+
+    @Test("keyless cloud tier throws before any dispatch")
+    func missingCredentialBeforeDispatch() async throws {
+        // The always-keyless catalog stops at the gate (`tierUnavailable`);
+        // the vanishing key passes the gate, then must throw
+        // `missingCredential` before any session is built.
+        let recording = RecordingBuild()
+        let gated = try makeOrchestrator(
+            recording: recording,
+            catalog: cloudCatalog(key: false)
+        )
+        await #expect {
+            try await gated.0.respond(to: "Hi", tier: .claude)
+        } throws: { error in
+            guard case .tierUnavailable = error as? CoachError else { return false }
+            return true
+        }
+        let flaky = FlakyKey()
+        let (orchestrator, _, _) = try makeOrchestrator(
+            recording: recording,
+            catalog: ModelCatalog(
+                onDeviceAvailable: { true },
+                hasConsent: { _ in true },
+                hasKey: flaky.check(),
+                liveTiers: [.onDevice, .claude]
+            )
+        )
+        await #expect {
+            try await orchestrator.respond(to: "Hi", tier: .claude)
+        } throws: { error in
+            guard case .missingCredential(let tier) = error as? CoachError else { return false }
+            return tier == .claude
+        }
+        #expect(recording.builds == 0)
+    }
+
+    @Test("over-budget cloud turns answer, never offer")
+    func cloudNeverEscalates() async throws {
+        // WP-27 review §2's dispatch half: nowhere bigger to go, so a cloud
+        // overflow answers on trimmed context instead of offering.
+        let recording = RecordingBuild()
+        let (orchestrator, _, _) = try makeOrchestrator(
+            recording: recording,
+            catalog: cloudCatalog()
+        )
+        let turn = try await orchestrator.respond(to: "Hi", tier: .claude, tokenBudget: 1)
+        guard case .reply(let text, _, _) = turn else {
+            Issue.record("expected an answer, got \(turn)")
+            return
+        }
+        #expect(text == "reply")
+        #expect(recording.builds == 1)
     }
 
     @Test("offer turns persist a linkable snapshot")

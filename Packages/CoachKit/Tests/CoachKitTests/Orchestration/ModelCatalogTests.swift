@@ -77,6 +77,24 @@ struct ModelCatalogTests {
         #expect(ready.availability(for: .claude) == .unavailable(reason: TierAvailability.notLive))
     }
 
+    @Test("live-row blockers surface consent before key")
+    func blockerOrder() {
+        let noConsent = ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { _ in false },
+            hasKey: { _ in true },
+            liveTiers: [.onDevice, .claude]
+        )
+        #expect(noConsent.availability(for: .claude) == .unavailable(reason: TierAvailability.needsConsent))
+        let noKey = ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { _ in true },
+            hasKey: { _ in false },
+            liveTiers: [.onDevice, .claude]
+        )
+        #expect(noKey.availability(for: .claude) == .unavailable(reason: TierAvailability.needsKey))
+    }
+
     @Test("each tier owns its window")
     func tierBudgets() {
         let catalog = ModelCatalog(onDeviceAvailable: { true })

@@ -55,15 +55,22 @@ public struct ModelCatalog: Sendable {
     /// Whether the tier's API key is present in the Keychain. Defaults to
     /// false; the app wires `KeychainStore.get(tier.secretKey) != nil`.
     public var hasKey: @Sendable (ModelTier) -> Bool
+    /// Rows that have shipped. Defaults to on-device only; WP-28 flips rows
+    /// live by adding them to the default set. Tests inject extra rows to
+    /// exercise cloud-tier gating (consent/key checks, tier-aware cache,
+    /// no-escalation) without real providers.
+    public var liveTiers: Set<ModelTier>
 
     public init(
         onDeviceAvailable: @MainActor @Sendable @escaping () -> Bool,
         hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
-        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false }
+        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
+        liveTiers: Set<ModelTier> = [.onDevice]
     ) {
         self.onDeviceAvailable = onDeviceAvailable
         self.hasConsent = hasConsent
         self.hasKey = hasKey
+        self.liveTiers = liveTiers
     }
 
     /// Catalog with the live on-device gate wired (`AvailabilityGate`,
@@ -73,12 +80,14 @@ public struct ModelCatalog: Sendable {
     @MainActor
     public static func live(
         hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
-        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false }
+        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
+        liveTiers: Set<ModelTier> = [.onDevice]
     ) -> ModelCatalog {
         ModelCatalog(
             onDeviceAvailable: { AvailabilityGate.current() == .available },
             hasConsent: hasConsent,
-            hasKey: hasKey
+            hasKey: hasKey,
+            liveTiers: liveTiers
         )
     }
 
@@ -172,11 +181,11 @@ public struct ModelCatalog: Sendable {
     }
 #endif
 
-    /// Live-row table. Single private predicate (not per-row inline
-    /// conditions) so WP-28's fill-in is one predicate per row, and
-    /// `isEnabled`/`availability(for:)`/`makeModel` can never disagree about
-    /// which rows are live.
+    /// Live-row table. Single predicate (not per-row inline conditions)
+    /// so `isEnabled`/`availability(for:)`/`makeModel` can never disagree
+    /// about which rows are live. WP-28 flips rows by extending the default
+    /// `liveTiers` set.
     private func isLive(_ tier: ModelTier) -> Bool {
-        tier == .onDevice
+        liveTiers.contains(tier)
     }
 }
