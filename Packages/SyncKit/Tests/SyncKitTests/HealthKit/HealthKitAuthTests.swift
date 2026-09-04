@@ -30,6 +30,46 @@ import Testing
         }
     }
 
+    /// `requestShareAndRead` validates *both* sets before the
+    /// `isAvailable` gate, so a bad mapping on either side is rejected the
+    /// same way on every platform -- including the simulator, where the
+    /// combined onboarding call must fail for the mapping reason, never
+    /// with a presentation collision.
+    @Test func requestShareAndReadThrowsNoHealthKitMappingForBadShareType() async {
+        let auth = HealthKitAuth()
+        await #expect {
+            try await auth.requestShareAndRead(share: [.electrocardiogram], read: [.steps])
+        } throws: { error in
+            guard case .noHealthKitMapping(.electrocardiogram) = error as? HealthKitAuthError else {
+                return false
+            }
+            return true
+        }
+    }
+
+    @Test func requestShareAndReadThrowsNoHealthKitMappingForBadReadType() async {
+        let auth = HealthKitAuth()
+        await #expect {
+            try await auth.requestShareAndRead(share: [.steps], read: [.activityLevel])
+        } throws: { error in
+            guard case .noHealthKitMapping(.activityLevel) = error as? HealthKitAuthError else {
+                return false
+            }
+            return true
+        }
+    }
+
+    @Test func requestShareAndReadThrowsHealthDataUnavailableWhenGated() async {
+        let auth = HealthKitAuth()
+        guard !auth.isAvailable else { return }
+        await #expect {
+            try await auth.requestShareAndRead(share: HealthKitAuth.p0WriteTypes, read: [.steps])
+        } throws: { error in
+            guard case .healthDataUnavailable = error as? HealthKitAuthError else { return false }
+            return true
+        }
+    }
+
     @Test func requestReadThrowsNoHealthKitMappingForSkipType() async {
         let auth = HealthKitAuth()
         await #expect {
