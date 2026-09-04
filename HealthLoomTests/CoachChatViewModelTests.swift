@@ -326,3 +326,227 @@ private func waitForCondition(
         }
     }
 }
+
+@Suite("PromptEditorViewModel (WP-26)")
+@MainActor
+struct PromptEditorViewModelTests {
+    private func makeEditor(factory: CoachSessionFactory? = nil) throws -> PromptEditorViewModel {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        return PromptEditorViewModel(deps: PromptEditorViewModel.Dependencies(
+            manager: PromptManager(modelContainer: container),
+            factory: factory ?? CoachSessionFactory()
+        ))
+    }
+
+    @Test("load starts from the shipped default with empty history")
+    func loadDefaults() throws {
+        let editor = try makeEditor()
+        editor.load()
+        #expect(editor.baseText == PromptManager.defaultPrompt)
+        #expect(editor.history.isEmpty)
+        #expect(editor.matchesDefault)
+        #expect(editor.hasUnsavedChanges == false)
+        #expect(editor.errorMessage == nil)
+    }
+
+    @Test("live values derive from the working copy")
+    func liveValues() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText += " More."
+        #expect(editor.hasUnsavedChanges == true)
+        #expect(editor.matchesDefault == false)
+        #expect(editor.estimatedTokens == PromptManager.estimatedTokens(for: editor.baseText))
+        #expect(editor.effectivePreview == PromptManager.effectivePrompt(base: editor.baseText))
+        #expect(editor.effectivePreview.hasSuffix(SafetyLayer.text))
+    }
+
+    @Test("save persists, resets the dirty flag, and lists history")
+    func saveFlow() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText += " More."
+        #expect(editor.save() == true)
+        #expect(editor.hasUnsavedChanges == false)
+        #expect(editor.history.count == 1)
+        #expect(editor.history[0].body.hasSuffix("More."))
+        #expect(editor.notice == "Saved.")
+    }
+
+    @Test("empty save fails loudly and writes nothing")
+    func emptySaveFails() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText = "   "
+        #expect(editor.save() == false)
+        #expect(editor.errorMessage == "The prompt can't be empty.")
+        #expect(editor.history.isEmpty)
+    }
+
+    @Test("reset restores the default; restore reaches pre-reset edits")
+    func resetAndRestore() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText += " More."
+        #expect(editor.save() == true)
+        editor.resetToDefault()
+        #expect(editor.baseText == PromptManager.defaultPrompt)
+        #expect(editor.matchesDefault)
+        #expect(editor.history.count == 2)
+        editor.restore(editor.history[1])
+        #expect(editor.baseText.hasSuffix("More."))
+        #expect(editor.history.count == 3)
+    }
+
+    @Test("diff engine: identical, added, removed, mixed")
+    func diffEngine() {
+        typealias D = PromptEditorViewModel.DiffLine
+        #expect(PromptEditorViewModel.diffLines(default: "a\nb", current: "a\nb") == [.common("a"), .common("b")])
+        #expect(PromptEditorViewModel.diffLines(default: "a", current: "a\nb") == [.common("a"), .added("b")])
+        #expect(PromptEditorViewModel.diffLines(default: "a\nb", current: "a") == [.common("a"), .removed("b")])
+        #expect(PromptEditorViewModel.diffLines(default: "a\nb\nc", current: "a\nx\nc") == [
+            .common("a"), .removed("b"), .added("x"), .common("c"),
+        ])
+        #expect(PromptEditorViewModel.diffLines(default: "", current: "") == [.common("")])
+    }
+}
+
+@Suite("Prompt editor round-2 (WP-26 review)")
+@MainActor
+struct PromptEditorRoundTwoTests {
+    private func makeEditor(factory: CoachSessionFactory? = nil) throws -> PromptEditorViewModel {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        return PromptEditorViewModel(deps: PromptEditorViewModel.Dependencies(
+            manager: PromptManager(modelContainer: container),
+            factory: factory ?? CoachSessionFactory()
+        ))
+    }
+
+    @Test("successful writes bust the cached conversation session")
+    func writesBustSessionCache() throws {
+        let factory = CoachSessionFactory(build: { _, _ in TestCoachSession() })
+        let editor = try makeEditor(factory: factory)
+        editor.load()
+        // Same instructions twice: cached without an intervening write.
+        let first = factory.makeSession(for: .conversation, instructions: "fixed", tools: [])
+        let cached = factory.makeSession(for: .conversation, instructions: "fixed", tools: [])
+        #expect(first === cached)
+        editor.baseText += " More."
+        #expect(editor.save() == true)
+        let second = factory.makeSession(for: .conversation, instructions: "fixed", tools: [])
+        #expect(second !== first)
+    }
+
+    @Test("a failed save clears the stale notice and writes nothing")
+    func failedSaveClearsNotice() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText += " More."
+        #expect(editor.save() == true)
+        #expect(editor.notice == "Saved.")
+        editor.baseText = "   "
+        #expect(editor.save() == false)
+        #expect(editor.notice == nil)
+        #expect(editor.errorMessage == "The prompt can't be empty.")
+        #expect(editor.history.count == 1)
+    }
+
+    @Test("reset is disabled when it would change nothing")
+    func resetGuard() throws {
+        let editor = try makeEditor()
+        editor.load()
+        // Fresh: working copy matches the default, nothing unsaved.
+        #expect(editor.canReset == false)
+        editor.baseText += " More."
+        #expect(editor.canReset == true)
+        #expect(editor.save() == true)
+        // Saved a real change: current differs from default.
+        #expect(editor.canReset == true)
+        editor.resetToDefault()
+        // Post-reset: working copy matches default again.
+        #expect(editor.canReset == false)
+        #expect(editor.history.count == 2)
+    }
+
+    @Test("token estimate measures the validated trimmed string")
+    func trimmedEstimate() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText = "hello   \n\n"
+        #expect(editor.estimatedTokens == PromptManager.estimatedTokens(for: "hello"))
+    }
+
+    @Test("preview base derives from the effective assembly")
+    func previewBaseDerives() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText += " More."
+        #expect(editor.previewBase == editor.baseText)
+        #expect(editor.effectivePreview == editor.previewBase + "\n\n" + SafetyLayer.text)
+    }
+}
+
+@Suite("Prompt editor no-op writes + history cap (WP-26 round-2)")
+@MainActor
+struct PromptEditorNoOpTests {
+    private func makeEditor(factory: CoachSessionFactory? = nil) throws -> PromptEditorViewModel {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        return PromptEditorViewModel(deps: PromptEditorViewModel.Dependencies(
+            manager: PromptManager(modelContainer: container),
+            factory: factory ?? CoachSessionFactory()
+        ))
+    }
+
+    @Test("whitespace-only save writes no row and normalizes")
+    func whitespaceNoOp() throws {
+        let factory = CoachSessionFactory(build: { _, _ in TestCoachSession() })
+        let editor = try makeEditor(factory: factory)
+        editor.load()
+        editor.baseText = PromptManager.defaultPrompt + "   \n"
+        #expect(editor.save() == true)
+        #expect(editor.history.isEmpty)
+        #expect(editor.baseText == PromptManager.defaultPrompt)
+        #expect(editor.hasUnsavedChanges == false)
+        #expect(editor.notice == "Already up to date.")
+        #expect(editor.errorMessage == nil)
+    }
+
+    @Test("restoring the active version writes no row and keeps the session")
+    func restoreCurrentNoOp() throws {
+        let factory = CoachSessionFactory(build: { _, _ in TestCoachSession() })
+        let editor = try makeEditor(factory: factory)
+        editor.load()
+        editor.baseText += " More."
+        #expect(editor.save() == true)
+        #expect(editor.history.count == 1)
+        let active = factory.makeSession(for: .conversation, instructions: "fixed", tools: [])
+        editor.restore(editor.history[0])
+        #expect(editor.history.count == 1)
+        #expect(editor.notice == "Already using this version.")
+        // No-op restore must not disturb the cached session either.
+        #expect(factory.makeSession(for: .conversation, instructions: "fixed", tools: []) === active)
+    }
+
+    @Test("reset with a dirty draft but default effect drops the draft rowless")
+    func resetDiscardsDraft() throws {
+        let editor = try makeEditor()
+        editor.load()
+        editor.baseText += " never mind"
+        editor.resetToDefault()
+        #expect(editor.baseText == PromptManager.defaultPrompt)
+        #expect(editor.history.isEmpty)
+        #expect(editor.notice == "Discarded unsaved changes.")
+    }
+
+    @Test("in-memory history honors the fetch's row bound")
+    func historyCapped() throws {
+        let editor = try makeEditor()
+        editor.load()
+        for i in 0 ..< 105 {
+            editor.baseText = "version \(i)"
+            #expect(editor.save() == true)
+        }
+        #expect(editor.history.count == 100)
+        #expect(editor.history[0].body == "version 104")
+    }
+}

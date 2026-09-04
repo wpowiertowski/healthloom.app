@@ -4428,3 +4428,80 @@ test. Counts: CoachKit 150 → 151, HealthLoomTests 49 → 52.
 
 **VERIFIED, not just written:** full `make test` green (packages on both
 toolchains, `xcodebuild TEST SUCCEEDED` incl. all UI suites).
+
+## WP-26: Prompt Editor
+
+Coach prompt editor (`HealthLoomApp/Coach/PromptEditorView{,Model}.swift`),
+reached from a Settings "Coach Prompt" nav row: editable base prompt with a
+live token estimate (the canonical estimator, shared with the context
+budget), save to the append-only version history, reset-to-default, restore
+of any history entry (append-only, so restores reach pre-reset edits),
+line-diff vs the shipped default (LCS, removed-first on ties per unified
+convention), and the exact effective prompt preview -- working copy plus the
+safety suffix in a locked, tinted section (D10: the suffix is never
+editable). All live values are computed from the working copy (dirty flag
+derives from a saved-text comparison), never stored; validation failures
+map to user-facing copy instead of NSError boilerplate.
+
+Tests: `PromptEditorUITests` (seeded launch -- edit → preview contains edit
++ suffix; reset restores default; newest-first history restore reaches the
+pre-reset edit) + 6 `HealthLoomTests` view-model/diff suites. Two
+accessibility notes for the future: container identifiers override
+children's without explicit `.contain` (locked section, history rows --
+same collapse `chat.screen` hit in WP-25 round 2). Counts:
+HealthLoomTests 52 → 58, HealthLoomUITests 7 → 8.
+
+**VERIFIED, not just written:** full `make test` green (`xcodebuild TEST
+SUCCEEDED` incl. all UI suites; no package changes this WP).
+
+## Code review — WP-26 (prompt editor)
+
+Fourteen findings, all addressed and test-driven.
+
+**Correctness:** successful save/reset/restore busts the cached
+conversation session (the next turn runs under the new prompt; previously
+theTranscript-is-the-memory rule meant a silent memory wipe -- covered by a
+session-identity test); the three writes share one `performWrite` path that
+clears both message slots up front (stale-notice bug structurally fixed);
+diff rows live in a contained group with per-row identifiers; the editor
+adopts the persisted trimmed body with a stated footnote instead of a
+surprise rewrite; Reset disables unless it would change something
+(`canReset`, preserving "empty history means never customized"); the token
+counter measures the validated trimmed string; `load()` assigns only on
+full success (no half-refreshed mix).
+
+**Simplification/efficiency:** the LCS table is replaced by the stdlib's
+`difference(from:)` (linear walk, removed-first); the diff builds once per
+render; writes apply the returned snapshot in memory (no post-write
+re-fetch); the locked suffix stays hand-rolled deliberately
+(`ThemedCallout`'s combine would swallow the suffix identifier -- noted);
+the preview's base block derives from the same assembly it displays.
+
+**Tests:** 5 new suites (session-bust identity, notice clearing, reset
+guard, trimmed estimate, preview derivation) + a fresh-screen
+reset-disabled UI assertion. Counts: HealthLoomTests 58 → 63.
+
+**VERIFIED, not just written:** full `make test` green (no package changes
+this round; `xcodebuild TEST SUCCEEDED` incl. all UI suites).
+
+## Code review — WP-26 (round 2)
+
+Four findings, all addressed and test-driven.
+
+**Correctness:** no-op writes (restore-the-active-row, whitespace-only
+save, effect-unchanged reset) now return early with an explanatory notice
+-- no duplicate history row and, critically, no session reset for an
+unchanged prompt. The explicit `resetConversation()` stays for genuine
+changes only (where the factory's own instructions check would rotate
+anyway; the call keeps the invalidation visible at the edit site).
+`canReset` compares strings, not diffs (provably coincident, and it closes
+the second twice-per-render path); `previewBase`'s dead fallback became a
+Debug assertion; in-memory history prepends honor the fetch's 100-row
+bound.
+
+**Tests:** 4 new suites (whitespace no-op, restore-current no-op incl.
+session preservation, reset-discard-draft, 105-write cap). Counts:
+HealthLoomTests 63 → 67.
+
+**VERIFIED, not just written:** full `make test` green (no package changes
+this round; `xcodebuild TEST SUCCEEDED` incl. all UI suites).

@@ -122,6 +122,15 @@ final class AppEnvironment {
     /// initializer reads them (review minor). Additive properties only --
     /// the WP-15/WP-18 coordination-point convention.
     let coachChatViewModel: CoachChatViewModel
+    /// WP-26 (implementation-plan.md): the prompt editor's manager. Stored
+    /// (not an `init` local) because `SettingsView` builds the editor from
+    /// it -- the consumer round-2's review anticipated when it made the
+    /// other coach pieces locals.
+    let promptManager: PromptManager
+    /// The chat session factory, shared by the chat view model and the
+    /// prompt editor (which busts the cached conversation on every
+    /// successful write -- round-2 #1).
+    let coachSessionFactory: CoachSessionFactory
     init(launchConfiguration: LaunchConfiguration = .current) {
         self.launchConfiguration = launchConfiguration
 
@@ -245,6 +254,7 @@ final class AppEnvironment {
             healthKitAuth: healthKitAuth
         )
         let promptManager = PromptManager(modelContainer: container)
+        self.promptManager = promptManager
         let contextAssembler = ContextAssembler(modelContainer: container)
         // Both selections switch on the one precomputed mode (round-2
         // #11) -- no re-derived flag precedence here. The scripted double
@@ -264,6 +274,7 @@ final class AppEnvironment {
             coachSessionFactory = CoachSessionFactory()
             availabilityChecker = FixedCoachAvailabilityChecker(availability: availability)
         }
+        self.coachSessionFactory = coachSessionFactory
         self.coachChatViewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
             container: container,
             store: knowledgeStore,

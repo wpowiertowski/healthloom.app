@@ -82,6 +82,22 @@ struct SettingsView: View {
             }
             .padding(.top, 20)
 
+            // WP-26 (implementation-plan.md): the coach prompt editor --
+            // base prompt, token estimate, reset, history restore,
+            // diff-vs-default, and the locked-suffix effective preview.
+            ThemedPanel {
+                ThemedNavRow(
+                    title: "Coach Prompt",
+                    accessibilityIdentifier: "settings.prompt.link"
+                ) {
+                    PromptEditorView(viewModel: PromptEditorViewModel(deps: PromptEditorViewModel.Dependencies(
+                        manager: appEnvironment.promptManager,
+                        factory: appEnvironment.coachSessionFactory
+                    )))
+                }
+            }
+            .padding(.top, 20)
+
             // WP-12b (architecture.md D13.5): watch-priority conflict
             // resolution toggle, default ON. The callout copy documents the
             // one asymmetry D13.5 mandates: OFF is forward-only (previously

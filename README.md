@@ -112,7 +112,7 @@ Packages/                Local Swift packages, dependency-ordered (architecture.
 ├── SyncKit/              Pull → map → resolve conflicts → write pipeline + scheduling
 └── CoachKit/              On-device coach: knowledge/context/prompt/readiness/session/tool layers
 HealthLoomTests/          Unit tests hosted in the app target (@testable import HealthLoom)
-HealthLoomUITests/        XCUITest — onboarding, dashboard, activities, today, and coach chat flows
+HealthLoomUITests/        XCUITest — onboarding, dashboard, activities, today, coach chat, and prompt editor flows
 Design/                  Yacht club design system reference (HTML + SwiftUI mockups)
 ```
 
@@ -138,8 +138,8 @@ xcodebuild test -project HealthLoom.xcodeproj \
 | GoogleHealthClient | 35 | OAuth PKCE flow, token refresh, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
 | SyncKit | 260 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction, `WatchCoverageIndex`/`ConflictResolver` (D13) |
 | CoachKit | 151 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming, `ReadinessEngine` golden vectors + monotonicity, `DailyInsight` prompt/generator seam, coach tools wiring + clamping + exclusion gating |
-| HealthLoomTests | 52 | App-target unit tests — Today metrics/formatting, Activities consolidation, watch-priority preferences, coach chat view-model + launch matrix |
-| **HealthLoomUITests** | **7 (1 self-skipped)** | **XCUITest: onboarding (skips on this runner's HealthKit-sheet limitation), dashboard sync states, consolidated activities, Today edit mode, coach chat stream + persistence + unavailable state** |
+| HealthLoomTests | 67 | App-target unit tests — Today metrics/formatting, Activities consolidation, watch-priority preferences, coach chat view-model + launch matrix, prompt editor + diff engine + review rounds |
+| **HealthLoomUITests** | **8 (1 self-skipped)** | **XCUITest: onboarding (skips on this runner's HealthKit-sheet limitation), dashboard sync states, consolidated activities, Today edit mode, coach chat stream + persistence + unavailable state, prompt edit + preview + reset + restore** |
 
 Verified 2026-09-01 (most recently, after the round-2 code review fixes below): full
 `make test` (all package suites + `xcodebuild build test`) passes on both this repo's
