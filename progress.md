@@ -4610,3 +4610,54 @@ full `make test` green incl. `xcodebuild TEST SUCCEEDED`.
 
 **VERIFIED, not just written:** CoachKit matrix (beta 172 / stable 170),
 full `make test` green incl. `xcodebuild TEST SUCCEEDED`.
+
+## WP-28: off-device tiers (stacked commits on `wp-28-offdevice`)
+
+**Foundation (no new deps):** tier-aware session cache (tier joins the
+factory key -- same prompt on PCC never reuses the on-device session),
+`missingCredential` pre-dispatch guard (TOCTOU-tested with a vanishing-key
+double), `liveTiers` injection (the row-liveness mechanism AND the test
+hook: cloud gating/cache/never-escalates/blocker-order all testable with
+scripted sessions, no providers). New tests: tier-busting cache identity,
+gate-then-credential sequence, cloud answers-instead-of-offers,
+consent-before-key order.
+
+**WP-28a PCC (SDK-only, no package dep):** `makeModel` builds
+`PrivateCloudComputeLanguageModel`; catalog gains `pccAvailable`/`pccQuota`
+seams (stable toolchain reports unavailable/ok without touching the
+framework); `PCCQuota` decision table fully ungated (the framework
+publishes no public `QuotaUsage` init, so the thin adapter delegates);
+orchestrator quota pre-dispatch -- exhausted falls back to a fresh
+on-device turn (budget reset, same snapshot linkage), near-limit sets the
+reply's `quotaWarning` bit; `makeProviderSessionBuild` is the single
+provider construction point (factory `init` stays private by design).
+Row ships non-live by default pending the P-1.5 entitlement.
+
+**WP-28b Claude (app-target adapter):** Anthropic's official package (0.1.4
+exact) linked to the app target ONLY -- it requires macOS/iOS 27, which
+CoachKit's macOS 26 floor cannot link (proven by build failure both ways).
+Same constraint exempts Firebase below. `ClaudeTier` (sonnet5 default,
+serverTools never configured -- pinned by test, D11), `makeBuild` via the
+shared provider seam, `CoachError(claudeError:)` table (credential mirrors
+the guard; attestation arms read as tier-unavailable, fixed copy).
+Warnings-as-errors rescoped per first-party target (project/command-line
+scope leaked `-warnings-as-errors` into SPM targets vs upstream
+`-suppress-warnings`); package `swift test` runs unchanged.
+
+**WP-28c Gemini: DEFERRED (documented):** Firebase's
+`geminiLanguageModel` exists but (1) has no BYO-user-key backend -- the key
+comes from the developer's `FirebaseApp` config, so usage bills/attributes
+to us, contradicting the BYO posture; (2) needs `GoogleService-Info.plist`
++ `FirebaseApp.configure()` + human console setup; (3) its targets only
+resolve with `GEMINI_LANGUAGE_MODEL=1` in the environment (CI wrinkle).
+Needs a product decision (who pays/registers) before code. Seams are
+ready: `liveTiers`, `SecretKey.geminiAPIKey`, credential guard,
+never-escalates -- landing it later is purely additive.
+
+**Live-row status:** all rows non-live by default (PCC: entitlement;
+Claude: WP-29 key/consent UI; Gemini: deferred). Plan test lines all met
+except live-device smoke (no device/entitlement/keys in CI -- manual per
+test plan §7).
+
+**Counts:** CoachKit 173 → 181 (beta) / 179 (stable); HealthLoomTests
+67 → 70 (Claude adapter + error table).
