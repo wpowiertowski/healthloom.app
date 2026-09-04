@@ -20,7 +20,11 @@ public enum SecretKey: String, Sendable, Hashable, CaseIterable {
     case googleAccessToken = "google.accessToken"
     /// User-supplied Anthropic (Claude) API key (WP-28/29 — cloud opt-in).
     case claudeAPIKey = "provider.claude.apiKey"
-    /// User-supplied OpenAI API key (WP-28/29 — cloud opt-in).
+    /// User-supplied OpenAI API key. Deferred with no tier (WP-27 review
+    /// §9): architecture.md §7 Q6 + WP-28 ship no OpenAI row until an
+    /// official/vetted `LanguageModel` conformance exists ("do not
+    /// hand-roll"), so nothing maps here yet. Kept (not deleted) so the
+    /// case exists when the tier lands.
     case openAIAPIKey = "provider.openai.apiKey"
     /// User-supplied Google Gemini API key (WP-28/29 — cloud opt-in).
     case geminiAPIKey = "provider.gemini.apiKey"

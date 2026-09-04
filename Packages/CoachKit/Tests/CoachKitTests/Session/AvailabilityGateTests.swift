@@ -161,11 +161,16 @@ struct AvailabilityGateTests {
 // MARK: - Scripted seam check (the WP-25 UI-test seam, exercised early)
 
 /// Scripted `CoachSession` double: proves the protocol seam WP-25's UI test
-/// will rely on can drive send → stream → done without a model.
+/// will rely on can drive send → stream → done without a model. The one
+/// shared session double for the whole target (WP-27 review R2): suites
+/// needing error injection set `failure` instead of minting a bespoke fake.
 @MainActor
 final class ScriptedCoachSession: CoachSession, Sendable {
     private let chunks: [String]
     private(set) var receivedPrompts: [String] = []
+    /// When set, every `respond` throws it (and `stream` finishes with it)
+    /// instead of answering -- failure-path tests without a second double.
+    var failure: Error?
     var isResponding: Bool { false }
 
     /// Scripted answer for the structured (`@Generable`) requirement, as
@@ -183,11 +188,13 @@ final class ScriptedCoachSession: CoachSession, Sendable {
 
     func respond(to prompt: String) async throws -> String {
         receivedPrompts.append(prompt)
+        if let failure { throw failure }
         return chunks.joined()
     }
 
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         receivedPrompts.append(prompt)
+        if let failure { throw failure }
         guard let value = scriptedStructured as? Content else { throw NoStructuredResponse() }
         return value
     }
@@ -195,13 +202,38 @@ final class ScriptedCoachSession: CoachSession, Sendable {
     func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {
         receivedPrompts.append(prompt)
         let chunks = chunks
+        let failure = failure
         return AsyncThrowingStream { continuation in
+            if let failure {
+                continuation.finish(throwing: failure)
+                return
+            }
             for chunk in chunks {
                 continuation.yield(chunk)
             }
             continuation.finish()
         }
     }
+}
+
+/// Minimal `Tool` double: only its `name` matters (the factory's cache key).
+/// The schema body never executes in unit tests -- the injected builder
+/// ignores the tools array; real tool wiring is covered by on-device manual
+/// tests (test plan §7). Lives here (not `CoachSessionTests.swift`) because
+/// this file is its only user (WP-27 review N8) -- same colocation rule as
+/// `ScriptedCoachSession` above.
+struct StubTool: Tool {
+    let name: String
+    var description: String { name }
+    var parameters: GenerationSchema { GenerationSchema(type: StubArgs.self, properties: []) }
+    var includesSchemaInInstructions: Bool { true }
+    func call(arguments: StubArgs) async throws -> String { arguments.query }
+}
+
+@Generable
+struct StubArgs {
+    @Guide(description: "The query.")
+    var query: String
 }
 
 @Suite("CoachSession seam")
