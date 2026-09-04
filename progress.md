@@ -4661,3 +4661,29 @@ test plan §7).
 
 **Counts:** CoachKit 173 → 181 (beta) / 179 (stable); HealthLoomTests
 67 → 70 (Claude adapter + error table).
+
+## WP-28 review round (reviews/wp28-review.md)
+
+Corrections first: the review's N6/N8 "still open" verdicts were stale
+(the tree it read predates the round-2 push -- impl is `prefix(limit-1)`,
+`StubTool` already moved; verified by grep). N3 was genuinely missed
+twice -- fixed here and verified in-file immediately after writing.
+
+**Fixed:** N3 `@unknown default` sanitizes (F1); tier-aware framework
+mapping `init(languageModelError:on:)` with `.onDevice` default, catch-site
+post-adjustment deleted (F2) + cloud-overflow structural pin in the error
+table; F3 decision (b): availability stays green through exhaustion (the
+turn CAN run via fallback) and the reply carries `fellBackFromTier` so the
+UI says so -- gating red would block the D14.3 fallback; F4 reply struct
+`TurnInfo(didTrim:quotaWarning:fellBackFromTier:)` stops the arity rot
+before D15's serving-tier stamp; F6 cloud deeper-ask answers (test);
+F7 offline-construction pin comment.
+
+**Confirmed intentional (F5):** no prod wiring enables PCC/Claude rows --
+no `liveTiers` beyond `[.onDevice]`, no injected provider builds, no
+Keychain-to-build reads. All provider code is dead in prod builds until
+WP-29's key/consent UI (Claude) and the P-1.5 entitlement (PCC), by
+design; defaults preserve WP-27 behavior. F8 acknowledged (double-failure
+loses PCC context -- edge-of-edge, on-device-off is the actionable signal).
+
+**Counts:** CoachKit 181 → 182 (beta) / 180 (stable).

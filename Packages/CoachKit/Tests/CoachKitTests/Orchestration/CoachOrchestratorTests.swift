@@ -123,7 +123,7 @@ struct CoachOrchestratorTests {
     func snapshotStoredPerTurn() async throws {
         let (orchestrator, container, _) = try makeOrchestrator()
         let turn = try await orchestrator.respond(to: "How am I doing?")
-        guard case .reply(_, let snapshotID, _, _) = turn else {
+        guard case .reply(_, let snapshotID, _) = turn else {
             Issue.record("expected a reply, got \(turn)")
             return
         }
@@ -246,11 +246,11 @@ struct CoachOrchestratorTests {
         // Full budget: nothing trimmed, flag false...
         let (orchestrator, _, _) = try makeOrchestrator()
         let full = try await orchestrator.respond(to: "Hi")
-        guard case .reply(_, _, let trimmedFull, _) = full else {
+        guard case .reply(_, _, let info) = full else {
             Issue.record("expected a reply, got \(full)")
             return
         }
-        #expect(!trimmedFull)
+        #expect(info == TurnInfo())
     }
 
     @Test("trimmed-but-fitting turns answer with the flag set")
@@ -272,7 +272,7 @@ struct CoachOrchestratorTests {
         )
         for budget in [2_000, 1_500, 1_000, 800] {
             let turn = try await orchestrator.respond(to: "Hi", tokenBudget: budget)
-            if case .reply(let text, _, let didTrim, _) = turn, didTrim {
+            if case .reply(let text, _, let info) = turn, info.didTrim {
                 #expect(text == "reply")
                 return
             }
@@ -343,7 +343,7 @@ struct CoachOrchestratorTests {
             catalog: cloudCatalog()
         )
         let turn = try await orchestrator.respond(to: "Hi", tier: .claude, tokenBudget: 1)
-        guard case .reply(let text, _, _, _) = turn else {
+        guard case .reply(let text, _, _) = turn else {
             Issue.record("expected an answer, got \(turn)")
             return
         }
@@ -384,11 +384,13 @@ struct CoachOrchestratorTests {
             catalog: pccCatalog(quota: .exhausted(resetDate: nil))
         )
         let turn = try await orchestrator.respond(to: "Hi", tier: .privateCloudCompute)
-        guard case .reply(let text, _, _, _) = turn else {
+        guard case .reply(let text, _, let info) = turn else {
             Issue.record("expected a fallback answer, got \(turn)")
             return
         }
         #expect(text == "reply")
+        // F3: the fallback flag is how the UI says so (D14.3).
+        #expect(info.fellBackFromTier == .privateCloudCompute)
         #expect(recording.builds == 1)
     }
 
@@ -398,22 +400,23 @@ struct CoachOrchestratorTests {
             catalog: pccCatalog(quota: .nearLimit(resetDate: nil))
         )
         let turn = try await orchestrator.respond(to: "Hi", tier: .privateCloudCompute)
-        guard case .reply(_, _, _, let warning) = turn else {
+        guard case .reply(_, _, let info) = turn else {
             Issue.record("expected a warned reply, got \(turn)")
             return
         }
-        #expect(warning)
+        #expect(info.quotaWarning)
     }
 
     @Test("unwarned replies carry no warning")
     func noWarningByDefault() async throws {
         let (orchestrator, _, _) = try makeOrchestrator()
         let turn = try await orchestrator.respond(to: "Hi")
-        guard case .reply(_, _, _, let warning) = turn else {
+        guard case .reply(_, _, let info) = turn else {
             Issue.record("expected a reply, got \(turn)")
             return
         }
-        #expect(!warning)
+        #expect(!info.quotaWarning)
+        #expect(info.fellBackFromTier == nil)
     }
 
     @Test("unavailable PCC stays off despite consent")
@@ -432,6 +435,22 @@ struct CoachOrchestratorTests {
             return tier == .privateCloudCompute
         }
         #expect(recording.builds == 0)
+    }
+
+    @Test("deeper-analysis ask on a cloud tier answers")
+    func cloudDeeperAnalysisAnswers() async throws {
+        // Symmetric to `cloudNeverEscalates`: the second D14.2 trigger is
+        // equally on-device-only, so a cloud deeper-ask answers.
+        let (orchestrator, _, _) = try makeOrchestrator(catalog: cloudCatalog())
+        let turn = try await orchestrator.respond(
+            to: "Give me a deeper analysis of my week.",
+            tier: .claude
+        )
+        guard case .reply(let text, _, _) = turn else {
+            Issue.record("expected an answer, got \(turn)")
+            return
+        }
+        #expect(text == "reply")
     }
 
     @Test("offer turns persist a linkable snapshot")

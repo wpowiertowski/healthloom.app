@@ -33,8 +33,30 @@ public enum OrchestratorTurn: Sendable, Equatable {
     /// turn would be offer fatigue -- the context fit, only reduced), and
     /// the UI can render a quiet "reduced context" affordance instead.
     /// Only `promptOverBudget` (the prompt itself can't fit) offers.
-    case reply(text: String, snapshotID: UUID, didTrim: Bool, quotaWarning: Bool = false)
+    case reply(text: String, snapshotID: UUID, info: TurnInfo)
     case escalationOffer(reason: EscalationReason, snapshotID: UUID)
+}
+
+/// Reply metadata (F4): the third associated value was the signal --
+/// at four flags the tuple became match-noise across every call site, and
+/// the serving-tier stamp (D15) is already coming. One struct, memberwise
+/// defaults, `Equatable` so tests compare whole values.
+public struct TurnInfo: Sendable, Equatable {
+    /// Fields were dropped to fit the window (quiet reduced-context
+    /// affordance; only `promptOverBudget` offers).
+    public var didTrim: Bool
+    /// PCC quota is near its daily limit (D14.3 -- the UI says so).
+    public var quotaWarning: Bool
+    /// The turn was requested on this tier but served on-device after
+    /// quota exhaustion (D14.3 -- the UI says so: "PCC limit reached,
+    /// answered on-device"). Nil when the serving tier is the requested
+    /// tier. Offers pass through untouched (no serving happened).
+    public var fellBackFromTier: ModelTier?
+    public init(didTrim: Bool = false, quotaWarning: Bool = false, fellBackFromTier: ModelTier? = nil) {
+        self.didTrim = didTrim
+        self.quotaWarning = quotaWarning
+        self.fellBackFromTier = fellBackFromTier
+    }
 }
 
 /// Owns the turn pipeline. A `@MainActor final class` like its
@@ -106,7 +128,11 @@ public final class CoachOrchestrator: Sendable {
         if tier == .privateCloudCompute {
             switch catalog.pccQuota() {
             case .exhausted:
-                return try await respond(
+                // F3 decision: availability stays green (the turn CAN run --
+                // via fallback) and the reply carries the fallback flag so
+                // the UI says so (D14.3). Gating availability red instead
+                // would block the fallback the plan requires.
+                let turn = try await respond(
                     to: message,
                     purpose: purpose,
                     tier: .onDevice,
@@ -114,6 +140,11 @@ public final class CoachOrchestrator: Sendable {
                     toolSetID: toolSetID,
                     tokenBudget: nil
                 )
+                guard case .reply(let text, let snapshotID, var info) = turn else {
+                    return turn
+                }
+                info.fellBackFromTier = .privateCloudCompute
+                return .reply(text: text, snapshotID: snapshotID, info: info)
             case .nearLimit:
                 quotaWarning = true
             case .ok:
@@ -171,19 +202,10 @@ public final class CoachOrchestrator: Sendable {
             return .reply(
                 text: text,
                 snapshotID: assembled.snapshotID,
-                didTrim: assembled.didTrim,
-                quotaWarning: quotaWarning
+                info: TurnInfo(didTrim: assembled.didTrim, quotaWarning: quotaWarning)
             )
         } catch {
-            // Tier-dependent escalation flag (WP-27 review §2): a
-            // mid-generation overflow on a cloud tier has nowhere bigger to
-            // go, so the offer bit is cleared -- only on-device overflows
-            // offer PCC.
-            var normalized = Self.normalize(error)
-            if tier != .onDevice, case .contextOverflow = normalized {
-                normalized = .contextOverflow(offerEscalation: false)
-            }
-            throw normalized
+            throw Self.normalize(error, on: tier)
         }
     }
 
@@ -225,8 +247,10 @@ public final class CoachOrchestrator: Sendable {
 
     /// Session-thrown errors become `CoachError`. The framework mapping is
     /// toolchain-gated (the declaration is 27-SDK-only); everything else is
-    /// a transport/store failure the UI renders generically per D11.
-    private static func normalize(_ error: Error) -> CoachError {
+    /// a transport/store failure the UI renders generically per D11. The
+    /// tier rides along so overflow-escalation is decided structurally in
+    /// the mapping (F2), not adjusted at the catch site.
+    private static func normalize(_ error: Error, on tier: ModelTier) -> CoachError {
 #if swift(>=6.4)
         // The cast needs the SDK's own availability: package tests execute
         // on macOS 26 hosts, where the 27-only conformance can't run.
@@ -236,7 +260,7 @@ public final class CoachOrchestrator: Sendable {
         if #available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *),
            let lmError = error as? LanguageModelError
         {
-            return CoachError(languageModelError: lmError)
+            return CoachError(languageModelError: lmError, on: tier)
         }
 #endif
         return .underlying(CoachError.sanitizedSummary(String(describing: error)))

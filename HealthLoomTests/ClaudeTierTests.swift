@@ -14,6 +14,10 @@ import Testing
 @Suite("Claude tier")
 @MainActor
 struct ClaudeTierTests {
+    // Intentional default-marker (F7), not a behavior test: fails only
+    // when the default changes, forcing the change to be deliberate.
+    // Construction here must stay offline: if a future SDK version
+    // validates keys at init (network), this test becomes a live call.
     @Test("default model is the pinned constant")
     func defaultModel() {
         #expect(ClaudeTier.defaultModel.id == ClaudeModel.sonnet5.id)
