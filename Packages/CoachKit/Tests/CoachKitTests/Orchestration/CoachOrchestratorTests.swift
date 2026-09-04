@@ -123,7 +123,7 @@ struct CoachOrchestratorTests {
     func snapshotStoredPerTurn() async throws {
         let (orchestrator, container, _) = try makeOrchestrator()
         let turn = try await orchestrator.respond(to: "How am I doing?")
-        guard case .reply(_, let snapshotID, _) = turn else {
+        guard case .reply(_, let snapshotID, _, _) = turn else {
             Issue.record("expected a reply, got \(turn)")
             return
         }
@@ -246,7 +246,7 @@ struct CoachOrchestratorTests {
         // Full budget: nothing trimmed, flag false...
         let (orchestrator, _, _) = try makeOrchestrator()
         let full = try await orchestrator.respond(to: "Hi")
-        guard case .reply(_, _, let trimmedFull) = full else {
+        guard case .reply(_, _, let trimmedFull, _) = full else {
             Issue.record("expected a reply, got \(full)")
             return
         }
@@ -272,7 +272,7 @@ struct CoachOrchestratorTests {
         )
         for budget in [2_000, 1_500, 1_000, 800] {
             let turn = try await orchestrator.respond(to: "Hi", tokenBudget: budget)
-            if case .reply(let text, _, let didTrim) = turn, didTrim {
+            if case .reply(let text, _, let didTrim, _) = turn, didTrim {
                 #expect(text == "reply")
                 return
             }
@@ -343,12 +343,95 @@ struct CoachOrchestratorTests {
             catalog: cloudCatalog()
         )
         let turn = try await orchestrator.respond(to: "Hi", tier: .claude, tokenBudget: 1)
-        guard case .reply(let text, _, _) = turn else {
+        guard case .reply(let text, _, _, _) = turn else {
             Issue.record("expected an answer, got \(turn)")
             return
         }
         #expect(text == "reply")
         #expect(recording.builds == 1)
+    }
+
+    @Test("quota decision table")
+    func quotaTable() {
+        #expect(PCCQuota(isLimitReached: false, isApproachingLimit: false) == .ok)
+        #expect(PCCQuota(isLimitReached: false, isApproachingLimit: true) == .nearLimit(resetDate: nil))
+        #expect(PCCQuota(isLimitReached: true, isApproachingLimit: false) == .exhausted(resetDate: nil))
+        // Limit-reached dominates a lagging status payload.
+        #expect(PCCQuota(isLimitReached: true, isApproachingLimit: true) == .exhausted(resetDate: nil))
+    }
+
+    private func pccCatalog(
+        available: Bool = true,
+        quota: PCCQuota = .ok
+    ) -> ModelCatalog {
+        ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { _ in true },
+            pccAvailable: { available },
+            pccQuota: { quota },
+            liveTiers: [.onDevice, .privateCloudCompute]
+        )
+    }
+
+    @Test("exhausted quota falls back to on-device")
+    func quotaFallback() async throws {
+        // D14.3: the turn runs on-device instead of failing -- fresh window
+        // (a 32K PCC budget must not suppress on-device escalation), same
+        // snapshot linkage.
+        let recording = RecordingBuild()
+        let (orchestrator, _, _) = try makeOrchestrator(
+            recording: recording,
+            catalog: pccCatalog(quota: .exhausted(resetDate: nil))
+        )
+        let turn = try await orchestrator.respond(to: "Hi", tier: .privateCloudCompute)
+        guard case .reply(let text, _, _, _) = turn else {
+            Issue.record("expected a fallback answer, got \(turn)")
+            return
+        }
+        #expect(text == "reply")
+        #expect(recording.builds == 1)
+    }
+
+    @Test("near-limit quota warns on the reply")
+    func quotaWarning() async throws {
+        let (orchestrator, _, _) = try makeOrchestrator(
+            catalog: pccCatalog(quota: .nearLimit(resetDate: nil))
+        )
+        let turn = try await orchestrator.respond(to: "Hi", tier: .privateCloudCompute)
+        guard case .reply(_, _, _, let warning) = turn else {
+            Issue.record("expected a warned reply, got \(turn)")
+            return
+        }
+        #expect(warning)
+    }
+
+    @Test("unwarned replies carry no warning")
+    func noWarningByDefault() async throws {
+        let (orchestrator, _, _) = try makeOrchestrator()
+        let turn = try await orchestrator.respond(to: "Hi")
+        guard case .reply(_, _, _, let warning) = turn else {
+            Issue.record("expected a reply, got \(turn)")
+            return
+        }
+        #expect(!warning)
+    }
+
+    @Test("unavailable PCC stays off despite consent")
+    func pccAvailabilityGates() async throws {
+        // Offline / missing entitlement surface as unavailable (D14.4) --
+        // consenting to a tier that can't run is pointless.
+        let recording = RecordingBuild()
+        let (orchestrator, _, _) = try makeOrchestrator(
+            recording: recording,
+            catalog: pccCatalog(available: false)
+        )
+        await #expect {
+            try await orchestrator.respond(to: "Hi", tier: .privateCloudCompute)
+        } throws: { error in
+            guard case .tierUnavailable(let tier, _) = error as? CoachError else { return false }
+            return tier == .privateCloudCompute
+        }
+        #expect(recording.builds == 0)
     }
 
     @Test("offer turns persist a linkable snapshot")

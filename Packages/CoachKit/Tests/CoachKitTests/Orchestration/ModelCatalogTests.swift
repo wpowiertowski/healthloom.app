@@ -113,7 +113,8 @@ struct ModelCatalogTests {
         guard #available(macOS 27, *) else { return }
         let catalog = ModelCatalog(onDeviceAvailable: { true })
         #expect(try catalog.makeModel(for: .onDevice) is SystemLanguageModel)
-        for tier in [ModelTier.privateCloudCompute, .claude, .gemini] {
+        #expect(try catalog.makeModel(for: .privateCloudCompute) is PrivateCloudComputeLanguageModel)
+        for tier in [ModelTier.claude, .gemini] {
             #expect(throws: CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)) {
                 try catalog.makeModel(for: tier)
             }

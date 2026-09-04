@@ -33,7 +33,7 @@ public enum OrchestratorTurn: Sendable, Equatable {
     /// turn would be offer fatigue -- the context fit, only reduced), and
     /// the UI can render a quiet "reduced context" affordance instead.
     /// Only `promptOverBudget` (the prompt itself can't fit) offers.
-    case reply(text: String, snapshotID: UUID, didTrim: Bool)
+    case reply(text: String, snapshotID: UUID, didTrim: Bool, quotaWarning: Bool = false)
     case escalationOffer(reason: EscalationReason, snapshotID: UUID)
 }
 
@@ -98,6 +98,28 @@ public final class CoachOrchestrator: Sendable {
         guard !tier.requiresAPIKey || catalog.hasKey(tier) else {
             throw CoachError.missingCredential(tier: tier)
         }
+        // PCC quota pre-dispatch (D14.3): exhausted falls back to on-device
+        // (a fresh on-device turn -- budget reset to the tier default, so a
+        // 32K PCC budget can't suppress on-device escalation); near-limit
+        // dispatches with the warning bit the UI renders.
+        var quotaWarning = false
+        if tier == .privateCloudCompute {
+            switch catalog.pccQuota() {
+            case .exhausted:
+                return try await respond(
+                    to: message,
+                    purpose: purpose,
+                    tier: .onDevice,
+                    tools: tools,
+                    toolSetID: toolSetID,
+                    tokenBudget: nil
+                )
+            case .nearLimit:
+                quotaWarning = true
+            case .ok:
+                break
+            }
+        }
         // PromptManager is the ONLY source of instructions (D10/D8): every
         // tier, every turn, user base + immutable safety suffix. A store
         // failure is a turn failure, not a silent suffix-less fallback.
@@ -146,7 +168,12 @@ public final class CoachOrchestrator: Sendable {
             // Framing via the shared composer (R1): the user message plus
             // context-as-data block, one literal owned by `HealthContext`.
             let text = try await session.respond(to: assembled.context.promptBlock(message: message))
-            return .reply(text: text, snapshotID: assembled.snapshotID, didTrim: assembled.didTrim)
+            return .reply(
+                text: text,
+                snapshotID: assembled.snapshotID,
+                didTrim: assembled.didTrim,
+                quotaWarning: quotaWarning
+            )
         } catch {
             // Tier-dependent escalation flag (WP-27 review §2): a
             // mid-generation overflow on a cloud tier has nowhere bigger to

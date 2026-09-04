@@ -55,6 +55,13 @@ public struct ModelCatalog: Sendable {
     /// Whether the tier's API key is present in the Keychain. Defaults to
     /// false; the app wires `KeychainStore.get(tier.secretKey) != nil`.
     public var hasKey: @Sendable (ModelTier) -> Bool
+    /// PCC runtime state (WP-28a, D14.3/D14.4). Defaults to
+    /// available/ok; the app's live wiring reads the real model (see
+    /// `live()`), tests inject quota states to render warning/fallback.
+    /// `@MainActor`-bound like `onDeviceAvailable`, no default (same
+    /// nonisolated-default-arg reason).
+    public var pccAvailable: @MainActor @Sendable () -> Bool
+    public var pccQuota: @MainActor @Sendable () -> PCCQuota
     /// Rows that have shipped. Defaults to on-device only; WP-28 flips rows
     /// live by adding them to the default set. Tests inject extra rows to
     /// exercise cloud-tier gating (consent/key checks, tier-aware cache,
@@ -65,11 +72,15 @@ public struct ModelCatalog: Sendable {
         onDeviceAvailable: @MainActor @Sendable @escaping () -> Bool,
         hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
         hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
+        pccAvailable: @MainActor @Sendable @escaping () -> Bool = { true },
+        pccQuota: @MainActor @Sendable @escaping () -> PCCQuota = { .ok },
         liveTiers: Set<ModelTier> = [.onDevice]
     ) {
         self.onDeviceAvailable = onDeviceAvailable
         self.hasConsent = hasConsent
         self.hasKey = hasKey
+        self.pccAvailable = pccAvailable
+        self.pccQuota = pccQuota
         self.liveTiers = liveTiers
     }
 
@@ -87,8 +98,34 @@ public struct ModelCatalog: Sendable {
             onDeviceAvailable: { AvailabilityGate.current() == .available },
             hasConsent: hasConsent,
             hasKey: hasKey,
+            pccAvailable: { Self.livePCCAvailability() },
+            pccQuota: { Self.livePCCQuota() },
             liveTiers: liveTiers
         )
+    }
+
+    /// Live PCC model reads. The stable matrix toolchain can't name these
+    /// symbols at all, so the stable variant reports unavailable/ok without
+    /// touching the framework (PCC never dispatches there -- `makeModel` is
+    /// gated too). The beta variant carries the SDK's own availability: it
+    /// only executes on iOS/macOS 27+ (package tests on macOS 26 take the
+    /// early return, never the model read).
+    private static func livePCCAvailability() -> Bool {
+#if swift(>=6.4)
+        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *) {
+            return PrivateCloudComputeLanguageModel().isAvailable
+        }
+#endif
+        return false
+    }
+
+    private static func livePCCQuota() -> PCCQuota {
+#if swift(>=6.4)
+        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *) {
+            return PCCQuota(PrivateCloudComputeLanguageModel().quotaUsage)
+        }
+#endif
+        return .ok
     }
 
     /// Gate: on-device runs when the model is available; every other tier
@@ -105,7 +142,9 @@ public struct ModelCatalog: Sendable {
         switch tier {
         case .onDevice:
             onDeviceAvailable()
-        case .privateCloudCompute, .claude, .gemini:
+        case .privateCloudCompute:
+            isLive(tier) && pccAvailable() && hasConsent(tier)
+        case .claude, .gemini:
             // Live-row check doubles as the WP-28 fill-in point: each row
             // goes live by returning its consent/key gate here instead of
             // false.
@@ -125,7 +164,21 @@ public struct ModelCatalog: Sendable {
                 return TierAvailability.available
             }
             return TierAvailability.unavailable(reason: TierAvailability.modelUnavailable)
-        case .privateCloudCompute, .claude, .gemini:
+        case .privateCloudCompute:
+            // PCC consults the model state (offline/entitlement surface as
+            // unavailable, D14.4) before consent/key: no point consenting to
+            // a tier that can't run.
+            guard isLive(tier) else {
+                return .unavailable(reason: TierAvailability.notLive)
+            }
+            guard pccAvailable() else {
+                return .unavailable(reason: TierAvailability.modelUnavailable)
+            }
+            guard hasConsent(tier) else {
+                return .unavailable(reason: TierAvailability.needsConsent)
+            }
+            return .available
+        case .claude, .gemini:
             guard isLive(tier) else {
                 return .unavailable(reason: TierAvailability.notLive)
             }
@@ -175,7 +228,9 @@ public struct ModelCatalog: Sendable {
         switch tier {
         case .onDevice:
             SystemLanguageModel.default
-        case .privateCloudCompute, .claude, .gemini:
+        case .privateCloudCompute:
+            PrivateCloudComputeLanguageModel()
+        case .claude, .gemini:
             throw CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)
         }
     }
