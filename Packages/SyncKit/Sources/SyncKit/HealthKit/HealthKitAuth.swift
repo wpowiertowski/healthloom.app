@@ -84,6 +84,31 @@ public final class HealthKitAuth: Sendable {
         }
     }
 
+    /// Request share AND read authorization in a single system prompt.
+    ///
+    /// Same validation order as the separate calls (every type in both sets
+    /// must resolve before the `isAvailable` gate, before the store call),
+    /// then one `HKHealthStore.requestAuthorization(toShare:read:)`.
+    /// Prefer this whenever a screen needs both halves *now* (onboarding):
+    /// two back-to-back `requestAuthorization` calls present the second
+    /// sheet while the first is still dismissing, which HealthKit's remote
+    /// presentation can reject with a "view is not in the window
+    /// hierarchy" failure. Incremental callers that only need one half
+    /// keep using `requestWrite(for:)` / `requestRead(_:)`.
+    public func requestShareAndRead(share: [GoogleDataType], read: [GoogleDataType]) async throws(HealthKitAuthError) {
+        let shareTypes = try resolveSampleTypes(for: share)
+        let readTypes = try resolveSampleTypes(for: read)
+        guard isAvailable else { throw .healthDataUnavailable }
+        do {
+            try await store.requestAuthorization(
+                toShare: shareTypes,
+                read: Set(readTypes.map { $0 as HKObjectType })
+            )
+        } catch {
+            throw .underlying(String(describing: error))
+        }
+    }
+
     /// Request read authorization for `types`.
     ///
     /// Shaped for **incremental** calls: pass only the types you need read
