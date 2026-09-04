@@ -137,20 +137,3 @@ struct DeltaStreamTests {
     }
 }
 
-/// Minimal `Tool` double: only its `name` matters (the factory's cache key).
-/// The schema body never executes in unit tests -- the injected builder
-/// ignores the tools array; real tool wiring is covered by on-device manual
-/// tests (test plan §7).
-struct StubTool: Tool {
-    let name: String
-    var description: String { name }
-    var parameters: GenerationSchema { GenerationSchema(type: StubArgs.self, properties: []) }
-    var includesSchemaInInstructions: Bool { true }
-    func call(arguments: StubArgs) async throws -> String { arguments.query }
-}
-
-@Generable
-struct StubArgs {
-    @Guide(description: "The query.")
-    var query: String
-}

@@ -64,7 +64,7 @@ public final class PromptManager {
     /// not two disagreeing ones (`String.count` grapheme clusters would
     /// under-report emoji/CJK ~3x). Informational only.
     public static func estimatedTokens(for prompt: String) -> Int {
-        (prompt.utf8.count + 3) / 4
+        bytesToTokens(prompt.utf8.count)
     }
 
     /// Abuse/length guard for the only write path (WP-26's editor also goes

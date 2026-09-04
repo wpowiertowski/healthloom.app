@@ -133,11 +133,11 @@ xcodebuild test -project HealthLoom.xcodeproj \
 
 | Package | Tests | Coverage |
 | --- | --- | --- |
-| CoreModel | 20 | SwiftData model relationships, defaults, Codable value types, shared exercise-payload decoding, health-context data framing |
+| CoreModel | 22 | SwiftData model relationships, defaults, Codable value types, shared exercise-payload decoding, health-context data framing + shared prompt composer |
 | Secrets | 14 | Keychain read/write/delete round-trip, accessibility attribute, missing-item handling |
 | GoogleHealthClient | 35 | OAuth PKCE flow, token refresh, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
 | SyncKit | 260 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction, `WatchCoverageIndex`/`ConflictResolver` (D13) |
-| CoachKit | 151 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming, `ReadinessEngine` golden vectors + monotonicity, `DailyInsight` prompt/generator seam, coach tools wiring + clamping + exclusion gating |
+| CoachKit | 173 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming, `ReadinessEngine` golden vectors + monotonicity, `DailyInsight` prompt/generator seam, coach tools wiring + clamping + exclusion gating, `ModelCatalog` gating truth table + tier budgets, `CoachError` normalization + sanitizer, orchestrator suffix/snapshot/escalation/`didTrim` (173 beta / 171 stable — 2 tests need the 27 SDK) |
 | HealthLoomTests | 67 | App-target unit tests — Today metrics/formatting, Activities consolidation, watch-priority preferences, coach chat view-model + launch matrix, prompt editor + diff engine + review rounds |
 | **HealthLoomUITests** | **8 (1 self-skipped)** | **XCUITest: onboarding (skips on this runner's HealthKit-sheet limitation), dashboard sync states, consolidated activities, Today edit mode, coach chat stream + persistence + unavailable state, prompt edit + preview + reset + restore** |
 

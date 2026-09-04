@@ -1,0 +1,182 @@
+// ModelCatalog.swift
+//
+// WP-27 (implementation-plan.md step 1): the table of model tiers -- display
+// name, `makeModel()`, `runsOnDevice`, `requiresAPIKey`, `requiresConsent`,
+// availability check -- with `isEnabled` gating each tier. This WP ships the
+// catalog with only `.onDevice` live; WP-28 fills the other rows.
+//
+// Testability split (the package's pure/impure rule): everything except
+// `makeModel()` is toolchain-independent -- gating truth table,
+// availability mapping -- so it compiles and tests on both matrix
+// toolchains. Only `makeModel()` mentions `any LanguageModel` and it sits
+// behind `#if swift(>=6.4)` (see ModelTier.swift's header for why the gate
+// is a compiler version, not `@available`).
+
+import Foundation
+import FoundationModels
+
+/// Per-tier availability as reported to the UI. A `String` reason (not a
+/// closed enum) because WP-28's rows bring provider-specific causes
+/// (missing key, quota exhausted, no entitlement) that this WP can't
+/// enumerate; call sites render the string verbatim.
+public enum TierAvailability: Sendable, Equatable {
+    case available
+    case unavailable(reason: String)
+}
+
+/// Single edit point for the catalog's UI copy (WP-27 review R3): the
+/// reasons used to be independent literals in source *and* duplicated on
+/// the `#expect` side, so a copy edit was N coordinated edits. Tests
+/// assert against these constants (verifying *which* blocker, not its
+/// spelling); the deeper unification (one availability type) waits for
+/// WP-29's Settings screen.
+extension TierAvailability {
+    static let notLive = "Ships in a later update."
+    static let needsConsent = "Requires opt-in consent."
+    static let needsKey = "Requires an API key."
+    static let modelUnavailable = "Apple Intelligence is unavailable."
+}
+
+/// The tier table. Value type with injected seams: the catalog never touches
+/// the Keychain, consent storage, or the model itself -- the app wires those
+/// in (Keychain reads, `IncrementalConsentPresenter`, `AvailabilityGate`),
+/// and tests inject fakes. That keeps the gating truth table (key x consent
+/// x availability) a pure unit test on both toolchains.
+public struct ModelCatalog: Sendable {
+    /// Live on-device-model state. `@MainActor`-bound because the WP-22
+    /// availability gate it usually reads is (like every coach type in this
+    /// package); tests inject a constant. No default: a default argument
+    /// evaluates in a nonisolated context, so it couldn't read the gate --
+    /// callers wanting the live wiring use `live()` instead.
+    public var onDeviceAvailable: @MainActor @Sendable () -> Bool
+    /// Whether opt-in consent is recorded for a tier (D11). Defaults to
+    /// false -- no tier is consented until the app records it.
+    public var hasConsent: @Sendable (ModelTier) -> Bool
+    /// Whether the tier's API key is present in the Keychain. Defaults to
+    /// false; the app wires `KeychainStore.get(tier.secretKey) != nil`.
+    public var hasKey: @Sendable (ModelTier) -> Bool
+
+    public init(
+        onDeviceAvailable: @MainActor @Sendable @escaping () -> Bool,
+        hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
+        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false }
+    ) {
+        self.onDeviceAvailable = onDeviceAvailable
+        self.hasConsent = hasConsent
+        self.hasKey = hasKey
+    }
+
+    /// Catalog with the live on-device gate wired (`AvailabilityGate`,
+    /// WP-22). The app's default; tests construct `init` directly with a
+    /// constant so availability is a test input, not environment.
+    /// Explicit `@MainActor` (see `isEnabled`).
+    @MainActor
+    public static func live(
+        hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
+        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false }
+    ) -> ModelCatalog {
+        ModelCatalog(
+            onDeviceAvailable: { AvailabilityGate.current() == .available },
+            hasConsent: hasConsent,
+            hasKey: hasKey
+        )
+    }
+
+    /// Gate: on-device runs when the model is available; every other tier
+    /// needs recorded consent AND (no key needed, or key in Keychain).
+    /// The `isLive` conjunct dominates (WP-27 review §12): even a fully
+    /// consented+keyed cloud tier stays off until WP-28 flips its row --
+    /// every WP-28 diff touches that predicate, not this gate.
+    ///
+    /// Explicit `@MainActor` (WP-27 review §10): the package default
+    /// isolation would infer it, but off-main callers (PCC quota checks,
+    /// background insights) must see the hop without reading Package.swift.
+    @MainActor
+    public func isEnabled(_ tier: ModelTier) -> Bool {
+        switch tier {
+        case .onDevice:
+            onDeviceAvailable()
+        case .privateCloudCompute, .claude, .gemini:
+            // Live-row check doubles as the WP-28 fill-in point: each row
+            // goes live by returning its consent/key gate here instead of
+            // false.
+            isLive(tier) && hasConsent(tier) && (!tier.requiresAPIKey || hasKey(tier))
+        }
+    }
+
+    /// Availability detail for UI copy. On-device reflects the live gate;
+    /// off-device rows report their setup blocker (consent, key) or their
+    /// not-yet-live state, so Settings can render *why* a tier is off.
+    /// Explicit `@MainActor` (see `isEnabled`).
+    @MainActor
+    public func availability(for tier: ModelTier) -> TierAvailability {
+        switch tier {
+        case .onDevice:
+            if onDeviceAvailable() {
+                return TierAvailability.available
+            }
+            return TierAvailability.unavailable(reason: TierAvailability.modelUnavailable)
+        case .privateCloudCompute, .claude, .gemini:
+            guard isLive(tier) else {
+                return .unavailable(reason: TierAvailability.notLive)
+            }
+            guard hasConsent(tier) else {
+                return .unavailable(reason: TierAvailability.needsConsent)
+            }
+            guard !tier.requiresAPIKey || hasKey(tier) else {
+                return .unavailable(reason: TierAvailability.needsKey)
+            }
+            return .available
+        }
+    }
+
+    /// Context window for a tier's turns (WP-27 review §5): the budget used
+    /// to belong to each `respond` caller (defaulting to the 4K on-device
+    /// window for every tier -- a forgotten override silently trimmed PCC
+    /// turns to 4K or skipped on-device escalation). The catalog owns
+    /// per-tier knowledge, so it owns the budget; `respond` keeps an
+    /// explicit override for tests.
+    /// Explicit `@MainActor` for the same reason as `isEnabled`.
+    @MainActor
+    public func tokenBudget(for tier: ModelTier) -> Int {
+        switch tier {
+        case .onDevice:
+            ContextAssembler.onDeviceTokenBudget
+        case .privateCloudCompute:
+            ContextAssembler.privateCloudComputeTokenBudget
+        case .claude, .gemini:
+            ContextAssembler.largeCloudTokenBudget
+        }
+    }
+
+#if swift(>=6.4)
+    /// Builds the framework model for a tier -- the D9 seam: every tier
+    /// answers as `any LanguageModel`, so sessions, streaming, `@Generable`
+    /// guides and tool calls work identically across providers. Only
+    /// `.onDevice` is live this WP; the other rows throw `.tierUnavailable`
+    /// until WP-28 fills them (never a half-wired model).
+    ///
+    /// Carries the SDK's own availability: the protocol is a 27-SDK
+    /// declaration, so this is unreachable below macOS/iOS 27 (the stable
+    /// matrix toolchain can't even name the return type -- see
+    /// ModelTier.swift's header).
+    @available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *)
+    @available(tvOS, unavailable)
+    public func makeModel(for tier: ModelTier) throws -> any LanguageModel {
+        switch tier {
+        case .onDevice:
+            SystemLanguageModel.default
+        case .privateCloudCompute, .claude, .gemini:
+            throw CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)
+        }
+    }
+#endif
+
+    /// Live-row table. Single private predicate (not per-row inline
+    /// conditions) so WP-28's fill-in is one predicate per row, and
+    /// `isEnabled`/`availability(for:)`/`makeModel` can never disagree about
+    /// which rows are live.
+    private func isLive(_ tier: ModelTier) -> Bool {
+        tier == .onDevice
+    }
+}

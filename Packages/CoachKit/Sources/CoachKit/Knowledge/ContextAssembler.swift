@@ -135,7 +135,7 @@ public final class ContextAssembler {
     /// this is the single function to update.
     static func tokens(forFieldBytes bytes: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
-        return (2 + bytes + (count - 1) + 3) / 4
+        return bytesToTokens(2 + bytes + (count - 1))
     }
 
     /// Token-budget estimate (WP-20 step 2) for a field set: the JSON-encoded
@@ -165,7 +165,7 @@ public final class ContextAssembler {
             today: today
         )
         if let json = try? JSONEncoder().encode(shell) {
-            return (json.count + 3) / 4
+            return bytesToTokens(json.count)
         }
         return 0
     }

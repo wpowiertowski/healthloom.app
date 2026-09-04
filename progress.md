@@ -4505,3 +4505,108 @@ HealthLoomTests 63 → 67.
 
 **VERIFIED, not just written:** full `make test` green (no package changes
 this round; `xcodebuild TEST SUCCEEDED` incl. all UI suites).
+
+## WP-27: ModelCatalog + CoachOrchestrator
+
+New `CoachKit/Orchestration/` group: `ModelTier` (D14 ladder metadata,
+`SecretKey` mapping in the `provider.*` namespace), `ModelCatalog`
+(`isEnabled` = on-device availability, else consent ∧ (no key ∨ key in
+Keychain); per-tier `availability(for:)` naming the blocker; only
+`.onDevice` live, `isLive` is the single WP-28 fill-in point),
+`CoachError` (normalized UI-facing failures), `CoachOrchestrator`
+(PromptManager instructions ⇒ suffix on every tier, snapshot per turn,
+dispatch via `CoachSessionFactory`, escalation *offers* on over-budget /
+deeper-analysis, never auto-switch).
+
+**Toolchain gate (load-bearing):** the stable matrix toolchain (Xcode
+26.4.1, Swift 6.3.1) SDK has `LanguageModelSession`/`SystemLanguageModel`
+but NEITHER the `LanguageModel` protocol NOR `LanguageModelError` (verified
+against both SDK swiftinterfaces); the beta (Swift 6.4) has both. All
+protocol-touching code (`makeModel`, the framework error mapping, its
+tests) sits behind `#if swift(>=6.4)` + the SDK's own
+`@available(iOS/macOS 27, *)`. The spy-conformance test the plan names
+proved infeasible (the protocol has an associated-type `Executor`), so the
+suffix assertion spies at the factory seam (captured instructions) -- the
+tier-independent carrier of the suffix. Gated tests compile on beta and
+execute on macOS 27+ hosts (early return on macOS 26 package-test hosts).
+
+**Isolation note:** `ModelCatalog.live()` (not a default argument) wires
+`AvailabilityGate` because default args evaluate outside actor isolation;
+same reason the orchestrator takes `catalog:` as an optional defaulting to
+nil-then-live in its `@MainActor` body.
+
+**Tests:** 21 new test runs across 3 suites (truth table incl.
+non-live-dominates-setup, blocker reasons, error table, suffix capture,
+snapshot round-trip, both escalation triggers + overflow dominance,
+disabled-tier no-dispatch, failure normalization, framing). Counts:
+CoachKit 151 → 169 (beta) / 167 (stable -- 2 gated tests compile out).
+
+## WP-27 review round (reviews/wp-27-10bc02b.md)
+
+Two-part review, addressed test-first and amended into the WP commit.
+
+**Fixed now:** shared `HealthContext.promptBlock` composer + sentence
+constant -- `turnPrompt`/`chatPrompt`/`DailyInsight.prompt` converge on
+one literal (R1); `ScriptedCoachSession.failure` kills the bespoke
+`FailingScriptedSession` copy (R2); `TierAvailability` reason constants,
+tests assert which blocker, not its spelling (R3); shared
+`bytesToTokens` for both estimators, math unchanged (R4);
+tier-owned `tokenBudget(for:)` with `respond` defaulting to it (§5);
+single-line ≤300-char sanitizer on every `.underlying`/`.unsupported`
+payload at construction (§7); explicit `@MainActor` on the catalog API
+(§10); `openAIAPIKey` annotated deferred (§9); doc typo + `isLive`
+dominance + `unavailableReason` coincidence notes (§11/§12);
+`unsupported*` arms constructed except `Transcript.Entry` (documented);
+near-miss phrase pins; offer-snapshot linkage test; `let` deps (O4);
+locale-independent phrase matching (O2).
+
+**Spec decision (§3, option b):** trimmed-but-fitting turns answer with
+`didTrim` surfaced on `OrchestratorTurn.reply` (quiet UI affordance, no
+offer -- per-turn offers on every rich-profile turn would be fatigue);
+only `promptOverBudget` offers.
+
+**Declined with rationale:** pre-assemble phrase check (O3 -- would break
+offer/snapshot linkage for WP-32); purpose-enum collapse (R5 -- the split
+is D15's Dynamic Profiles seam, "don't add a third" honored);
+per-turn encoder/shell caching (O1 -- no metric proving the MainActor
+path hot); offer-snapshot retention (accepted -- shared `pruneSnapshots`
+cap covers both linkages).
+
+**Deferred to WP-28 (review-gated, latent until a second row goes
+live):** tier-aware session cache (§1), tier-dependent
+`offerEscalation` (§2), `missingCredential` pre-dispatch check (§4),
+non-onDevice never-escalates + consent-before-key order tests (§11).
+
+**Counts after round:** CoachKit 169 → 172 (beta) / 170 (stable);
+CoreModel +2 (`promptBlock`).
+
+## WP-27 review round 2 (reviews/wp-27-10bc02b.md Part 3)
+
+Three one-line residues + test hardening, all addressed and amended.
+
+**Residues:** `makeModel` uses `TierAvailability.notLive` (N1);
+`estimatedShellTokens` delegates to `bytesToTokens` -- last `+3)/4` copy
+gone (N2); `@unknown default` sanitizes (N3 -- the highest-leak-risk arm
+is no longer the one raw path).
+
+**Tests:** `replyTrueArm` probes downward to a trimmed-but-fitting budget
+and asserts `didTrim: true` with the scripted answer (N4 -- the flag's
+purpose finally has a passing-true test); `turnPromptDelegation` fails
+instead of crashing on zero builds (N5); sanitizer bound corrected to
+300 total incl. ellipsis, both payload tests assert it (N6);
+`underlyingFallback` annotated as case-pinning, not sanitizer coverage
+(N7); `StubTool`/`StubArgs` moved to their only call sites (N8).
+
+**WP-28 gate additions (N4):** the chat path (`CoachChatViewModel.send()`)
+still bypasses the orchestrator, so `didTrim` is emitted into the void --
+migration checklist: chat adopts `respond()` and renders the
+reduced-context affordance; `case .reply` arity 2→3 is compiler-caught at
+migration time. Pre-existing gate (§1/§2/§4/§11) unchanged.
+
+**Counts after round 2:** CoachKit 172 → 173 (beta) / 171 (stable).
+
+**VERIFIED, not just written:** CoachKit matrix (beta 173 / stable 171),
+full `make test` green incl. `xcodebuild TEST SUCCEEDED`.
+
+**VERIFIED, not just written:** CoachKit matrix (beta 172 / stable 170),
+full `make test` green incl. `xcodebuild TEST SUCCEEDED`.
