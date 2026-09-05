@@ -31,7 +31,16 @@ test:
 		-scheme HealthLoom \
 		-destination "platform=iOS Simulator,id=$$udid" \
 		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-		GCC_TREAT_WARNINGS_AS_ERRORS=YES
+		GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+		SWIFT_SUPPRESS_WARNINGS=NO
+	# NOTE: warnings-as-errors is enforced here AND per-target in
+	# project.yml (the latter covers Xcode-GUI builds, which get no command
+	# line). `SWIFT_SUPPRESS_WARNINGS=NO` overrides the `-suppress-warnings`
+	# Xcode's SwiftPM integration injects into remote package targets --
+	# without it the two options conflict and the build fails; with it,
+	# upstream code builds warning-free-or-fail like ours. (Proven against
+	# ClaudeForFoundationModels 0.1.4, deferred below -- kept for the next
+	# remote dep, e.g. Gemini.)
 
 clean:
 	rm -rf HealthLoom.xcodeproj

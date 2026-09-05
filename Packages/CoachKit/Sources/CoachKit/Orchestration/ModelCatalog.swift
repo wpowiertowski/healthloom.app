@@ -55,15 +55,34 @@ public struct ModelCatalog: Sendable {
     /// Whether the tier's API key is present in the Keychain. Defaults to
     /// false; the app wires `KeychainStore.get(tier.secretKey) != nil`.
     public var hasKey: @Sendable (ModelTier) -> Bool
+    /// PCC runtime state (WP-28a, D14.3/D14.4). Fail-closed like
+    /// `hasConsent`/`hasKey` (unavailable/exhausted): no caller gets a PCC
+    /// tier asserting hardware and quota without wiring them. The app's
+    /// live wiring reads the real model (see `live()`); tests inject
+    /// states to render warning/fallback. `@MainActor`-bound like
+    /// `onDeviceAvailable`.
+    public var pccAvailable: @MainActor @Sendable () -> Bool
+    public var pccQuota: @MainActor @Sendable () -> PCCQuota
+    /// Rows that have shipped. Defaults to on-device only; WP-28 flips rows
+    /// live by adding them to the default set. Tests inject extra rows to
+    /// exercise cloud-tier gating (consent/key checks, tier-aware cache,
+    /// no-escalation) without real providers.
+    public var liveTiers: Set<ModelTier>
 
     public init(
         onDeviceAvailable: @MainActor @Sendable @escaping () -> Bool,
         hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
-        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false }
+        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
+        pccAvailable: @MainActor @Sendable @escaping () -> Bool = { false },
+        pccQuota: @MainActor @Sendable @escaping () -> PCCQuota = { .exhausted(resetDate: nil) },
+        liveTiers: Set<ModelTier> = [.onDevice]
     ) {
         self.onDeviceAvailable = onDeviceAvailable
         self.hasConsent = hasConsent
         self.hasKey = hasKey
+        self.pccAvailable = pccAvailable
+        self.pccQuota = pccQuota
+        self.liveTiers = liveTiers
     }
 
     /// Catalog with the live on-device gate wired (`AvailabilityGate`,
@@ -73,13 +92,46 @@ public struct ModelCatalog: Sendable {
     @MainActor
     public static func live(
         hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
-        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false }
+        hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
+        liveTiers: Set<ModelTier> = [.onDevice]
     ) -> ModelCatalog {
         ModelCatalog(
             onDeviceAvailable: { AvailabilityGate.current() == .available },
             hasConsent: hasConsent,
-            hasKey: hasKey
+            hasKey: hasKey,
+            pccAvailable: { Self.livePCCAvailability() },
+            pccQuota: { Self.livePCCQuota() },
+            liveTiers: liveTiers
         )
+    }
+
+    /// Live PCC model reads. The stable matrix toolchain can't name these
+    /// symbols at all, so the stable variant reports unavailable/ok without
+    /// touching the framework (PCC never dispatches there -- `makeModel` is
+    /// gated too). The beta variant carries the SDK's own availability: it
+    /// only executes on iOS/macOS 27+ (package tests on macOS 26 take the
+    /// early return, never the model read).
+    // NOTE (review L2): each PCC turn constructs two framework handles
+    // (one here, one in `livePCCQuota` below, plus the dispatch build's).
+    // Plausibly cheap, unmeasured -- a unit test can't price handle
+    // construction, so this stays as-is until the on-device manual pass
+    // (test plan §7) either clears it or motivates a single read-per-turn.
+    private static func livePCCAvailability() -> Bool {
+#if swift(>=6.4)
+        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *) {
+            return PrivateCloudComputeLanguageModel().isAvailable
+        }
+#endif
+        return false
+    }
+
+    private static func livePCCQuota() -> PCCQuota {
+#if swift(>=6.4)
+        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *) {
+            return PCCQuota(PrivateCloudComputeLanguageModel().quotaUsage)
+        }
+#endif
+        return .ok
     }
 
     /// Gate: on-device runs when the model is available; every other tier
@@ -96,7 +148,9 @@ public struct ModelCatalog: Sendable {
         switch tier {
         case .onDevice:
             onDeviceAvailable()
-        case .privateCloudCompute, .claude, .gemini:
+        case .privateCloudCompute:
+            isLive(tier) && pccAvailable() && hasConsent(tier)
+        case .claude, .gemini:
             // Live-row check doubles as the WP-28 fill-in point: each row
             // goes live by returning its consent/key gate here instead of
             // false.
@@ -116,7 +170,21 @@ public struct ModelCatalog: Sendable {
                 return TierAvailability.available
             }
             return TierAvailability.unavailable(reason: TierAvailability.modelUnavailable)
-        case .privateCloudCompute, .claude, .gemini:
+        case .privateCloudCompute:
+            // PCC consults the model state (offline/entitlement surface as
+            // unavailable, D14.4) before consent/key: no point consenting to
+            // a tier that can't run.
+            guard isLive(tier) else {
+                return .unavailable(reason: TierAvailability.notLive)
+            }
+            guard pccAvailable() else {
+                return .unavailable(reason: TierAvailability.modelUnavailable)
+            }
+            guard hasConsent(tier) else {
+                return .unavailable(reason: TierAvailability.needsConsent)
+            }
+            return .available
+        case .claude, .gemini:
             guard isLive(tier) else {
                 return .unavailable(reason: TierAvailability.notLive)
             }
@@ -163,20 +231,30 @@ public struct ModelCatalog: Sendable {
     @available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *)
     @available(tvOS, unavailable)
     public func makeModel(for tier: ModelTier) throws -> any LanguageModel {
-        switch tier {
+        // Liveness first: without this, a non-live row still hands back a
+        // real model while `isEnabled`/`availability` report it off --
+        // the single-predicate invariant this type promises. After the
+        // Claude deferral this guard is the only thing keeping the dead
+        // rows inert for this entry point.
+        guard isLive(tier) else {
+            throw CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)
+        }
+        return switch tier {
         case .onDevice:
             SystemLanguageModel.default
-        case .privateCloudCompute, .claude, .gemini:
+        case .privateCloudCompute:
+            PrivateCloudComputeLanguageModel()
+        case .claude, .gemini:
             throw CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)
         }
     }
 #endif
 
-    /// Live-row table. Single private predicate (not per-row inline
-    /// conditions) so WP-28's fill-in is one predicate per row, and
-    /// `isEnabled`/`availability(for:)`/`makeModel` can never disagree about
-    /// which rows are live.
+    /// Live-row table. Single predicate (not per-row inline conditions)
+    /// so `isEnabled`/`availability(for:)`/`makeModel` can never disagree
+    /// about which rows are live. WP-28 flips rows by extending the default
+    /// `liveTiers` set.
     private func isLive(_ tier: ModelTier) -> Bool {
-        tier == .onDevice
+        liveTiers.contains(tier)
     }
 }

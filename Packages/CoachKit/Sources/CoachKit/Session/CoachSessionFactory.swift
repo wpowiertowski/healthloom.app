@@ -50,7 +50,12 @@ public final class CoachSessionFactory: Sendable {
     }
 
     private let build: @MainActor @Sendable (String, [any Tool]) -> any CoachSession
-    private var cachedConversation: (instructions: String, toolSetKey: String, session: any CoachSession)?
+    // One conversation slot per tier (F12): toggling on-device<->PCC
+    // mid-conversation keeps each tier's transcript (the transcript IS the
+    // memory) instead of evicting it on every toggle. Bounded by
+    // construction -- at most one entry per `ModelTier` case, prompt edits
+    // overwrite within the tier rather than growing a prompt-keyed dict.
+    private var cachedConversations: [ModelTier: (instructions: String, toolSetKey: String, session: any CoachSession)] = [:]
 
     /// - Parameter build: session constructor. Defaults to a live on-device
     ///   session; tests inject a scripted double so no unit test touches the
@@ -90,11 +95,17 @@ public final class CoachSessionFactory: Sendable {
     ///   namespaced, so an explicit ID can never collide with a name-derived
     ///   key that happens to spell the same string (code review WP-21/22
     ///   round 4, #12).
+    /// - Parameter tier: the model tier the session runs on (WP-28). Part of
+    ///   the conversation cache key alongside instructions and tool set: the
+    ///   same prompt on PCC must not reuse the on-device session (wrong
+    ///   model, wrong privacy boundary, D11/D14.1). Defaults to on-device so
+    ///   pre-tier call sites are unaffected.
     public func makeSession(
         for purpose: Purpose,
         instructions: String,
         tools: [any Tool] = [],
-        toolSetID: String? = nil
+        toolSetID: String? = nil,
+        tier: ModelTier = .onDevice
     ) -> any CoachSession {
         let cacheKey = if let toolSetID {
             "id:\(toolSetID)"
@@ -102,7 +113,7 @@ public final class CoachSessionFactory: Sendable {
             "names:\(tools.map(\.name).joined(separator: "\0"))"
         }
         if !Self.requiresFreshSession(for: purpose),
-           let cached = cachedConversation,
+           let cached = cachedConversations[tier],
            cached.instructions == instructions,
            cached.toolSetKey == cacheKey
         {
@@ -110,14 +121,17 @@ public final class CoachSessionFactory: Sendable {
         }
         let session = build(instructions, tools)
         if !Self.requiresFreshSession(for: purpose) {
-            cachedConversation = (instructions, cacheKey, session)
+            cachedConversations[tier] = (instructions, cacheKey, session)
         }
         return session
     }
 
-    /// Drops the cached conversation session (prompt edited, tier switched,
+    /// Drops all cached conversation sessions (prompt edited globally,
     /// conversation closed). The next `.conversation` request builds fresh.
+    /// Tier switches do NOT reset -- the per-tier slots keep each
+    /// transcript across toggles (F12), so this stays the explicit
+    /// conversation-close path, not a second tier guard.
     public func resetConversation() {
-        cachedConversation = nil
+        cachedConversations = [:]
     }
 }

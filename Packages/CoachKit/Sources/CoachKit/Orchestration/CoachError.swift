@@ -72,13 +72,19 @@ extension CoachError {
         /// future SDK cases degrade to `.underlying` instead of failing the
         /// build the day a new beta adds one.
         ///
+        /// Tier-aware (F2): a mid-generation overflow on a cloud tier has
+        /// nowhere bigger to escalate to, so the offer bit is set only for
+        /// on-device turns. Default `.onDevice` preserves behavior for
+        /// callers without a tier in scope -- but prefer passing it: a bare
+        /// call silently offers escalation for cloud overflows.
+        ///
         /// Same SDK availability as the mapped type (see `makeModel`).
         @available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *)
         @available(tvOS, unavailable)
-        public init(languageModelError error: LanguageModelError) {
+        public init(languageModelError error: LanguageModelError, on tier: ModelTier = .onDevice) {
             switch error {
             case .contextSizeExceeded:
-                self = .contextOverflow(offerEscalation: true)
+                self = .contextOverflow(offerEscalation: tier == .onDevice)
             case .rateLimited(let limited):
                 self = .rateLimited(retryAfter: limited.resetDate)
             case .timeout:
@@ -93,8 +99,11 @@ extension CoachError {
                 self = .unsupported(Self.sanitizedSummary(u.debugDescription))
             case .unsupportedLanguageOrLocale(let u):
                 self = .unsupported(Self.sanitizedSummary(u.debugDescription))
+            // Sanitized like every other arm (F1 -- this handles future
+            // unknown SDK cases: unbounded, unreviewed debug text): it must
+            // not be the one raw path.
             @unknown default:
-                self = .underlying(String(describing: error))
+                self = .underlying(Self.sanitizedSummary(String(describing: error)))
             }
         }
     }

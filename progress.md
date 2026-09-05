@@ -4610,3 +4610,156 @@ full `make test` green incl. `xcodebuild TEST SUCCEEDED`.
 
 **VERIFIED, not just written:** CoachKit matrix (beta 172 / stable 170),
 full `make test` green incl. `xcodebuild TEST SUCCEEDED`.
+
+## WP-28: off-device tiers (stacked commits on `wp-28-offdevice`)
+
+**Foundation (no new deps):** tier-aware session cache (tier joins the
+factory key -- same prompt on PCC never reuses the on-device session),
+`missingCredential` pre-dispatch guard (TOCTOU-tested with a vanishing-key
+double), `liveTiers` injection (the row-liveness mechanism AND the test
+hook: cloud gating/cache/never-escalates/blocker-order all testable with
+scripted sessions, no providers). New tests: tier-busting cache identity,
+gate-then-credential sequence, cloud answers-instead-of-offers,
+consent-before-key order.
+
+**WP-28a PCC (SDK-only, no package dep):** `makeModel` builds
+`PrivateCloudComputeLanguageModel`; catalog gains `pccAvailable`/`pccQuota`
+seams (stable toolchain reports unavailable/ok without touching the
+framework); `PCCQuota` decision table fully ungated (the framework
+publishes no public `QuotaUsage` init, so the thin adapter delegates);
+orchestrator quota pre-dispatch -- exhausted falls back to a fresh
+on-device turn (budget reset, same snapshot linkage), near-limit sets the
+reply's `quotaWarning` bit; `makeProviderSessionBuild` is the single
+provider construction point (factory `init` stays private by design).
+Row ships non-live by default pending the P-1.5 entitlement.
+
+**WP-28b Claude (app-target adapter):** Anthropic's official package (0.1.4
+exact) linked to the app target ONLY -- it requires macOS/iOS 27, which
+CoachKit's macOS 26 floor cannot link (proven by build failure both ways).
+Same constraint exempts Firebase below. `ClaudeTier` (sonnet5 default,
+serverTools never configured -- pinned by test, D11), `makeBuild` via the
+shared provider seam, `CoachError(claudeError:)` table (credential mirrors
+the guard; attestation arms read as tier-unavailable, fixed copy).
+Warnings-as-errors rescoped per first-party target (project/command-line
+scope leaked `-warnings-as-errors` into SPM targets vs upstream
+`-suppress-warnings`); package `swift test` runs unchanged.
+
+**WP-28c Gemini: DEFERRED (documented):** Firebase's
+`geminiLanguageModel` exists but (1) has no BYO-user-key backend -- the key
+comes from the developer's `FirebaseApp` config, so usage bills/attributes
+to us, contradicting the BYO posture; (2) needs `GoogleService-Info.plist`
++ `FirebaseApp.configure()` + human console setup; (3) its targets only
+resolve with `GEMINI_LANGUAGE_MODEL=1` in the environment (CI wrinkle).
+Needs a product decision (who pays/registers) before code. Seams are
+ready: `liveTiers`, `SecretKey.geminiAPIKey`, credential guard,
+never-escalates -- landing it later is purely additive.
+
+**Live-row status:** all rows non-live by default (PCC: entitlement;
+Claude: WP-29 key/consent UI; Gemini: deferred). Plan test lines all met
+except live-device smoke (no device/entitlement/keys in CI -- manual per
+test plan §7).
+
+**Counts:** CoachKit 173 → 181 (beta) / 179 (stable); HealthLoomTests
+67 → 70 (Claude adapter + error table) → 67 again on the deferral (work
+preserved at `f40022f`, restore note above).
+
+## WP-28 review round (reviews/wp28-review.md)
+
+Corrections first: the review's N6/N8 "still open" verdicts were stale
+(the tree it read predates the round-2 push -- impl is `prefix(limit-1)`,
+`StubTool` already moved; verified by grep). N3 was genuinely missed
+twice -- fixed here and verified in-file immediately after writing.
+
+**Fixed:** N3 `@unknown default` sanitizes (F1); tier-aware framework
+mapping `init(languageModelError:on:)` with `.onDevice` default, catch-site
+post-adjustment deleted (F2) + cloud-overflow structural pin in the error
+table; F3 decision (b): availability stays green through exhaustion (the
+turn CAN run via fallback) and the reply carries `fellBackFromTier` so the
+UI says so -- gating red would block the D14.3 fallback; F4 reply struct
+`TurnInfo(didTrim:quotaWarning:fellBackFromTier:)` stops the arity rot
+before D15's serving-tier stamp; F6 cloud deeper-ask answers (test);
+F7 offline-construction pin comment.
+
+**Confirmed intentional (F5):** no prod wiring enables PCC/Claude rows --
+no `liveTiers` beyond `[.onDevice]`, no injected provider builds, no
+Keychain-to-build reads. All provider code is dead in prod builds until
+WP-29's key/consent UI (Claude) and the P-1.5 entitlement (PCC), by
+design; defaults preserve WP-27 behavior. F8 acknowledged (double-failure
+loses PCC context -- edge-of-edge, on-device-off is the actionable signal).
+
+**Counts:** CoachKit 181 → 182 (beta) / 180 (stable).
+
+## WP-28 review round 2 (reviews/wp28-review.md Part 4)
+
+Verdict: mergeable, no blockers/highs. New items all low/nit.
+
+**L1 stale, no change:** the "181/179" quote predates the fix commit --
+the table already reads 182/180, matching measured beta/stable runs.
+
+**L2 noted, not restructured:** two PCC handle constructions per turn
+flagged with an inline NOTE for the on-device manual pass (test plan
+§7); no speculative single-read seam -- a unit test can't price it.
+
+**L3 filed for WP-29:** `makeBuild` wiring test lands with the
+Keychain→build commit (that's where it earns its keep), alongside
+before/after tests for the first prod `liveTiers` flip + Keychain read
+(checklist §5). F8 stays dropped unless WP-29's error UI needs
+double-failure copy.
+
+## WP-28b Claude: deferred after CI (SDK drift)
+
+The adapter + error table were written, tested (70 app tests), and green
+locally -- then CI failed: upstream 0.1.4 references
+`FoundationModels.Transcript.CustomSegment`, absent from the July-beta SDK
+on CI's `xcode-27` image (local 27A5218g has it). Every upstream release
+(0.1.0-0.1.4) uses the symbol, so no pin avoids it; no newer runner image
+is discoverable; the fallback can't be verified without the July
+toolchain. Same call as Gemini: defer, don't fork.
+
+**Removed from the branch** (not parked uncompiled -- uncompiled code
+rots while the SDK churns): the remote package, `ClaudeTier.swift`,
+`ClaudeTierTests.swift`. **Restore point:** commit `f40022f` (exact
+pin 0.1.4, serverTools-never pinned, 3-case error table). Restore when
+CI's Xcode 27 SDK provides `Transcript.CustomSegment` (release the row
+via `liveTiers` + WP-29 key UI at the same time) -- and RE-MAKE the
+default-model choice against the constants table then (0.1.4 added
+opus5 after the sonnet5 default was picked; do not blindly re-pin it).
+
+**Kept:** the warnings machinery the episode produced --
+`SWIFT_SUPPRESS_WARNINGS=NO` next to the errors flags (make + CI) so the
+next remote dep builds warning-free-or-fail instead of conflicting, and
+per-target settings for GUI builds.
+
+## WP-28 review round 3 (findings list, no review file)
+
+Thirteen findings, all addressed in one stacked commit.
+
+**Real bugs fixed:** `makeModel` consults `liveTiers` first (single-predicate
+invariant restored; the Claude deferral had left dead rows constructible);
+provider wiring map -- unwired non-onDevice tiers throw instead of silently
+answering from the default factory at a foreign budget (pinned by
+`unwiredTierThrows`); quota-fallback offer loop closed (fallback turns
+suppress offers; suppressed overflow throws offer-less via internal
+`runTurn`, pinned by `fallbackDeeperAskAnswers` +
+`suppressedOverflowThrows`); PCC seams fail closed (`{ false }` /
+`.exhausted`, doc corrected); `resetDate` threads into `TurnInfo`
+(`quotaResetDate`, asserted on warning + fallback replies); per-tier
+single-slot session cache (toggle preserves transcripts, bounded by
+construction; `resetConversation` stays the explicit close path).
+
+**Dead code deleted:** `makeModelLiveness` (gated + 27-host-guarded =
+never executes in this matrix; also stale post-guard); both provider-build
+helpers (zero call sites since the deferral; restore with WP-29 wiring).
+
+**Docs corrected:** README 70 to 67 app tests (deferral), 182 to 185 /
+180 to 184 CoachKit; project.yml comment rewritten to the actual
+enforcement state (both layers + known GUI gap for local packages); CI
+comment drops the wrong package name; restore note re-makes (not re-pins)
+the model default.
+
+**Acknowledged, no code:** no app `CoachOrchestrator` consumer yet
+(expected -- WP-29 migration checklist already covers adopting
+`respond()`); double-failure context loss stays dropped.
+
+**Counts:** CoachKit 182 to 185 (beta) / 180 to 184 (stable, 1 gated test
+left); HealthLoomTests 67.

@@ -37,6 +37,16 @@ struct CoachErrorTests {
                 contextSize: 4096, tokenCount: 5000, debugDescription: "full"
             ))) == .contextOverflow(offerEscalation: true)
         )
+        // F2: the offer bit is structural in the mapping, keyed on the
+        // requesting tier -- a cloud overflow has nowhere bigger to go.
+        #expect(
+            CoachError(
+                languageModelError: LanguageModelError.contextSizeExceeded(.init(
+                    contextSize: 32000, tokenCount: 40000, debugDescription: "full"
+                )),
+                on: .claude
+            ) == .contextOverflow(offerEscalation: false)
+        )
         #expect(
             CoachError(languageModelError: LanguageModelError.rateLimited(.init(
                 resetDate: nil, debugDescription: "slow down"

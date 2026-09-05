@@ -5,9 +5,6 @@
 // the `makeModel` row-liveness test, which is behind the same toolchain
 // gate as the API itself.
 
-#if swift(>=6.4)
-    import FoundationModels
-#endif
 import Testing
 
 @testable import CoachKit
@@ -77,6 +74,24 @@ struct ModelCatalogTests {
         #expect(ready.availability(for: .claude) == .unavailable(reason: TierAvailability.notLive))
     }
 
+    @Test("live-row blockers surface consent before key")
+    func blockerOrder() {
+        let noConsent = ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { _ in false },
+            hasKey: { _ in true },
+            liveTiers: [.onDevice, .claude]
+        )
+        #expect(noConsent.availability(for: .claude) == .unavailable(reason: TierAvailability.needsConsent))
+        let noKey = ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { _ in true },
+            hasKey: { _ in false },
+            liveTiers: [.onDevice, .claude]
+        )
+        #expect(noKey.availability(for: .claude) == .unavailable(reason: TierAvailability.needsKey))
+    }
+
     @Test("each tier owns its window")
     func tierBudgets() {
         let catalog = ModelCatalog(onDeviceAvailable: { true })
@@ -86,20 +101,4 @@ struct ModelCatalogTests {
         #expect(catalog.tokenBudget(for: .gemini) == ContextAssembler.largeCloudTokenBudget)
     }
 
-#if swift(>=6.4)
-    /// Compile-checked on the beta toolchain; executes only on macOS 27+
-    /// hosts (package tests run on macOS 26, where the 27-only declaration
-    /// can't run -- the guard returns early there instead of crashing).
-    @Test("makeModel builds on-device, refuses non-live rows")
-    func makeModelLiveness() throws {
-        guard #available(macOS 27, *) else { return }
-        let catalog = ModelCatalog(onDeviceAvailable: { true })
-        #expect(try catalog.makeModel(for: .onDevice) is SystemLanguageModel)
-        for tier in [ModelTier.privateCloudCompute, .claude, .gemini] {
-            #expect(throws: CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)) {
-                try catalog.makeModel(for: tier)
-            }
-        }
-    }
-#endif
 }

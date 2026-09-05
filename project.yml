@@ -19,8 +19,18 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
-    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    # NOTE: warnings-as-errors is enforced twice -- per first-party
+    # target below (covers Xcode-GUI builds, which get no command line)
+    # AND on the `make test` / CI command line (covers everything the
+    # project builds, including local packages). Command-line scope also
+    # reaches SPM package targets, so `SWIFT_SUPPRESS_WARNINGS=NO` rides
+    # next to it there: it overrides the `-suppress-warnings` Xcode's
+    # SwiftPM integration injects into remote package targets, which
+    # otherwise conflicts with `-warnings-as-errors` and fails the build.
+    # Known gap: the five local packages get no warnings-as-errors in GUI
+    # builds (only their `swift test` runs and CI enforce it) -- project
+    # settings can't reach package targets, and command-line flags can't
+    # come from the GUI.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
@@ -51,6 +61,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.healthloom.app
         PRODUCT_NAME: HealthLoom
         ENABLE_PREVIEWS: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        GCC_TREAT_WARNINGS_AS_ERRORS: YES
     info:
       path: HealthLoomApp/Info.plist
       properties:
@@ -121,6 +133,8 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        GCC_TREAT_WARNINGS_AS_ERRORS: YES
     # WP-17: this target previously had no `dependencies:` entry -- harmless
     # while every test in it was a self-contained placeholder (WP-01), but
     # this WP's first real `@testable import HealthLoom` unit test
@@ -152,6 +166,8 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        GCC_TREAT_WARNINGS_AS_ERRORS: YES
         # XCTestCase's own lifecycle methods (setUpWithError, its
         # initializers, ...) are nonisolated in the XCTest framework; the
         # project-wide `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor` (this
