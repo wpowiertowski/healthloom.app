@@ -5,9 +5,6 @@
 // the `makeModel` row-liveness test, which is behind the same toolchain
 // gate as the API itself.
 
-#if swift(>=6.4)
-    import FoundationModels
-#endif
 import Testing
 
 @testable import CoachKit
@@ -104,21 +101,4 @@ struct ModelCatalogTests {
         #expect(catalog.tokenBudget(for: .gemini) == ContextAssembler.largeCloudTokenBudget)
     }
 
-#if swift(>=6.4)
-    /// Compile-checked on the beta toolchain; executes only on macOS 27+
-    /// hosts (package tests run on macOS 26, where the 27-only declaration
-    /// can't run -- the guard returns early there instead of crashing).
-    @Test("makeModel builds on-device, refuses non-live rows")
-    func makeModelLiveness() throws {
-        guard #available(macOS 27, *) else { return }
-        let catalog = ModelCatalog(onDeviceAvailable: { true })
-        #expect(try catalog.makeModel(for: .onDevice) is SystemLanguageModel)
-        #expect(try catalog.makeModel(for: .privateCloudCompute) is PrivateCloudComputeLanguageModel)
-        for tier in [ModelTier.claude, .gemini] {
-            #expect(throws: CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)) {
-                try catalog.makeModel(for: tier)
-            }
-        }
-    }
-#endif
 }

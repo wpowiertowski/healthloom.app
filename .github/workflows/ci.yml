@@ -173,8 +173,10 @@ jobs:
           # per-target project.yml settings cover Xcode-GUI builds).
           # `SWIFT_SUPPRESS_WARNINGS=NO` overrides the `-suppress-warnings`
           # Xcode's SwiftPM integration injects into remote package targets
-          # (ClaudeAPI) -- without it the two options conflict and CI fails;
-          # with it, upstream code builds warning-free-or-fail like ours.
+          # -- without it the two options conflict and CI fails; with it,
+          # upstream code builds warning-free-or-fail like ours. (Introduced
+          # for a since-deferred Claude dependency; kept as the standing
+          # rule for the next remote package.)
           xcodebuild build test \
             -project HealthLoom.xcodeproj \
             -scheme HealthLoom \

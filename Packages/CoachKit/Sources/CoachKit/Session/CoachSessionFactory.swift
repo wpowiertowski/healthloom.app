@@ -50,7 +50,12 @@ public final class CoachSessionFactory: Sendable {
     }
 
     private let build: @MainActor @Sendable (String, [any Tool]) -> any CoachSession
-    private var cachedConversation: (tier: ModelTier, instructions: String, toolSetKey: String, session: any CoachSession)?
+    // One conversation slot per tier (F12): toggling on-device<->PCC
+    // mid-conversation keeps each tier's transcript (the transcript IS the
+    // memory) instead of evicting it on every toggle. Bounded by
+    // construction -- at most one entry per `ModelTier` case, prompt edits
+    // overwrite within the tier rather than growing a prompt-keyed dict.
+    private var cachedConversations: [ModelTier: (instructions: String, toolSetKey: String, session: any CoachSession)] = [:]
 
     /// - Parameter build: session constructor. Defaults to a live on-device
     ///   session; tests inject a scripted double so no unit test touches the
@@ -108,8 +113,7 @@ public final class CoachSessionFactory: Sendable {
             "names:\(tools.map(\.name).joined(separator: "\0"))"
         }
         if !Self.requiresFreshSession(for: purpose),
-           let cached = cachedConversation,
-           cached.tier == tier,
+           let cached = cachedConversations[tier],
            cached.instructions == instructions,
            cached.toolSetKey == cacheKey
         {
@@ -117,14 +121,17 @@ public final class CoachSessionFactory: Sendable {
         }
         let session = build(instructions, tools)
         if !Self.requiresFreshSession(for: purpose) {
-            cachedConversation = (tier, instructions, cacheKey, session)
+            cachedConversations[tier] = (instructions, cacheKey, session)
         }
         return session
     }
 
-    /// Drops the cached conversation session (prompt edited, tier switched,
+    /// Drops all cached conversation sessions (prompt edited globally,
     /// conversation closed). The next `.conversation` request builds fresh.
+    /// Tier switches do NOT reset -- the per-tier slots keep each
+    /// transcript across toggles (F12), so this stays the explicit
+    /// conversation-close path, not a second tier guard.
     public func resetConversation() {
-        cachedConversation = nil
+        cachedConversations = [:]
     }
 }

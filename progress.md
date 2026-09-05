@@ -4660,7 +4660,8 @@ except live-device smoke (no device/entitlement/keys in CI -- manual per
 test plan §7).
 
 **Counts:** CoachKit 173 → 181 (beta) / 179 (stable); HealthLoomTests
-67 → 70 (Claude adapter + error table).
+67 → 70 (Claude adapter + error table) → 67 again on the deferral (work
+preserved at `f40022f`, restore note above).
 
 ## WP-28 review round (reviews/wp28-review.md)
 
@@ -4718,11 +4719,47 @@ toolchain. Same call as Gemini: defer, don't fork.
 **Removed from the branch** (not parked uncompiled -- uncompiled code
 rots while the SDK churns): the remote package, `ClaudeTier.swift`,
 `ClaudeTierTests.swift`. **Restore point:** commit `f40022f` (exact
-pin 0.1.4, sonnet5 default, serverTools-never pinned, 3-case error
-table). Restore when CI's Xcode 27 SDK provides `Transcript.CustomSegment`
-(release the row via `liveTiers` + WP-29 key UI at the same time).
+pin 0.1.4, serverTools-never pinned, 3-case error table). Restore when
+CI's Xcode 27 SDK provides `Transcript.CustomSegment` (release the row
+via `liveTiers` + WP-29 key UI at the same time) -- and RE-MAKE the
+default-model choice against the constants table then (0.1.4 added
+opus5 after the sonnet5 default was picked; do not blindly re-pin it).
 
 **Kept:** the warnings machinery the episode produced --
 `SWIFT_SUPPRESS_WARNINGS=NO` next to the errors flags (make + CI) so the
 next remote dep builds warning-free-or-fail instead of conflicting, and
 per-target settings for GUI builds.
+
+## WP-28 review round 3 (findings list, no review file)
+
+Thirteen findings, all addressed in one stacked commit.
+
+**Real bugs fixed:** `makeModel` consults `liveTiers` first (single-predicate
+invariant restored; the Claude deferral had left dead rows constructible);
+provider wiring map -- unwired non-onDevice tiers throw instead of silently
+answering from the default factory at a foreign budget (pinned by
+`unwiredTierThrows`); quota-fallback offer loop closed (fallback turns
+suppress offers; suppressed overflow throws offer-less via internal
+`runTurn`, pinned by `fallbackDeeperAskAnswers` +
+`suppressedOverflowThrows`); PCC seams fail closed (`{ false }` /
+`.exhausted`, doc corrected); `resetDate` threads into `TurnInfo`
+(`quotaResetDate`, asserted on warning + fallback replies); per-tier
+single-slot session cache (toggle preserves transcripts, bounded by
+construction; `resetConversation` stays the explicit close path).
+
+**Dead code deleted:** `makeModelLiveness` (gated + 27-host-guarded =
+never executes in this matrix; also stale post-guard); both provider-build
+helpers (zero call sites since the deferral; restore with WP-29 wiring).
+
+**Docs corrected:** README 70 to 67 app tests (deferral), 182 to 185 /
+180 to 184 CoachKit; project.yml comment rewritten to the actual
+enforcement state (both layers + known GUI gap for local packages); CI
+comment drops the wrong package name; restore note re-makes (not re-pins)
+the model default.
+
+**Acknowledged, no code:** no app `CoachOrchestrator` consumer yet
+(expected -- WP-29 migration checklist already covers adopting
+`respond()`); double-failure context loss stays dropped.
+
+**Counts:** CoachKit 182 to 185 (beta) / 180 to 184 (stable, 1 gated test
+left); HealthLoomTests 67.

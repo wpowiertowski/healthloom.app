@@ -55,11 +55,12 @@ public struct ModelCatalog: Sendable {
     /// Whether the tier's API key is present in the Keychain. Defaults to
     /// false; the app wires `KeychainStore.get(tier.secretKey) != nil`.
     public var hasKey: @Sendable (ModelTier) -> Bool
-    /// PCC runtime state (WP-28a, D14.3/D14.4). Defaults to
-    /// available/ok; the app's live wiring reads the real model (see
-    /// `live()`), tests inject quota states to render warning/fallback.
-    /// `@MainActor`-bound like `onDeviceAvailable`, no default (same
-    /// nonisolated-default-arg reason).
+    /// PCC runtime state (WP-28a, D14.3/D14.4). Fail-closed like
+    /// `hasConsent`/`hasKey` (unavailable/exhausted): no caller gets a PCC
+    /// tier asserting hardware and quota without wiring them. The app's
+    /// live wiring reads the real model (see `live()`); tests inject
+    /// states to render warning/fallback. `@MainActor`-bound like
+    /// `onDeviceAvailable`.
     public var pccAvailable: @MainActor @Sendable () -> Bool
     public var pccQuota: @MainActor @Sendable () -> PCCQuota
     /// Rows that have shipped. Defaults to on-device only; WP-28 flips rows
@@ -72,8 +73,8 @@ public struct ModelCatalog: Sendable {
         onDeviceAvailable: @MainActor @Sendable @escaping () -> Bool,
         hasConsent: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
         hasKey: @Sendable @escaping (ModelTier) -> Bool = { _ in false },
-        pccAvailable: @MainActor @Sendable @escaping () -> Bool = { true },
-        pccQuota: @MainActor @Sendable @escaping () -> PCCQuota = { .ok },
+        pccAvailable: @MainActor @Sendable @escaping () -> Bool = { false },
+        pccQuota: @MainActor @Sendable @escaping () -> PCCQuota = { .exhausted(resetDate: nil) },
         liveTiers: Set<ModelTier> = [.onDevice]
     ) {
         self.onDeviceAvailable = onDeviceAvailable
@@ -230,7 +231,15 @@ public struct ModelCatalog: Sendable {
     @available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *)
     @available(tvOS, unavailable)
     public func makeModel(for tier: ModelTier) throws -> any LanguageModel {
-        switch tier {
+        // Liveness first: without this, a non-live row still hands back a
+        // real model while `isEnabled`/`availability` report it off --
+        // the single-predicate invariant this type promises. After the
+        // Claude deferral this guard is the only thing keeping the dead
+        // rows inert for this entry point.
+        guard isLive(tier) else {
+            throw CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)
+        }
+        return switch tier {
         case .onDevice:
             SystemLanguageModel.default
         case .privateCloudCompute:

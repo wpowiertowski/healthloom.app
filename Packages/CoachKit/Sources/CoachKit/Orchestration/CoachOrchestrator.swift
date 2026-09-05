@@ -47,15 +47,20 @@ public struct TurnInfo: Sendable, Equatable {
     public var didTrim: Bool
     /// PCC quota is near its daily limit (D14.3 -- the UI says so).
     public var quotaWarning: Bool
+    /// When the framework provides one, the quota reset date both warning
+    /// and fallback replies carry (round-2 F7 -- previously threaded into
+    /// the enum and discarded at the only consumer). Nil means unstated.
+    public var quotaResetDate: Date?
     /// The turn was requested on this tier but served on-device after
     /// quota exhaustion (D14.3 -- the UI says so: "PCC limit reached,
     /// answered on-device"). Nil when the serving tier is the requested
     /// tier. Offers pass through untouched (no serving happened).
     public var fellBackFromTier: ModelTier?
-    public init(didTrim: Bool = false, quotaWarning: Bool = false, fellBackFromTier: ModelTier? = nil) {
+    public init(didTrim: Bool = false, quotaWarning: Bool = false, fellBackFromTier: ModelTier? = nil, quotaResetDate: Date? = nil) {
         self.didTrim = didTrim
         self.quotaWarning = quotaWarning
         self.fellBackFromTier = fellBackFromTier
+        self.quotaResetDate = quotaResetDate
     }
 }
 
@@ -75,17 +80,27 @@ public final class CoachOrchestrator: Sendable {
     public let prompts: PromptManager
     public let assembler: ContextAssembler
     public let sessions: CoachSessionFactory
+    /// Per-tier session factories (F2 finding 2). `sessions` serves
+    /// on-device; any other dispatched tier MUST have an entry here --
+    /// without one, `respond` throws instead of silently answering from
+    /// whatever provider `sessions` was built with (e.g. a 32K PCC context
+    /// fed to the 4K on-device model, dying with no escalation offer).
+    /// Empty until WP-29 wires the first provider (PCC build blocked on
+    /// the P-1.5 entitlement, Claude on the key UI + SDK drift).
+    public let providerFactories: [ModelTier: CoachSessionFactory]
     public let catalog: ModelCatalog
 
     public init(
         prompts: PromptManager,
         assembler: ContextAssembler,
         sessions: CoachSessionFactory = CoachSessionFactory(),
+        providerFactories: [ModelTier: CoachSessionFactory] = [:],
         catalog: ModelCatalog? = nil
     ) {
         self.prompts = prompts
         self.assembler = assembler
         self.sessions = sessions
+        self.providerFactories = providerFactories
         // Nil means the live wiring. Not a default argument (`= .live()`)
         // because default arguments evaluate outside actor isolation and
         // the live catalog reads the MainActor-bound availability gate.
@@ -125,32 +140,72 @@ public final class CoachOrchestrator: Sendable {
         // 32K PCC budget can't suppress on-device escalation); near-limit
         // dispatches with the warning bit the UI renders.
         var quotaWarning = false
+        var quotaResetDate: Date? = nil
         if tier == .privateCloudCompute {
             switch catalog.pccQuota() {
-            case .exhausted:
-                // F3 decision: availability stays green (the turn CAN run --
-                // via fallback) and the reply carries the fallback flag so
-                // the UI says so (D14.3). Gating availability red instead
-                // would block the fallback the plan requires.
-                let turn = try await respond(
+            case .exhausted(let resetDate):
+                // Availability stays green (the turn CAN run -- via
+                // fallback) and the reply carries the fallback flag so the
+                // UI says so (D14.3). Gating availability red instead would
+                // block the fallback the plan requires. Offers are
+                // suppressed on the fallback turn (round-2 F3): the offered
+                // rung would be the exhausted PCC tier itself -- accept
+                // loops forever.
+                let turn = try await runTurn(
                     to: message,
                     purpose: purpose,
                     tier: .onDevice,
                     tools: tools,
                     toolSetID: toolSetID,
-                    tokenBudget: nil
+                    tokenBudget: nil,
+                    quotaWarning: false,
+                    quotaResetDate: resetDate,
+                    suppressOffers: true
                 )
                 guard case .reply(let text, let snapshotID, var info) = turn else {
                     return turn
                 }
                 info.fellBackFromTier = .privateCloudCompute
                 return .reply(text: text, snapshotID: snapshotID, info: info)
-            case .nearLimit:
+            case .nearLimit(let resetDate):
                 quotaWarning = true
+                quotaResetDate = resetDate
             case .ok:
                 break
             }
         }
+        return try await runTurn(
+            to: message,
+            purpose: purpose,
+            tier: tier,
+            tools: tools,
+            toolSetID: toolSetID,
+            tokenBudget: tokenBudget,
+            quotaWarning: quotaWarning,
+            quotaResetDate: quotaResetDate,
+            suppressOffers: false
+        )
+    }
+
+    /// The turn pipeline past quota pre-dispatch. `suppressOffers` is true
+    /// only on quota-fallback turns (see above); all other callers pass
+    /// false. Extracted (not inlined in a flag on `respond`) so the public
+    /// signature -- and every existing call site -- is untouched. Internal
+    /// (not private) so tests can drive the suppressed-overflow arm, which
+    /// is unreachable through `respond` with production budgets (the 10KB
+    /// prompt cap fits the 4K window with room to spare -- over-budget only
+    /// fires on explicit test budgets).
+    func runTurn(
+        to message: String,
+        purpose: ContextAssembler.Purpose,
+        tier: ModelTier,
+        tools: [any Tool],
+        toolSetID: String?,
+        tokenBudget: Int?,
+        quotaWarning: Bool,
+        quotaResetDate: Date?,
+        suppressOffers: Bool
+    ) async throws(CoachError) -> OrchestratorTurn {
         // PromptManager is the ONLY source of instructions (D10/D8): every
         // tier, every turn, user base + immutable safety suffix. A store
         // failure is a turn failure, not a silent suffix-less fallback.
@@ -183,18 +238,41 @@ public final class CoachOrchestrator: Sendable {
         // PCC is the offered tier today (first escalation rung, D14); only
         // on-device turns can escalate (a bigger tier has nowhere to go).
         if tier == .onDevice, assembled.promptOverBudget {
+            // Suppressed (fallback) overflow can't offer -- the rung is
+            // exhausted -- and can't run -- the prompt alone exceeds the
+            // window. A loud error beats either silent wrong turn.
+            if suppressOffers {
+                throw CoachError.contextOverflow(offerEscalation: false)
+            }
             return .escalationOffer(reason: .contextOverBudget, snapshotID: assembled.snapshotID)
         }
-        if tier == .onDevice, Self.requestsDeeperAnalysis(message) {
+        if tier == .onDevice, !suppressOffers, Self.requestsDeeperAnalysis(message) {
             return .escalationOffer(reason: .deeperAnalysisRequested, snapshotID: assembled.snapshotID)
         }
-        let session = sessions.makeSession(
-            for: CoachSessionFactory.Purpose(purpose),
-            instructions: instructions,
-            tools: tools,
-            toolSetID: toolSetID,
-            tier: tier
-        )
+        // Provider resolution (F2 finding 2): on-device uses the
+        // shared factory; every other tier needs its wired entry. No
+        // entry = loud miswiring error, never a silent wrong-provider turn.
+        let session: any CoachSession
+        if tier == .onDevice {
+            session = sessions.makeSession(
+                for: CoachSessionFactory.Purpose(purpose),
+                instructions: instructions,
+                tools: tools,
+                toolSetID: toolSetID,
+                tier: tier
+            )
+        } else {
+            guard let wired = providerFactories[tier] else {
+                throw CoachError.tierUnavailable(tier: tier, reason: "This tier isn't wired to a session provider yet.")
+            }
+            session = wired.makeSession(
+                for: CoachSessionFactory.Purpose(purpose),
+                instructions: instructions,
+                tools: tools,
+                toolSetID: toolSetID,
+                tier: tier
+            )
+        }
         do {
             // Framing via the shared composer (R1): the user message plus
             // context-as-data block, one literal owned by `HealthContext`.
@@ -202,7 +280,11 @@ public final class CoachOrchestrator: Sendable {
             return .reply(
                 text: text,
                 snapshotID: assembled.snapshotID,
-                info: TurnInfo(didTrim: assembled.didTrim, quotaWarning: quotaWarning)
+                info: TurnInfo(
+                    didTrim: assembled.didTrim,
+                    quotaWarning: quotaWarning,
+                    quotaResetDate: quotaResetDate
+                )
             )
         } catch {
             throw Self.normalize(error, on: tier)

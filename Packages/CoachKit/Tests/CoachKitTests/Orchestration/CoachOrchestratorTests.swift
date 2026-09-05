@@ -94,16 +94,40 @@ final class FlakyKey: @unchecked Sendable {
 struct CoachOrchestratorTests {
     private func makeOrchestrator(
         recording: RecordingBuild = RecordingBuild(),
-        catalog: ModelCatalog = ModelCatalog(onDeviceAvailable: { true })
+        catalog: ModelCatalog = ModelCatalog(onDeviceAvailable: { true }),
+        // Wired by default: cloud-tier tests exercise gating/escalation,
+        // not miswiring (the unwired test below passes `[:]` explicitly).
+        providers: [ModelTier: CoachSessionFactory]? = nil
     ) throws -> (CoachOrchestrator, ModelContainer, RecordingBuild) {
         let container = try CoreModel.makeContainer(inMemory: true)
+        let factory = recording.factory()
         let orchestrator = CoachOrchestrator(
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
-            sessions: recording.factory(),
+            sessions: factory,
+            providerFactories: providers ?? [.claude: factory, .privateCloudCompute: factory],
             catalog: catalog
         )
         return (orchestrator, container, recording)
+    }
+
+    @Test("unwired cloud tier throws instead of answering wrong-provider")
+    func unwiredTierThrows() async throws {
+        // Finding 2's failure scenario, pinned: a live-but-unwired row must
+        // fail loudly, never feed a 32K PCC context to the on-device model.
+        let recording = RecordingBuild()
+        let (orchestrator, _, _) = try makeOrchestrator(
+            recording: recording,
+            catalog: cloudCatalog(),
+            providers: [:]
+        )
+        await #expect {
+            try await orchestrator.respond(to: "Hi", tier: .claude)
+        } throws: { error in
+            guard case .tierUnavailable(let tier, _) = error as? CoachError else { return false }
+            return tier == .claude
+        }
+        #expect(recording.builds == 0)
     }
 
     @Test("instructions carry the safety suffix on every turn")
@@ -391,6 +415,7 @@ struct CoachOrchestratorTests {
         #expect(text == "reply")
         // F3: the fallback flag is how the UI says so (D14.3).
         #expect(info.fellBackFromTier == .privateCloudCompute)
+        #expect(info.quotaResetDate == nil)
         #expect(recording.builds == 1)
     }
 
@@ -417,6 +442,76 @@ struct CoachOrchestratorTests {
         }
         #expect(!info.quotaWarning)
         #expect(info.fellBackFromTier == nil)
+    }
+
+    @Test("fallback deeper-ask answers instead of offering exhausted PCC")
+    func fallbackDeeperAskAnswers() async throws {
+        // Finding 3's loop, pinned shut: exhausted PCC + deeper ask falls
+        // back, and the fallback turn answers -- offering PCC here would
+        // accept-loop forever (the offered rung is the exhausted tier).
+        let recording = RecordingBuild()
+        let (orchestrator, _, _) = try makeOrchestrator(
+            recording: recording,
+            catalog: pccCatalog(quota: .exhausted(resetDate: nil))
+        )
+        let turn = try await orchestrator.respond(
+            to: "Give me a deeper analysis of my week.",
+            tier: .privateCloudCompute
+        )
+        guard case .reply(let text, _, let info) = turn else {
+            Issue.record("expected a fallback answer, got \(turn)")
+            return
+        }
+        #expect(text == "reply")
+        #expect(info.fellBackFromTier == .privateCloudCompute)
+        #expect(recording.builds == 1)
+    }
+
+    @Test("suppressed overflow throws without an offer")
+    func suppressedOverflowThrows() async throws {
+        // The fallback turn that still can't fit: offering would loop
+        // (exhausted rung), answering would exceed the window -- loud
+        // error, no offer bit. Driven through `runTurn` directly: with
+        // production budgets the 10KB prompt cap always fits 4K, so the
+        // arm is reachable only on explicit test budgets.
+        let recording = RecordingBuild()
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+        await #expect {
+            try await orchestrator.runTurn(
+                to: "Hi",
+                purpose: .chat,
+                tier: .onDevice,
+                tools: [],
+                toolSetID: nil,
+                tokenBudget: 1,
+                quotaWarning: false,
+                quotaResetDate: nil,
+                suppressOffers: true
+            )
+        } throws: { error in
+            guard case .contextOverflow(let offer) = error as? CoachError else { return false }
+            return !offer
+        }
+        #expect(recording.builds == 0)
+    }
+
+    @Test("reset date threads to warning and fallback replies")
+    func resetDateThreading() async throws {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let (warned, _, _) = try makeOrchestrator(catalog: pccCatalog(quota: .nearLimit(resetDate: date)))
+        let warnTurn = try await warned.respond(to: "Hi", tier: .privateCloudCompute)
+        guard case .reply(_, _, let warnInfo) = warnTurn else {
+            Issue.record("expected a warned reply, got \(warnTurn)")
+            return
+        }
+        #expect(warnInfo.quotaResetDate == date)
+        let (fallback, _, _) = try makeOrchestrator(catalog: pccCatalog(quota: .exhausted(resetDate: date)))
+        let fbTurn = try await fallback.respond(to: "Hi", tier: .privateCloudCompute)
+        guard case .reply(_, _, let fbInfo) = fbTurn else {
+            Issue.record("expected a fallback reply, got \(fbTurn)")
+            return
+        }
+        #expect(fbInfo.quotaResetDate == date)
     }
 
     @Test("unavailable PCC stays off despite consent")

@@ -19,12 +19,18 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-    # NOTE: warnings-as-errors intentionally lives on each first-party
-    # target below, NOT here and NOT on the `make test` command line:
-    # project/command-line scope leaks `-warnings-as-errors` into SPM
-    # package targets, conflicting with upstream `-suppress-warnings`
-    # (WP-28b: ClaudeForFoundationModels). Target scope keeps our
-    # discipline without dictating upstream builds.
+    # NOTE: warnings-as-errors is enforced twice -- per first-party
+    # target below (covers Xcode-GUI builds, which get no command line)
+    # AND on the `make test` / CI command line (covers everything the
+    # project builds, including local packages). Command-line scope also
+    # reaches SPM package targets, so `SWIFT_SUPPRESS_WARNINGS=NO` rides
+    # next to it there: it overrides the `-suppress-warnings` Xcode's
+    # SwiftPM integration injects into remote package targets, which
+    # otherwise conflicts with `-warnings-as-errors` and fails the build.
+    # Known gap: the five local packages get no warnings-as-errors in GUI
+    # builds (only their `swift test` runs and CI enforce it) -- project
+    # settings can't reach package targets, and command-line flags can't
+    # come from the GUI.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"

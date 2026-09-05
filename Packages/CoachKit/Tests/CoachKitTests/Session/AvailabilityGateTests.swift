@@ -69,12 +69,17 @@ struct AvailabilityGateTests {
         // transcript) -- `!==` here CAN fail, unlike comparing two fresh
         // allocations.
         #expect(conversationA === conversationB)
-        // Tier switch busts the conversation cache (WP-28 §1): the same
-        // prompt on another tier must not reuse this session -- wrong model,
-        // wrong privacy boundary.
+        // Tier switch uses a separate slot (round-2 F12): the same
+        // prompt on another tier must not reuse this session -- wrong
+        // model, wrong privacy boundary -- AND toggling back must recover
+        // this tier's transcript instead of rebuilding it.
         let otherTier = factory.makeSession(for: .conversation, instructions: "base", tier: .privateCloudCompute)
         #expect(otherTier !== conversationA)
         #expect(factory.makeSession(for: .conversation, instructions: "base", tier: .privateCloudCompute) === otherTier)
+        // Toggling back recovers the on-device transcript: per-tier slots,
+        // bounded by construction (one entry per tier), not a prompt-keyed
+        // dict and not a reset-on-switch.
+        #expect(factory.makeSession(for: .conversation, instructions: "base") === conversationA)
         // One-shot tasks never share: each call builds fresh so insights
         // can't inherit chat history.
         let oneShotA = factory.makeSession(for: .oneShot, instructions: "base")
