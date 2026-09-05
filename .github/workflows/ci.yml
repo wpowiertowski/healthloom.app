@@ -169,13 +169,17 @@ jobs:
           # direction is subtle -- whoever deletes the XCTSkip once a newer
           # beta lands would get a green CI that silently never ran the test.
           # One skip, in the test, where its reason already lives.
+          # NOTE (WP-28b): warnings-as-errors is scoped per first-party
+          # target in project.yml, NOT passed here: command-line scope leaks
+          # `-warnings-as-errors` into SPM package targets and conflicts with
+          # upstream `-suppress-warnings` (ClaudeForFoundationModels'
+          # ClaudeAPI target failed CI with exactly this). Our targets keep
+          # the discipline via their own settings.
           xcodebuild build test \
             -project HealthLoom.xcodeproj \
             -scheme HealthLoom \
             -destination "$dest" \
-            -resultBundlePath "$RUNNER_TEMP/HealthLoom.xcresult" \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES
+            -resultBundlePath "$RUNNER_TEMP/HealthLoom.xcresult"
 
       # UI-test failures are near-impossible to diagnose from stdout alone
       # (element-not-found waits log no hierarchy; the accessibility
