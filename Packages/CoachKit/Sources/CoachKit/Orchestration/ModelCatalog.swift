@@ -110,6 +110,11 @@ public struct ModelCatalog: Sendable {
     /// gated too). The beta variant carries the SDK's own availability: it
     /// only executes on iOS/macOS 27+ (package tests on macOS 26 take the
     /// early return, never the model read).
+    // NOTE (review L2): each PCC turn constructs two framework handles
+    // (one here, one in `livePCCQuota` below, plus the dispatch build's).
+    // Plausibly cheap, unmeasured -- a unit test can't price handle
+    // construction, so this stays as-is until the on-device manual pass
+    // (test plan §7) either clears it or motivates a single read-per-turn.
     private static func livePCCAvailability() -> Bool {
 #if swift(>=6.4)
         if #available(iOS 27.0, macOS 27.0, visionOS 27.0, watchOS 27.0, *) {

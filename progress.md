@@ -4687,3 +4687,20 @@ design; defaults preserve WP-27 behavior. F8 acknowledged (double-failure
 loses PCC context -- edge-of-edge, on-device-off is the actionable signal).
 
 **Counts:** CoachKit 181 → 182 (beta) / 180 (stable).
+
+## WP-28 review round 2 (reviews/wp28-review.md Part 4)
+
+Verdict: mergeable, no blockers/highs. New items all low/nit.
+
+**L1 stale, no change:** the "181/179" quote predates the fix commit --
+the table already reads 182/180, matching measured beta/stable runs.
+
+**L2 noted, not restructured:** two PCC handle constructions per turn
+flagged with an inline NOTE for the on-device manual pass (test plan
+§7); no speculative single-read seam -- a unit test can't price it.
+
+**L3 filed for WP-29:** `makeBuild` wiring test lands with the
+Keychain→build commit (that's where it earns its keep), alongside
+before/after tests for the first prod `liveTiers` flip + Keychain read
+(checklist §5). F8 stays dropped unless WP-29's error UI needs
+double-failure copy.
