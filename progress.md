@@ -4704,3 +4704,25 @@ Keychain→build commit (that's where it earns its keep), alongside
 before/after tests for the first prod `liveTiers` flip + Keychain read
 (checklist §5). F8 stays dropped unless WP-29's error UI needs
 double-failure copy.
+
+## WP-28b Claude: deferred after CI (SDK drift)
+
+The adapter + error table were written, tested (70 app tests), and green
+locally -- then CI failed: upstream 0.1.4 references
+`FoundationModels.Transcript.CustomSegment`, absent from the July-beta SDK
+on CI's `xcode-27` image (local 27A5218g has it). Every upstream release
+(0.1.0-0.1.4) uses the symbol, so no pin avoids it; no newer runner image
+is discoverable; the fallback can't be verified without the July
+toolchain. Same call as Gemini: defer, don't fork.
+
+**Removed from the branch** (not parked uncompiled -- uncompiled code
+rots while the SDK churns): the remote package, `ClaudeTier.swift`,
+`ClaudeTierTests.swift`. **Restore point:** commit `f40022f` (exact
+pin 0.1.4, sonnet5 default, serverTools-never pinned, 3-case error
+table). Restore when CI's Xcode 27 SDK provides `Transcript.CustomSegment`
+(release the row via `liveTiers` + WP-29 key UI at the same time).
+
+**Kept:** the warnings machinery the episode produced --
+`SWIFT_SUPPRESS_WARNINGS=NO` next to the errors flags (make + CI) so the
+next remote dep builds warning-free-or-fail instead of conflicting, and
+per-target settings for GUI builds.

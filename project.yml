@@ -42,13 +42,6 @@ packages:
     path: Packages/SyncKit
   CoachKit:
     path: Packages/CoachKit
-  # WP-28b: Anthropic's official `LanguageModel` conformance (D9 route rule:
-  # no REST clients). App-target only -- the package requires macOS/iOS 27,
-  # which CoachKit's macOS 26 floor + stable matrix toolchain can't link
-  # (see progress.md WP-28). Pinned exact for reproducible builds.
-  ClaudeForFoundationModels:
-    url: https://github.com/anthropics/ClaudeForFoundationModels
-    version: 0.1.4
 
 targets:
   HealthLoom:
@@ -124,7 +117,6 @@ targets:
       - package: GoogleHealthClient
       - package: SyncKit
       - package: CoachKit
-      - package: ClaudeForFoundationModels
 
   HealthLoomTests:
     type: bundle.unit-test
