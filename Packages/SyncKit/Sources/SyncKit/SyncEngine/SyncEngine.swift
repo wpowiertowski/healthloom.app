@@ -98,7 +98,17 @@ public actor SyncEngine {
     /// caller doesn't just get turned away empty-handed -- it awaits the
     /// *same* result the first caller's run produces (WP-09's "coalesce ...
     /// rather than interleave", not merely "drop").
-    private var inFlight: [GoogleDataType: Task<SyncOutcome, Never>] = [:]
+    private var inFlight: [GoogleDataType: InFlightRun] = [:]
+
+    /// A running sync plus the token identifying it. `Task` itself isn't
+    /// `Equatable`, so the token is what `clearInFlight` compares: a
+    /// completing run only clears the entry it created, never a newer run
+    /// stored concurrently (the doc claim the previous `= nil` body did not
+    /// actually implement).
+    private struct InFlightRun {
+        let task: Task<SyncOutcome, Never>
+        let runID: UUID
+    }
 
     public init(
         client: any GoogleReconcileClient,
@@ -127,15 +137,20 @@ public actor SyncEngine {
     @discardableResult
     public func sync(type: GoogleDataType) async -> SyncOutcome {
         if let running = inFlight[type] {
-            return await running.value
+            return await running.task.value
         }
+        let runID = UUID()
         let task = Task { [self] in
-            await performSync(type: type)
+            let outcome = await performSync(type: type)
+            // Cleared inside the task, before any waiter resumes: a caller
+            // arriving after completion finds no entry and starts a fresh
+            // run instead of receiving this run's stale outcome. (Clearing
+            // after `await task.value` below used to race that arrival.)
+            self.clearInFlight(type, runID: runID)
+            return outcome
         }
-        inFlight[type] = task
-        let outcome = await task.value
-        inFlight[type] = nil
-        return outcome
+        inFlight[type] = InFlightRun(task: task, runID: runID)
+        return await task.value
     }
 
     /// Runs every type in `types` **sequentially** (WP-09 step 3:
@@ -163,6 +178,17 @@ public actor SyncEngine {
     /// this method is additive and safe for either WP to call.
     public func isBusy(for type: GoogleDataType) -> Bool {
         inFlight[type] != nil
+    }
+
+    /// Task-side completion of the `inFlight` entry (see `sync(type:)`).
+    /// Identity-checked: only clears if the stored entry is still this
+    /// run's, so a newer run stored concurrently is never wiped. (Without
+    /// the check, a `performSync` tail gaining an `await` -- or a detached
+    /// task -- would let a completing run A clear run B's entry, and
+    /// `isBusy(for:)` would lie to `BackfillCoordinator` mid-flight.)
+    private func clearInFlight(_ type: GoogleDataType, runID: UUID) {
+        guard inFlight[type]?.runID == runID else { return }
+        inFlight[type] = nil
     }
 
     // MARK: - Per-type pipeline
@@ -232,8 +258,8 @@ public actor SyncEngine {
             // but the row only exists after `upsertLocalSample` ran
             // (fetches see pending inserts in the same context). Identity
             // filter drains nothing.
-            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(), context: context)
-            let suppressedCount = await conflictFilter.drainSuppressedCount()
+            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
 
             // Full window succeeded (every page fetched, mapped, and
             // written/upserted without throwing) -- advance the cursor and
@@ -242,27 +268,77 @@ public actor SyncEngine {
             syncState.lastStatus = SyncStatus.ok.rawValue
             syncState.lastError = nil
             syncState.itemCount += totalItemCount
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                // A save failure leaves lastSyncedAt where it was (the
+                // in-memory cursor advance above dies with this context):
+                // report the failure instead of an `.ok` nothing was
+                // persisted under.
+                // Raw description here, redacted once at the catch
+                // below (the documented D11 boundary) -- redacting at both
+                // layers just burns regex passes and hides the ownership.
+                throw HealthKitWriterError.underlying(String(describing: error))
+            }
             let outcome = SyncOutcome(
                 dataType: type, status: .ok, itemCount: totalItemCount, suppressedCount: suppressedCount
             )
             await runRecorder?.record(outcome) // WP-18: additive diagnostics hook, see this actor's `runRecorder` doc comment.
             return outcome
         } catch {
-            // WP-12b: same drains on the failure path -- partial-run links
-            // still point at rows already upserted (harmless and correct to
-            // apply; the window is fully re-pulled next run regardless), and
-            // draining the count both reports partial progress and resets
-            // the resolver's state so nothing leaks into the next run.
-            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(), context: context)
-            let suppressedCount = await conflictFilter.drainSuppressedCount()
+            // Roll back FIRST: the success path above may have thrown out of
+            // its own `context.save()` with `lastSyncedAt` already advanced
+            // in memory -- without this, the error-row save below would
+            // commit that cursor advance anyway and the failed window would
+            // never be re-pulled. Rollback also discards this run's
+            // `LocalSample` upserts (re-pulled idempotently next run); the
+            // resolver's actor-side drains below are unaffected. A rollback
+            // on a context with nothing pending (mid-pipeline failures) is
+            // a harmless no-op.
+            context.rollback()
+            // Re-acquire after the rollback: it may have undone
+            // `fetchOrCreateSyncState`'s insert on a first-ever sync.
+            let syncState = fetchOrCreateSyncState(for: type, context: context)
+
+            // WP-12b: same drains on the failure path -- draining the count
+            // both reports partial progress and resets the resolver's state
+            // so nothing leaks into the next run. (Links drain too, but
+            // their rows were rolled back above, so they drop silently per
+            // `applyDeferredSessionLinks`' contract and are re-recorded on
+            // the re-pull.)
+            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
+
+            // Cancellation is a stop, not a failure: no error status, no
+            // message, cursor untouched -- the next run retries the same
+            // window. (Without this branch a routine expiration-handler
+            // cancel paints a red dashboard row for the system doing its
+            // job.)
+            if error is CancellationError || (error as? GoogleHealthClientError) == .cancelled {
+                // Status moves, message stays: a previous run's genuine
+                // error is evidence for the user/support, and a stop
+                // resolves nothing about it. Clearing it here would trade
+                // the red row for silent amnesia.
+                syncState.lastStatus = SyncStatus.cancelled.rawValue
+                try? context.save()
+                let stopped = SyncOutcome(
+                    dataType: type, status: .cancelled, itemCount: totalItemCount,
+                    suppressedCount: suppressedCount
+                )
+                await runRecorder?.record(stopped)
+                return stopped
+            }
 
             // Partial-window failure: `lastSyncedAt` is deliberately left
             // untouched (architecture.md D3) so the *entire* window --
             // including whatever pages already succeeded this run -- is
             // safely re-pulled next time; idempotent existence-diff means
             // re-processing already-written pages costs nothing but a query.
-            let message = String(describing: error)
+            // Redacted (architecture.md D11, SyncState.lastError's own
+            // doc): pipeline errors can embed bearer tokens or
+            // authenticated URLs; the sync-log path already redacts via
+            // SyncLogRedactor -- this persisted/UI-rendered path must too.
+            let message = SyncLogRedactor.redact(String(describing: error))
             syncState.lastStatus = SyncStatus.error.rawValue
             syncState.lastError = message
             try? context.save()

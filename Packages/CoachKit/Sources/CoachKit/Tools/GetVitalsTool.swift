@@ -38,7 +38,7 @@ public struct GetVitalsTool: Tool, Sendable {
         KnowledgeDerivation.heartRateVariabilityFieldKey,
     ]
 
-    public static let excludedMessage = "Vitals data is excluded from the coach in your settings."
+    public static let excludedMessage = CoachTools.excludedMessage(forTopic: "Vitals")
 
     private let answer: @MainActor @Sendable () async throws -> String
 

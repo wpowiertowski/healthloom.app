@@ -196,6 +196,11 @@ public nonisolated enum BackfillChunkOutcome: Sendable, Equatable {
     /// Skipped this round: the coordinator is paused (WP-15 step 3: "pause/
     /// resume controls").
     case suspendedPaused
+    /// Stopped mid-chunk by task cancellation (NOT a failure): no error
+    /// status persisted, cursor left at the last durable save, retried next
+    /// round. Lets callers and the log tell "asked to stop" apart from a
+    /// real chunk failure.
+    case suspendedCancelled
     /// The chunk's pull/map/write failed; the type's `backfillCursor` is
     /// left untouched (same "leave the cursor, retry next time" posture as
     /// `SyncEngine`'s incremental cursor -- architecture.md D3/D4's

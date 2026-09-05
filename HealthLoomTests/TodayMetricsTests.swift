@@ -90,6 +90,9 @@ struct TodayMetricFormatterTests {
         #expect(TodayMetricFormatter.duration(seconds: 7 * 3600 + 12 * 60) == "7h 12m")
         #expect(TodayMetricFormatter.duration(seconds: 42 * 60) == "42m")
         #expect(TodayMetricFormatter.duration(seconds: 0) == "0m")
+        // Clock-skewed sample (end < start): clamps instead of rendering
+        // "-1h -5m" through truncating division.
+        #expect(TodayMetricFormatter.duration(seconds: -3900) == "0m")
     }
 
     @Test func missingReadingRendersTheEmptyRow() {

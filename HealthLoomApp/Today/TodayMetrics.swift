@@ -10,6 +10,7 @@
 // (HealthLoomTests) can drive it directly; `TodayMetricsProvider.swift` is
 // the one HealthKit-touching piece that produces the raw readings.
 
+import CoreModel
 import Foundation
 import Observation
 // SwiftUI (not Foundation) exports `MutableCollection.move(fromOffsets:
@@ -103,21 +104,16 @@ enum TodayMetricFormatter {
     static let defaultStepGoal = 10_000.0
 
     /// Grouped integer -- "8,240" (in the user's locale; tests inject a
-    /// fixed one for deterministic assertions).
+    /// fixed one for deterministic assertions). Delegates to CoreModel's
+    /// shared `MetricFormatting` (same helper CoachKit uses) so fixes land
+    /// once; the negative-input clamp below arrived through that path.
     static func groupedCount(_ value: Double, locale: Locale = .current) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = locale
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value.rounded())) ?? "\(Int(value.rounded()))"
+        MetricFormatting.groupedCount(value, locale: locale)
     }
 
     /// "7h 12m" from seconds; sub-hour durations render "42m".
     static func duration(seconds: Double) -> String {
-        let totalMinutes = Int((seconds / 60).rounded())
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
+        MetricFormatting.duration(seconds: seconds)
     }
 
     /// Build the display row for one kind from its (optional) raw reading.

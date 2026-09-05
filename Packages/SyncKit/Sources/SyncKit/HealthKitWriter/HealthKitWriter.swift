@@ -112,6 +112,72 @@ public final class HealthKitWriter: Sendable {
         return try await store.deleteObjects(ofType: type, externalIDs: externalIDs)
     }
 
+    /// The HealthKit distance bucket matching a workout's activity
+    /// type. `nil` means HealthKit models no distance for that activity --
+    /// the caller then attaches no distance sample (see `saveWorkout`).
+    /// Single edit point: `WatchConflictResolver.retroactiveCleanup`'s
+    /// sweep list must cover every non-nil row here (it deletes by the same
+    /// external-ID stamp).
+    // `nonisolated`: pure table, callable from `WatchConflictResolver`'s
+    // own actor (this class otherwise inherits the package's MainActor
+    // default isolation).
+    nonisolated static func distanceIdentifier(
+        for activityType: MappedWorkoutActivityType
+    ) -> HKQuantityTypeIdentifier? {
+        switch activityType {
+        case .running, .walking, .hiking:
+            return .distanceWalkingRunning
+        case .cycling:
+            return .distanceCycling
+        case .swimming:
+            return .distanceSwimming
+        case .rowing:
+            return .distanceRowing
+        case .elliptical, .traditionalStrengthTraining, .yoga,
+             .highIntensityIntervalTraining, .stairClimbing, .coreTraining,
+             .other:
+            return nil
+        }
+    }
+
+    /// Every distance bucket `distanceIdentifier(for:)` can return, for
+    /// cleanup sweeps (`WatchConflictResolver.retroactiveCleanup`): derived
+    /// from the same table so writer and sweeper can never disagree about
+    /// which buckets exist. `allCases` order (deduped, NOT a `Set`
+    /// round-trip): the sweep aborts on its first failure, so a
+    /// nondeterministic order would make which buckets get cleaned before
+    /// an error arbitrary run to run.
+    nonisolated static var distanceIdentifiersForCleanup: [HKQuantityTypeIdentifier] {
+        var seen: [HKQuantityTypeIdentifier] = []
+        for activityType in MappedWorkoutActivityType.allCases {
+            guard let identifier = distanceIdentifier(for: activityType),
+                  !seen.contains(identifier)
+            else { continue }
+            seen.append(identifier)
+        }
+        return seen
+    }
+
+    /// Everything a workout save may write beyond `GoogleDataType
+    /// .writability`: the workout itself, its energy attachment, and every
+    /// distance bucket above. Single source of truth for the share set
+    /// `HealthKitAuth` must request before exercise sync can succeed (the
+    /// distance buckets are structurally unreachable from `writability`,
+    /// and -- found while fixing that -- `.exercise` share itself was never
+    /// requested anywhere, so this set closes both gaps at once).
+    nonisolated static var workoutShareTypes: Set<HKSampleType> {
+        var types: Set<HKSampleType> = [HKObjectType.workoutType()]
+        if let energy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
+            types.insert(energy)
+        }
+        for identifier in distanceIdentifiersForCleanup {
+            if let distance = HKObjectType.quantityType(forIdentifier: identifier) {
+                types.insert(distance)
+            }
+        }
+        return types
+    }
+
     /// Generic multi-type variant of `delete(externalIDs:type:)` — sweeps
     /// every type in `types` for the same `externalIDs` set and sums the
     /// deleted counts. Deliberately *not* fixed to today's four P0 types
@@ -197,14 +263,36 @@ public final class HealthKitWriter: Sendable {
             activityType: workout.activityType.makeHKWorkoutActivityType(),
             device: nil
         )
-        let metadataDictionary = workout.metadata.makeHKMetadataDictionary()
+        var metadataDictionary = workout.metadata.makeHKMetadataDictionary()
+        // Distance/energy without a HealthKit bucket (`.other`, elliptical,
+        // HIIT, ...) are preserved here, not dropped: no sample is attached
+        // for them (filing an unknown activity under walking+running
+        // corrupts totals), but the values ride the workout's own metadata
+        // so they survive the round-trip and stay queryable by external ID.
+        // Bucketed workouts carry the same keys -- one metadata shape for
+        // every workout, sample or not.
+        if let distanceMeters = workout.distanceMeters {
+            metadataDictionary["healthloom.distanceMeters"] = distanceMeters
+        }
+        if let energyKilocalories = workout.energyKilocalories {
+            metadataDictionary["healthloom.energyKilocalories"] = energyKilocalories
+        }
 
         do {
             try await builder.beginCollection(at: workout.start)
 
             var samples: [HKSample] = []
+            // Distance attaches under the identifier matching the workout's
+            // own activity type -- never blanket `distanceWalkingRunning`
+            // (a 40 km bike ride must not land in walking+running totals).
+            // Activity types with no HealthKit distance counterpart (strength,
+            // yoga, HIIT, ...) attach no distance sample at all: the value
+            // is preserved in the workout metadata instead (see above), so
+            // nothing is lost -- it just isn't double-counted under a wrong
+            // bucket.
             if let distanceMeters = workout.distanceMeters,
-               let distanceType = HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning) {
+               let distanceIdentifier = Self.distanceIdentifier(for: workout.activityType),
+               let distanceType = HKObjectType.quantityType(forIdentifier: distanceIdentifier) {
                 samples.append(
                     HKQuantitySample(
                         type: distanceType,

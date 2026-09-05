@@ -398,5 +398,39 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
         let export = SyncLogTextExporter.export([entry], generatedAt: Self.fixedNow)
         #expect(export.contains("1 deferred to Apple Watch"))
     }
+
+    // MARK: - Concurrent types share one resolver without sharing runs
+
+    @Test func secondTypeBeginRunDoesNotWipeFirstTypesInFlightRun() async throws {
+        // Two types syncing concurrently on one pipeline: the second
+        // type's beginRun must not reset the first's coverage index (the
+        // pre-fix shared slot set activeIndex = nil mid-run, so every
+        // remaining steps point resolved with no coverage and double-wrote
+        // watch-covered data).
+        let coverage = StubWatchCoverageProvider()
+        coverage.windows = [Self.morningRunWindow()]
+        let writer = HealthKitWriter(
+            store: MockHealthStore(), workoutBuilderFactory: MockWorkoutBuilderFactory())
+        let resolver = WatchConflictResolver(coverageProvider: coverage, writer: writer)
+        let windowStart = Self.at("09:00:00")
+        let windowEnd = Self.at("11:00:00")
+
+        try await resolver.beginRun(type: .steps, windowStart: windowStart, windowEnd: windowEnd)
+        // The interleaving SyncEngine's awaits allow: heartRate's run
+        // starts while steps is still in flight.
+        try await resolver.beginRun(type: .heartRate, windowStart: windowStart, windowEnd: windowEnd)
+
+        // A steps point fully inside padded coverage (09:55-10:45) still
+        // suppresses -- identity resolution here would mean the index died.
+        let point = TypeMapperFixtures.stepsPoint(
+            id: "steps-covered-1", start: Self.at("10:05:00"), end: Self.at("10:10:00"))
+        let resolved = await resolver.resolve(TypeMapper.map(point), for: point)
+        guard case .skip = resolved else {
+            Issue.record("expected a suppressed (skipped) point, got \(resolved)")
+            return
+        }
+        #expect(await resolver.drainSuppressedCount(for: .steps) == 1)
+        #expect(await resolver.drainSuppressedCount(for: .heartRate) == 0)
+    }
 }
 #endif

@@ -21,14 +21,29 @@ public final class SyncState {
     /// `nil` means backfill hasn't started or has completed to the chosen horizon.
     public var backfillCursor: Date?
 
-    /// `"idle" | "ok" | "error"` — kept as a plain string so SwiftData's schema doesn't
+    /// `"idle" | "ok" | "error" | "cancelled"` — kept as a plain string so SwiftData's schema doesn't
     /// need a migration every time a new status is added; `SyncKit` owns the enum this
-    /// mirrors.
+    /// mirrors. Incremental sync's field ONLY -- backfill writes
+    /// `backfillStatus` below, never this (the two pipelines share the row
+    /// but must not share status: a failed backfill chunk must not paint
+    /// the incremental row errored, nor clear its genuine errors).
     public var lastStatus: String
 
     /// Redacted error message for the dashboard/sync log — never a raw token or health
-    /// value (architecture.md D11).
+    /// value (architecture.md D11). Incremental sync's field ONLY, same
+    /// fencing as `lastStatus`.
     public var lastError: String?
+
+    /// Backfill's own status/error pair (same `"idle" | "ok" | "error"`
+    /// contract, mirroring `SyncStatus`): the chunk pipeline's outcome,
+    /// read by `BackfillCoordinator.status(for:)` and the backfill UI.
+    /// The default lives ON THE PROPERTY (`= "idle"`), not just in
+    /// `init` -- SwiftData derives migration defaults from the property
+    /// initializer (migration never calls `init`), so a non-optional
+    /// attribute without one breaks lightweight migration of existing
+    /// stores. (`backfillError` is optional, which migrates freely.)
+    public var backfillStatus: String = "idle"
+    public var backfillError: String?
 
     public var itemCount: Int
 
@@ -38,6 +53,8 @@ public final class SyncState {
         backfillCursor: Date? = nil,
         lastStatus: String = "idle",
         lastError: String? = nil,
+        backfillStatus: String = "idle",
+        backfillError: String? = nil,
         itemCount: Int = 0
     ) {
         self.dataType = dataType
@@ -45,6 +62,8 @@ public final class SyncState {
         self.backfillCursor = backfillCursor
         self.lastStatus = lastStatus
         self.lastError = lastError
+        self.backfillStatus = backfillStatus
+        self.backfillError = backfillError
         self.itemCount = itemCount
     }
 }

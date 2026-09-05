@@ -366,27 +366,16 @@ public enum KnowledgeDerivation {
         }
     }
 
-    // MARK: - Formatting (pure, locale-injectable -- same shape as the app
-    // target's `TodayMetricFormatter`, WP-33)
+    // MARK: - Formatting (delegates to CoreModel's shared
+    // `MetricFormatting` -- the app target's `TodayMetricFormatter` uses
+    // the same helper, so fixes land once. Signatures kept for existing
+    // callers/tests.)
 
     static func groupedCount(_ value: Double, locale: Locale) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = locale
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value.rounded())) ?? "\(Int(value.rounded()))"
+        MetricFormatting.groupedCount(value, locale: locale)
     }
 
     static func duration(seconds: Double) -> String {
-        // Code review (2026-09-01): clamp to 0 -- a `SleepStageSegment` with
-        // `end < start` (clock-skewed/malformed HealthKit data) would
-        // otherwise produce a negative `totalMinutes`, and Swift's
-        // truncating `/`/`%` on a negative dividend yields nonsensical
-        // coach-facing text (e.g. a -25 hour skew rendering as "0m" instead
-        // of anything indicating a problem).
-        let totalMinutes = max(Int((seconds / 60).rounded()), 0)
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
+        MetricFormatting.duration(seconds: seconds)
     }
 }

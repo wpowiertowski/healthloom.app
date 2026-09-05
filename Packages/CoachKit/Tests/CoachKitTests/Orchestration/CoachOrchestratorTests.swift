@@ -514,6 +514,29 @@ struct CoachOrchestratorTests {
         #expect(fbInfo.quotaResetDate == date)
     }
 
+    @Test("quota fallback honors the on-device gate")
+    func quotaFallbackGate() async throws {
+        // PCC enabled but exhausted, Apple Intelligence off: the fallback
+        // must report `.tierUnavailable` for on-device, not build a session
+        // over an unavailable model and die opaque.
+        let recording = RecordingBuild()
+        let catalog = ModelCatalog(
+            onDeviceAvailable: { false },
+            hasConsent: { _ in true },
+            pccAvailable: { true },
+            pccQuota: { .exhausted(resetDate: nil) },
+            liveTiers: [.onDevice, .privateCloudCompute]
+        )
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording, catalog: catalog)
+        await #expect {
+            try await orchestrator.respond(to: "Hi", tier: .privateCloudCompute)
+        } throws: { error in
+            guard case .tierUnavailable(let tier, _) = error as? CoachError else { return false }
+            return tier == .onDevice
+        }
+        #expect(recording.builds == 0)
+    }
+
     @Test("unavailable PCC stays off despite consent")
     func pccAvailabilityGates() async throws {
         // Offline / missing entitlement surface as unavailable (D14.4) --

@@ -101,7 +101,12 @@ struct HealthKitPermissionView: View {
                     read: [
                         .exercise, .heartRate, .steps, .sleep, .weight,
                         .oxygenSaturation, .distance, .activeEnergyBurned,
-                    ]
+                    ],
+                    // Workout saves (and their cycling/swimming/rowing
+                    // distance attachments) need share types no
+                    // `GoogleDataType` maps to -- unioned into this same
+                    // single sheet, derived from the writer's table.
+                    includingWorkoutShare: true
                 )
                 isRequesting = false
                 onGranted()

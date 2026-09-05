@@ -151,6 +151,14 @@ public final class CoachOrchestrator: Sendable {
                 // suppressed on the fallback turn (round-2 F3): the offered
                 // rung would be the exhausted PCC tier itself -- accept
                 // loops forever.
+                guard catalog.isEnabled(.onDevice) else {
+                    // The fallback is a real on-device turn, so it passes
+                    // the on-device gate: Apple Intelligence off/ineligible
+                    // reports `.tierUnavailable` with the documented copy
+                    // instead of dying opaque inside a session built over an
+                    // unavailable model.
+                    throw .tierUnavailable(tier: .onDevice, reason: Self.unavailableReason(for: .onDevice, in: catalog))
+                }
                 let turn = try await runTurn(
                     to: message,
                     purpose: purpose,

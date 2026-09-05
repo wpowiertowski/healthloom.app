@@ -53,13 +53,22 @@ public actor WatchConflictResolver: ConflictFiltering {
     private let preference: any WatchPriorityPreferenceReading
     private let policy: WatchConflictPolicy
 
-    /// Non-nil only while a run is active *and* the preference is ON *and*
-    /// coverage was readable *and* at least one window exists -- every
-    /// `resolve` fast-paths to identity otherwise (D13.5's toggle-OFF
-    /// behavior falls out of this for free).
-    private var activeIndex: WatchCoverageIndex?
-    private var deferredSessionLinks: [String: UUID] = [:]
-    private var suppressedCount = 0
+    /// Per-type run state (keyed by the type whose run created it).
+    /// Two types sync concurrently inside one pipeline (`SyncEngine.syncAll`
+    /// is sequential, but two `sync(type:)` calls for *different* types are
+    /// not serialized -- the actor suspends at every await, so a second
+    /// type's `beginRun` can land mid-first-run): a single shared slot would
+    /// let the second run wipe the first's coverage index and recorded
+    /// links. Each entry's index is non-nil only while its run is active
+    /// *and* the preference is ON *and* coverage was readable *and* at
+    /// least one window exists -- every `resolve` fast-paths to identity
+    /// otherwise (D13.5's toggle-OFF behavior falls out of this for free).
+    private struct RunState {
+        var index: WatchCoverageIndex?
+        var deferredSessionLinks: [String: UUID] = [:]
+        var suppressedCount = 0
+    }
+    private var runs: [GoogleDataType: RunState] = [:]
 
     public init(
         coverageProvider: any WatchCoverageProviding,
@@ -92,11 +101,12 @@ public actor WatchConflictResolver: ConflictFiltering {
         windowStart: Date,
         windowEnd: Date
     ) async throws(HealthKitWriterError) {
-        // Reset per-run state unconditionally so a previous run's leftovers
-        // (e.g. after a mid-run failure) can never leak into this one.
-        deferredSessionLinks = [:]
-        suppressedCount = 0
-        activeIndex = nil
+        // Reset THIS type's per-run state unconditionally so a previous
+        // run's leftovers (e.g. after a mid-run failure) can never leak
+        // into this one -- without touching any concurrently-running type's
+        // entry (the shared-slot reset this replaces destroyed in-flight
+        // runs of other types mid-stream).
+        runs[type] = RunState()
 
         guard preference.isWatchPriorityEnabled() else { return }
 
@@ -106,6 +116,10 @@ public actor WatchConflictResolver: ConflictFiltering {
         // walks, so watch-priority costs one workout query per *relevant*
         // type per run, not per type.
         guard Self.coveredStreamTypes.contains(type) || type == .exercise else { return }
+
+        // `runs[type]` was just reset above; every path below that resolves
+        // coverage writes the index back into it (early returns leave the
+        // empty state = identity resolution for this run).
 
         // Fetch coverage slightly beyond the sync window: a watch workout
         // starting just before `windowStart` still covers (pads into) the
@@ -124,13 +138,13 @@ public actor WatchConflictResolver: ConflictFiltering {
 
         let index = WatchCoverageIndex(windows: windows, policy: policy)
         guard !index.isEmpty else { return }
-        activeIndex = index
+        runs[type]?.index = index
 
         try await retroactiveCleanup(type: type, windowStart: windowStart, windowEnd: windowEnd, index: index)
     }
 
     public func resolve(_ mapped: MappedObject, for point: GoogleDataPoint) async -> MappedObject {
-        guard let index = activeIndex else { return mapped }
+        guard let index = runs[point.dataType]?.index else { return mapped }
 
         switch mapped {
         case .workout(let workout):
@@ -141,8 +155,8 @@ public actor WatchConflictResolver: ConflictFiltering {
             guard let match = index.matchingWorkout(forSessionStart: workout.start, end: workout.end) else {
                 return mapped
             }
-            deferredSessionLinks[point.id] = match.workoutUUID
-            suppressedCount += 1
+            runs[point.dataType]?.deferredSessionLinks[point.id] = match.workoutUUID
+            runs[point.dataType]?.suppressedCount += 1
             return .localOnly
 
         case .quantity(let sample):
@@ -152,7 +166,7 @@ public actor WatchConflictResolver: ConflictFiltering {
             case .keep:
                 return mapped
             case .suppress:
-                suppressedCount += 1
+                runs[point.dataType]?.suppressedCount += 1
                 return .skip
             case .split(let slices):
                 // Re-derive the pure decision (value/unit/identifier) to
@@ -166,7 +180,7 @@ public actor WatchConflictResolver: ConflictFiltering {
                 }
                 let totalDuration = pure.end.timeIntervalSince(pure.start)
                 guard totalDuration > 0 else {
-                    suppressedCount += 1
+                    runs[point.dataType]?.suppressedCount += 1
                     return .skip
                 }
                 var parts: [HKQuantitySample] = []
@@ -179,7 +193,7 @@ public actor WatchConflictResolver: ConflictFiltering {
                         parts.append(hkSample)
                     }
                 }
-                suppressedCount += 1 // partially deferred -- the covered portion
+                runs[point.dataType]?.suppressedCount += 1 // partially deferred -- the covered portion
                 guard !parts.isEmpty else { return .skip }
                 return .quantities(parts)
             }
@@ -193,15 +207,28 @@ public actor WatchConflictResolver: ConflictFiltering {
         }
     }
 
-    public func drainDeferredSessionLinks() async -> [String: UUID] {
-        let links = deferredSessionLinks
-        deferredSessionLinks = [:]
+    /// Drains one type's recorded links. There is deliberately no
+    /// typeless overload: draining without a type would cross-contaminate
+    /// concurrently-running types, and a stale conformer implementing only
+    /// a typeless drain must fail to compile rather than silently drop
+    /// every link and count.
+    public func drainDeferredSessionLinks(for type: GoogleDataType) async -> [String: UUID] {
+        let links = runs[type]?.deferredSessionLinks ?? [:]
+        runs[type]?.deferredSessionLinks = [:]
+        // Both drains end the run: release the coverage index here (and in
+        // the count drain below -- whichever runs first frees it) so five
+        // synced types don't hold five padded coverage windows until their
+        // next runs, and a deep-horizon backfill chunk doesn't hold a year
+        // of workouts between chunks. Safe: no `resolve` can run after a
+        // drain within the same run (drains are the run's last calls).
+        runs[type]?.index = nil
         return links
     }
 
-    public func drainSuppressedCount() async -> Int {
-        let count = suppressedCount
-        suppressedCount = 0
+    public func drainSuppressedCount(for type: GoogleDataType) async -> Int {
+        let count = runs[type]?.suppressedCount ?? 0
+        runs[type]?.suppressedCount = 0
+        runs[type]?.index = nil
         return count
     }
 
@@ -246,10 +273,15 @@ public actor WatchConflictResolver: ConflictFiltering {
             // The workout's attached distance/energy samples carry the same
             // external-ID stamp (HealthKitWriter.saveWorkout's metadata,
             // D4), so one multi-type delete removes the workout and its
-            // attachments together.
+            // attachments together. The sweep covers every distance bucket
+            // the writer can emit (HealthKitWriter.distanceIdentifier's
+            // non-nil rows) -- sweeping only walkingRunning would leave
+            // cycling/swimming/rowing attachments behind as orphans.
             var sweepTypes: [HKObjectType] = [workoutType]
-            if let distanceType = HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning) {
-                sweepTypes.append(distanceType)
+            for identifier in HealthKitWriter.distanceIdentifiersForCleanup {
+                if let distanceType = HKObjectType.quantityType(forIdentifier: identifier) {
+                    sweepTypes.append(distanceType)
+                }
             }
             if let energyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
                 sweepTypes.append(energyType)

@@ -327,6 +327,54 @@ import Testing
         #expect(state.lastError == nil)
     }
 
+    @Test func persistedErrorMessagesAreRedactedBeforeTheyReachTheStore() async throws {
+        // D11: a pipeline error embedding a bearer token must reach
+        // SyncState.lastError (and the outcome) only as [REDACTED].
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        mock.setScript(type: .steps, pageToken: nil, results: [
+            .failure(.transport("request failed, header Bearer ya29.TESTSECRET12345")),
+        ])
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .steps)
+        #expect(outcome.status == .error)
+        let message = try #require(outcome.errorMessage)
+        #expect(message.contains(SyncLogRedactor.redactedMarker))
+        #expect(!message.contains("ya29.TESTSECRET12345"))
+        let state = try #require(try Self.syncState(container, type: .steps))
+        #expect(state.lastError == message)
+        #expect(!state.lastError!.contains("ya29.TESTSECRET12345"))
+    }
+
+    @Test func cancellationReportsStoppedNotFailed() async throws {
+        // A mid-backoff cancel (expiration handler) surfaces `.cancelled`
+        // with no error row -- the dashboard must not redden for the system
+        // doing its job -- and the cursor stays for the next run to retry.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        mock.setScript(type: .steps, pageToken: nil, results: [
+            .failure(.cancelled),
+        ])
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .steps)
+        #expect(outcome.status == .cancelled)
+        #expect(outcome.errorMessage == nil)
+        let state = try #require(try Self.syncState(container, type: .steps))
+        #expect(state.lastStatus == SyncStatus.cancelled.rawValue)
+        #expect(state.lastError == nil)
+        #expect(state.lastSyncedAt == nil)
+    }
+
     // MARK: - All pages of a paginated response are consumed
 
     @Test func allPagesOfAPaginatedResponseAreConsumed() async throws {
@@ -579,6 +627,11 @@ import Testing
     /// (this is exactly what WP-12b's real resolver will do for samples
     /// inside a watch coverage window, architecture.md D13.3).
     private struct SuppressingConflictFilter: ConflictFiltering {
+        // Explicit drains (no protocol defaults to inherit): this double
+        // records nothing, so both are honest no-ops.
+        func drainDeferredSessionLinks(for type: GoogleDataType) async -> [String: UUID] { [:] }
+        func drainSuppressedCount(for type: GoogleDataType) async -> Int { 0 }
+
         func resolve(_ mapped: MappedObject, for point: GoogleDataPoint) async -> MappedObject {
             switch mapped {
             case .quantity, .category:
