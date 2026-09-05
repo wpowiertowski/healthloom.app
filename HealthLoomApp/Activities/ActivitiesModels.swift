@@ -129,10 +129,16 @@ enum ActivityConsolidator {
         }
 
         var entries: [ActivityEntry] = workouts.map { workout in
+            // Always consume AND always attach: the link is ground truth
+            // (the resolver matched this session to a real watch workout
+            // by coverage), while `isAppleWatch` is a source-name heuristic
+            // that diverges from the classifier whenever `productType` is
+            // nil at read time. Gating the attach on the heuristic dropped
+            // the "+ 8.0 km" detail row exactly when the link was real.
             let supplement = supplementsByWorkoutUUID.removeValue(forKey: workout.uuid)
             let sourceLabel = workout.isAppleWatch
                 ? "Apple Watch \u{00B7} \(workout.sourceName)"
-                : (supplement?.source ?? workout.sourceName)
+                : workout.sourceName
             return ActivityEntry(
                 id: workout.uuid.uuidString,
                 kind: .workout(workout),
@@ -140,7 +146,7 @@ enum ActivityConsolidator {
                 start: workout.start,
                 end: workout.end,
                 sourceLabel: sourceLabel,
-                supplement: workout.isAppleWatch ? supplement : nil
+                supplement: supplement
             )
         }
 

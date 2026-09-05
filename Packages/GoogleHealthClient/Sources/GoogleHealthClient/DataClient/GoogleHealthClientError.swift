@@ -25,4 +25,12 @@ nonisolated public enum GoogleHealthClientError: Error, Sendable, Equatable {
     /// No HTTP response was produced at all (offline, DNS failure, ...).
     /// Carries only the underlying error's type name.
     case transport(String)
+
+    /// The request was cancelled (e.g. `BGAppRefreshTask.expirationHandler`)
+    /// while backing off. A dedicated case -- not `.transport` -- so
+    /// callers (and the sync log) can tell "asked to stop" apart from "the
+    /// network failed". This toolchain's typed-`throws` does not admit a
+    /// bare `CancellationError`, so cancellation surfaces as this instead
+    /// of being swallowed by `try?`.
+    case cancelled
 }

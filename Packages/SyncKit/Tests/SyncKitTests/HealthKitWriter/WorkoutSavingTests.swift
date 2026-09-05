@@ -60,6 +60,10 @@ import Testing
         #expect(mockBuilder.calls == [
             .beginCollection(Self.date("2026-07-01T17:00:00Z")),
             .addSamples(2), // distance + energy
+            // NOTE: the mock's recorded `.addMetadata` call keeps string
+            // values only; the numeric distance/energy keys below are
+            // asserted via `lastMetadata` in
+            // `bucketlessDistanceIsPreservedInMetadata`.
             .addMetadata([
                 HKMetadataKeyExternalUUID: "exercise-0001",
                 "healthloom.externalID": "exercise-0001",
@@ -95,6 +99,55 @@ import Testing
         } as? HKQuantitySample
         #expect(distanceSample?.quantity == HKQuantity(unit: .meter(), doubleValue: 5000))
         #expect(energySample?.quantity == HKQuantity(unit: .kilocalorie(), doubleValue: 300))
+    }
+
+    @Test func distanceAttachesUnderTheActivityTypesOwnBucket() async throws {
+        // A 40 km bike ride must land in distanceCycling, never
+        // distanceWalkingRunning (the pre-fix code stamped every workout's
+        // distance as walking+running).
+        let mockBuilder = MockWorkoutBuilder()
+        let factory = MockWorkoutBuilderFactory(builder: mockBuilder)
+        let writer = HealthKitWriter(store: MockHealthStore(), workoutBuilderFactory: factory)
+
+        _ = try await writer.saveWorkout(Self.workout(activityType: .cycling, distanceMeters: 40000))
+
+        let distanceSamples = mockBuilder.lastAddedSamples.filter {
+            $0.sampleType == HKObjectType.quantityType(forIdentifier: .distanceCycling)
+        }
+        #expect(distanceSamples.count == 1)
+        #expect(mockBuilder.lastAddedSamples.allSatisfy {
+            $0.sampleType != HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)
+        })
+    }
+
+    @Test func distanceIsOmittedForActivityTypesWithoutADistanceBucket() async throws {
+        // Yoga reports a distance but HealthKit models none for it: no
+        // sample (energy still attaches; the workout still saves).
+        let mockBuilder = MockWorkoutBuilder()
+        let factory = MockWorkoutBuilderFactory(builder: mockBuilder)
+        let writer = HealthKitWriter(store: MockHealthStore(), workoutBuilderFactory: factory)
+
+        _ = try await writer.saveWorkout(Self.workout(activityType: .yoga, distanceMeters: 1000))
+
+        #expect(mockBuilder.lastAddedSamples.count == 1)
+        #expect(mockBuilder.lastAddedSamples.first?.sampleType
+            == HKObjectType.quantityType(forIdentifier: .activeEnergyBurned))
+    }
+
+    @Test func bucketlessDistanceIsPreservedInMetadata() async throws {
+        // `.other` (unrecognized activity string) attaches no distance
+        // sample, but the 8 km must still ride the workout metadata --
+        // dropping it there was round-2's data-loss bug.
+        let mockBuilder = MockWorkoutBuilder()
+        let factory = MockWorkoutBuilderFactory(builder: mockBuilder)
+        let writer = HealthKitWriter(store: MockHealthStore(), workoutBuilderFactory: factory)
+
+        _ = try await writer.saveWorkout(Self.workout(activityType: .other, distanceMeters: 8000))
+
+        #expect(mockBuilder.lastAddedSamples.count == 1) // energy only
+        let metadata = mockBuilder.lastMetadata
+        #expect(metadata["healthloom.distanceMeters"] as? Double == 8000.0)
+        #expect(metadata["healthloom.energyKilocalories"] as? Double == 520.0)
     }
 
     @Test func neitherDistanceNorEnergySampleIsAddedWhenBothAreNil() async throws {

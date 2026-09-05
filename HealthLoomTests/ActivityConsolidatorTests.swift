@@ -66,6 +66,23 @@ struct ActivityConsolidatorTests {
         )
     }
 
+    @Test func supplementLinkedToNonAppleWatchWorkoutStillAttachesInline() {
+        // The link is ground truth (resolver matched by coverage); the
+        // `isAppleWatch` heuristic disagreeing must not drop the detail
+        // row -- one entry, supplement attached, row keeping its own source
+        // name (not the supplement's).
+        let imported = Self.fitbitImportedWorkout()
+        let supplement = FitbitActivitySupplement(sample: Self.deferredSession(linkedTo: imported.uuid))
+        let entries = ActivityConsolidator.consolidate(workouts: [imported], supplements: [supplement])
+
+        #expect(entries.count == 1)
+        let entry = entries[0]
+        #expect(entry.kind != .unlinkedFitbitSession)
+        #expect(entry.supplement?.externalID == supplement.externalID)
+        #expect(entry.supplement?.distanceMeters == 8000.0)
+        #expect(entry.sourceLabel == "HealthLoom")
+    }
+
     @Test func watchWorkoutWithLinkedSessionConsolidatesIntoOneEntryWithSupplement() {
         let workout = Self.watchWorkout()
         let supplement = FitbitActivitySupplement(sample: Self.deferredSession())

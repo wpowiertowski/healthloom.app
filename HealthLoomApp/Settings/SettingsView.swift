@@ -49,6 +49,14 @@ struct SettingsView: View {
 
     @State private var pendingTypes: Set<GoogleDataType> = []
     @State private var scopeErrors: [GoogleDataType: String] = [:]
+    /// Newest consent attempt per type. A toggle flip invalidates any
+    /// earlier attempt's token, so a late failure from a stalled attempt
+    /// can't revert a newer attempt that already succeeded (or a newer
+    /// explicit OFF).
+    @State private var consentAttempts: [GoogleDataType: UUID] = [:]
+    /// One-shot HealthKit re-request state (existing installs, see below).
+    @State private var isRefreshingHealthSharing = false
+    @State private var healthSharingMessage: String? = nil
 
     private var groupedByScope: [(scope: GoogleDataType.Scope, types: [GoogleDataType])] {
         let grouped = Dictionary(grouping: SyncPreferences.syncableTypes, by: \.scope)
@@ -132,6 +140,35 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            // One-shot catch-up for installs onboarded before workout
+            // sharing shipped (see `refreshHealthSharing`): re-presents
+            // only the still-undetermined HealthKit types.
+            ThemedSectionHeader(title: "Apple Health Sharing")
+            ThemedPanel {
+                Button {
+                    refreshHealthSharing()
+                } label: {
+                    HStack {
+                        Text("Update Apple Health Sharing")
+                        Spacer()
+                        if isRefreshingHealthSharing {
+                            ProgressView()
+                        }
+                    }
+                }
+                .accessibilityIdentifier("settings.healthSharing.refresh")
+                .disabled(isRefreshingHealthSharing)
+
+                if let message = healthSharingMessage {
+                    ThemedErrorText(
+                        message: message,
+                        accessibilityIdentifier: "settings.healthSharing.message"
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+            }
         }
     }
 
@@ -159,10 +196,15 @@ struct SettingsView: View {
     }
 
     private func toggle(type: GoogleDataType, isOn: Bool) {
+        // Every flip mints a new attempt token: flipping OFF invalidates a
+        // stalled ON attempt (its late failure then no-ops below), and a
+        // second ON supersedes the first.
+        consentAttempts[type] = UUID()
         preferences.setEnabled(isOn, for: type)
         scopeErrors[type] = nil
         guard isOn else { return }
 
+        let attempt = consentAttempts[type]
         let scopes = Array(preferences.requiredScopes(toEnable: type))
         pendingTypes.insert(type)
         Task {
@@ -172,8 +214,48 @@ struct SettingsView: View {
                     scopes: scopes,
                     presentationContextProvider: consentPresenter
                 )
+                // Success clears only its own token (a newer flip already
+                // replaced it, and must not be disturbed).
+                if consentAttempts[type] == attempt {
+                    consentAttempts[type] = nil
+                }
             } catch {
+                // Revert the optimistic toggle ONLY if no newer flip
+                // superseded this attempt: otherwise a stalled first attempt
+                // failing late would turn OFF a type a second attempt just
+                // enabled (with a granted scope and an error banner).
+                guard consentAttempts[type] == attempt else { return }
+                consentAttempts[type] = nil
+                preferences.setEnabled(false, for: type)
                 scopeErrors[type] = "Couldn't confirm Google access for \(displayName(type)): \(error)"
+            }
+        }
+    }
+
+    /// Re-requests HealthKit sharing including the workout/distance buckets
+    /// (round-3 fix: `includingWorkoutShare`). Exists for installs onboarded
+    /// BEFORE that flag shipped -- onboarding passes it, but
+    /// already-onboarded users never see that sheet again, so without this
+    /// their workout/distance types sit at `.notDetermined` and every
+    /// exercise sync fails permanently. User-initiated, idempotent
+    /// (HealthKit only prompts for still-undetermined types).
+    private func refreshHealthSharing() {
+        isRefreshingHealthSharing = true
+        healthSharingMessage = nil
+        Task {
+            defer { isRefreshingHealthSharing = false }
+            do {
+                try await appEnvironment.healthKitAuth.requestShareAndRead(
+                    share: AppEnvironment.p0Types,
+                    read: [
+                        .exercise, .heartRate, .steps, .sleep, .weight,
+                        .oxygenSaturation, .distance, .activeEnergyBurned,
+                    ],
+                    includingWorkoutShare: true
+                )
+                healthSharingMessage = "Health sharing is up to date."
+            } catch {
+                healthSharingMessage = "Couldn't update Health sharing: \(error)"
             }
         }
     }

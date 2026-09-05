@@ -248,6 +248,32 @@ struct GoogleAuthManagerTests {
         #expect(storedRefresh == "refresh-1")
     }
 
+    @Test("consent completion stores nothing when userinfo verification fails")
+    func userinfoFailureStoresNothing() async throws {
+        // Token exchange succeeds, then userinfo fails transiently: the
+        // pre-fix code had already persisted the refresh token, leaving an
+        // unverified account fully authenticated on next launch.
+        let tokenStore = FakeTokenStore()
+        let http = RecordingHTTPSession { request, _ in
+            if request.url!.absoluteString.contains("oauth2.googleapis.com/token") {
+                return (
+                    Self.tokenResponseJSON(accessToken: "access-1", refreshToken: "refresh-1", scope: "openid email"),
+                    httpResponse(statusCode: 200)
+                )
+            } else {
+                return (Data(), httpResponse(statusCode: 500))
+            }
+        }
+        let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: tokenStore)
+
+        await #expect {
+            try await manager.completeConsent(code: "auth-code", codeVerifier: "verifier", redirectURI: Self.testConfig.redirectURI)
+        } throws: { _ in true }
+
+        #expect(try await tokenStore.refreshToken() == nil)
+        #expect(try await tokenStore.accessToken() == nil)
+    }
+
     // MARK: - Incremental scopes
 
     @Test("missingHealthScopes reflects scopes granted by the most recent refresh")

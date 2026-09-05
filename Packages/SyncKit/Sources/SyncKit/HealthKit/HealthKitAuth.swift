@@ -95,9 +95,24 @@ public final class HealthKitAuth: Sendable {
     /// presentation can reject with a "view is not in the window
     /// hierarchy" failure. Incremental callers that only need one half
     /// keep using `requestWrite(for:)` / `requestRead(_:)`.
-    public func requestShareAndRead(share: [GoogleDataType], read: [GoogleDataType]) async throws(HealthKitAuthError) {
-        let shareTypes = try resolveSampleTypes(for: share)
+    public func requestShareAndRead(
+        share: [GoogleDataType],
+        read: [GoogleDataType],
+        includingWorkoutShare: Bool = false
+    ) async throws(HealthKitAuthError) {
+        var shareTypes = try resolveSampleTypes(for: share)
         let readTypes = try resolveSampleTypes(for: read)
+        // Workout-attachment buckets (cycling/swimming/rowing distance) are
+        // unreachable from `GoogleDataType.writability`, so no type list
+        // can ever authorize them -- without this union every cycled/swam/
+        // rowed workout fails its entire save with an authorization error,
+        // permanently (cursor never advances, window re-pulled forever).
+        // Derived from the writer's own table (`HealthKitWriter
+        // .workoutShareTypes`), never hand-duplicated, and unioned into
+        // this same single sheet (never a second prompt -- see above).
+        if includingWorkoutShare {
+            shareTypes.formUnion(HealthKitWriter.workoutShareTypes)
+        }
         guard isAvailable else { throw .healthDataUnavailable }
         do {
             try await store.requestAuthorization(

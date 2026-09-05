@@ -87,6 +87,12 @@ nonisolated public struct GoogleHealthClient: Sendable {
         let endpointName = await type.endpointName
 
         while true {
+            // Cooperative probe: a cancel landing anywhere except the
+            // backoff sleep below (the dominant window is the in-flight
+            // request, not the sleep) must surface as `.cancelled`, not
+            // ride the next await into a `.transport` error row.
+            guard !Task.isCancelled else { throw .cancelled }
+
             let token: String
             do {
                 token = try await auth.validAccessToken()
@@ -100,6 +106,14 @@ nonisolated public struct GoogleHealthClient: Sendable {
             let response: HTTPURLResponse
             do {
                 (data, response) = try await httpSession.send(request)
+            } catch is CancellationError {
+                throw .cancelled
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                // URLSession reports cancellation as a value, not a throw
+                // of `CancellationError` -- without this arm every
+                // expiration-handler cancel during a live request becomes a
+                // red dashboard row.
+                throw .cancelled
             } catch {
                 throw .transport(String(describing: Swift.type(of: error)))
             }
@@ -120,7 +134,17 @@ nonisolated public struct GoogleHealthClient: Sendable {
                 }
                 let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
                 let delay = config.backoff.delay(forAttempt: attempt, retryAfter: retryAfter, jitterFraction: jitter.nextFraction())
-                try? await sleeper.sleep(seconds: delay)
+                do {
+                    try await sleeper.sleep(seconds: delay)
+                } catch is CancellationError {
+                    // Never `try?` a backoff sleep: swallowing cancellation
+                    // burns the remaining attempts back-to-back with no
+                    // delay, against a server that just rate-limited us,
+                    // in the exact window the system is winding us down.
+                    throw GoogleHealthClientError.cancelled
+                } catch {
+                    throw .transport(String(describing: Swift.type(of: error)))
+                }
                 attempt += 1
                 continue
 

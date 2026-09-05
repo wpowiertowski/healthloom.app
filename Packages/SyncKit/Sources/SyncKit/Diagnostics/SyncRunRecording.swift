@@ -74,6 +74,12 @@ nonisolated public struct SyncEngineLogRecorder: SyncRunRecording {
             logger.error(
                 "Sync error for \(entry.dataType.rawValue, privacy: .public): \(entry.errorMessage ?? "unknown", privacy: .public)"
             )
+        case .cancelled:
+            // A stop, not a failure: default level, never `.error` (which
+            // would page/flag in log triage for the system winding us down).
+            logger.log(
+                "Sync cancelled for \(entry.dataType.rawValue, privacy: .public): will retry next run"
+            )
         }
     }
 }

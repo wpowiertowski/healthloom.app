@@ -4763,3 +4763,150 @@ the model default.
 
 **Counts:** CoachKit 182 to 185 (beta) / 180 to 184 (stable, 1 gated test
 left); HealthLoomTests 67.
+
+## Review fixes: sync/auth/coach hardening (15 findings)
+
+All fifteen addressed, test-first where the seam allowed, full `make test`
+green on both toolchains (beta + stable clean build).
+
+**SyncKit**
+- `SyncEngine`/`BackfillCoordinator` persist `SyncLogRedactor`-redacted
+  messages to `lastError` (was raw `String(describing:)` into the store +
+  UI); success-path `context.save()` failure now reports `.error` instead
+  of a swallowed `.ok` (contract documented in the engine header).
+- `saveWorkout` attaches distance under the activity's own bucket
+  (`distanceIdentifier(for:)` single table: run/walk/hike, cycling,
+  swimming, rowing; nil otherwise -- no sample, workout still saves);
+  `retroactiveCleanup` sweeps every bucket the writer can emit via
+  `distanceIdentifiersForCleanup` (derived from the same table).
+- `WatchConflictResolver` holds per-type `RunState` (was one shared slot
+  `beginRun` wiped): concurrent types no longer destroy each other's
+  coverage/links/counts; drains are per-type, typeless drains fail closed.
+- `BackfillCoordinator` writes `backfillStatus`/`backfillError` (new
+  `SyncState` fields, additive migration) instead of contaminating the
+  incremental row; `SyncStatus.rawValue` everywhere, no bare literals.
+  `itemCount` stays shared cumulative by design (both pipelines import).
+- Run loop is generation-guarded: a stale cancelled loop can't wipe a newer
+  handle and admit a second concurrent walk.
+- `sync(type:)` clears `inFlight` inside the task before waiters resume --
+  no stale-outcome reuse, no clobbering newer entries.
+
+**GoogleHealthClient**
+- `completeConsent` verifies (userinfo + `hd` check) BEFORE persisting;
+  userinfo failure stores nothing. Refresh-token rotation and both consent
+  writes propagate storage failures as `.tokenStorageFailure` (was `try?`).
+- Backoff sleep propagates cancellation as new `.cancelled` (was `try?`
+  burning remaining attempts back-to-back). Typed-`throws` on this
+  toolchain rejects a bare `CancellationError`, hence the case.
+
+**App**
+- `ActivitiesModels`: peek-don't-remove -- supplements for non-AppleWatch
+  workouts fall through to the unlinked sweep instead of vanishing.
+- `SettingsView`: failed/cancelled consent reverts the optimistic toggle.
+- `TodayMetricFormatter`: delegates to CoreModel's new shared
+  `MetricFormatting` (same helper CoachKit's `KnowledgeDerivation` uses) --
+  negative durations clamp to "0m" on both surfaces, fixes land once.
+
+**CoachKit**
+- `GetVitalsTool.excludedMessage` routes through
+  `CoachTools.excludedMessage(forTopic:)` like the other three tools.
+- Quota fallback passes the on-device gate first: AI-off reports
+  `.tierUnavailable`, never an opaque session-over-dead-model failure.
+
+**Counts:** SyncKit 263 to 267; GoogleHealthClient 35 to 36; CoachKit 185
+to 186 beta / 184 to 185 stable; HealthLoomTests 67 to 68. New tests:
+persisted-error redaction, resolver cross-type isolation, cycling/yoga
+distance buckets, userinfo-failure-stores-nothing, non-watch supplement
+standalone, negative duration clamp (extended), fallback gate.
+
+## Review fixes round 2 (15 findings)
+
+Full `make test` green on beta, clean-build green on stable for every
+touched package, simulator `TEST SUCCEEDED`.
+
+**Correctness reversals (my round-1 fixes that were wrong):**
+- Workout distance buckets are now actually authorizable: `HealthKitWriter
+  .workoutShareTypes` (workout + energy + every distance bucket, derived
+  from the same table) feeds a new `includingWorkoutShare` union in
+  `requestShareAndRead`, passed by onboarding's single sheet. This also
+  closes a pre-existing gap -- `.exercise` share was never requested
+  anywhere, so workout saves could never have succeeded.
+- Activities supplement is always consumed (absorbed silently for
+  non-watch workouts): one entry, never vanished, never duplicated. Test
+  rewritten to `entries.count == 1`.
+- Access-token Keychain writes are best-effort again (`try?`) in both
+  refresh and consent -- the slot is a write-only cache nothing reads
+  back. Refresh-token rotation stays loud.
+- `SyncEngineSaveError` namespace deleted; plain
+  `HealthKitWriterError.underlying(redacted)` at the throw site.
+- Typeless drains deleted from protocol, defaults, and resolver (zero
+  callers left) -- stale conformers now fail to compile.
+
+**Genuine second-order bugs:**
+- `backfillStatus` carries a property-level `= "idle"` (migration reads
+  property initializers, never `init`).
+- Both pipelines `rollback()` before writing the error row, re-acquiring
+  state after (rollback can undo a first-ever insert); backfill records
+  the completed horizon only after a durable save (side store is never
+  rolled back).
+- `clearInFlight` is really identity-checked now (per-run UUID token;
+  `Task` isn't `Equatable`).
+- `stop()` awaits the loop's exit (all callers already async) + a
+  cancellation probe inside `runRound` -- the generation counter alone
+  only protected the handle, not the cursor.
+- New `SyncStatus.cancelled` (+ `BackfillChunkOutcome.suspendedCancelled`):
+  cancellation persists a message-less stop status, never an error row;
+  the log mirror logs at default level, never `.error`.
+- `MetricFormatting` is `nonisolated` with a per-locale cached
+  `NumberFormatter` (lock-guarded lookup AND use -- formatters aren't
+  thread-safe); deterministic sweep order from `allCases` (no `Set`
+  round-trip).
+
+**Counts:** SyncKit 267 to 268; rest unchanged. New tests:
+cancellation-reports-stopped (engine); F6 rewrite.
+
+## Review fixes round 3 (13 findings)
+
+Full `make test` green on beta, clean-build green on stable for every
+touched package, simulator `TEST SUCCEEDED`.
+
+**Round-2 reversals and narrowings:**
+- Bucket-less distances are preserved in workout metadata
+  (`healthloom.distanceMeters`/`healthloom.energyKilocalories` on every
+  workout), not dropped -- the old comment's justification was false
+  (metadata carried ID/source keys only). Totals stay uncorrupted AND no
+  data is lost.
+- Activities trusts the resolver link over the `isAppleWatch` heuristic:
+  linked supplements always attach inline (the "+ 8.0 km" row survives
+  classifier divergence), and the row keeps its own source name instead
+  of the supplement's. Test asserts attach + `sourceLabel == "HealthLoom"`.
+- `clearTokens()` restored on the Workspace path (wipes pre-existing
+  grants, not just this call's).
+- Throw sites carry raw descriptions; the catch is the single D11
+  redaction boundary (recorder's own re-redact stays as its log-boundary
+  rule).
+- `MetricFormatting.groupedCount` is one lock acquisition covering lookup
+  and use.
+
+**New machinery:**
+- Settings gains an "Apple Health Sharing" section re-requesting the full
+  set with `includingWorkoutShare` -- the path for installs onboarded
+  before the flag shipped (HealthKit only re-prompts undetermined types).
+- Data client maps `CancellationError` AND `URLError.cancelled` to
+  `.cancelled`, plus a loop-top `Task.isCancelled` probe -- the backoff
+  sleep was the rare window; the in-flight request is the common one.
+- `stop()`/`start()` serialize through a published `retiredLoop`
+  (generation-tokened clearing); `resume()` is async to match (all
+  callers already awaited).
+- Protocol drain defaults deleted: `IdentityConflictFilter` and the test
+  double now state their (honest-empty) drains explicitly; a silent
+  conformer stops compiling.
+- Cancellation preserves the previous `lastError`/`backfillError`
+  evidence (status alone moves to `.cancelled`).
+- Resolver drains release the coverage index (per-type memory freed at
+  run end, not next run's begin).
+- Settings consent flips carry per-attempt tokens: a stalled attempt's
+  late failure can't revert a newer success (or explicit OFF).
+- Already-at-horizon records completion only after a successful save.
+
+**Counts:** SyncKit 268 to 269 (bucketless-metadata test). Rest unchanged.

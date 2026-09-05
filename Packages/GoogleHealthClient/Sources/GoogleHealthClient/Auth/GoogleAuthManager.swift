@@ -137,8 +137,23 @@ public actor GoogleAuthManager {
         let decoded = try decodeTokenResponse(data)
         applyTokenResponse(decoded)
         if let newRefreshToken = decoded.refreshToken {
-            try? await tokenStore.setRefreshToken(newRefreshToken)
+            // Loud, not `try?`: a Keychain write failure (e.g. device locked
+            // during a background refresh) must surface as a storage error,
+            // not silently leave the superseded token on disk -- every later
+            // refresh would then fail `invalid_grant` and sign the user out
+            // with no log line explaining why.
+            do {
+                try await tokenStore.setRefreshToken(newRefreshToken)
+            } catch {
+                throw GoogleAuthError.tokenStorageFailure
+            }
         }
+        // Best-effort, deliberately: the access-token Keychain slot is a
+        // write-only cache nothing in production reads back (serving comes
+        // from the in-memory entry `applyTokenResponse` just set), so a
+        // refused write here must not abort an otherwise successful refresh
+        // -- the previous loud version failed whole background runs with a
+        // valid in-memory token in hand.
         try? await tokenStore.setAccessToken(decoded.accessToken)
         return decoded.accessToken
     }
@@ -171,9 +186,11 @@ public actor GoogleAuthManager {
     // and directly by tests -- see the file header).
 
     /// Exchanges an authorization `code` (from the redirect URL) for tokens,
-    /// stores the refresh token, and runs Workspace detection (WP-04 steps
-    /// 2 & 5). Throws `.workspaceAccountUnsupported` (tokens already cleared)
-    /// if the account's userinfo carries an `hd` claim.
+    /// verifies the account is not a Workspace account, and only then stores
+    /// anything (WP-04 steps 2 & 5). Throws `.workspaceAccountUnsupported`
+    /// (nothing stored) if the account's userinfo carries an `hd` claim --
+    /// and a failed userinfo call likewise stores nothing, so a transient
+    /// failure can't leave an unverified account fully authenticated.
     func completeConsent(code: String, codeVerifier: String, redirectURI: String) async throws(GoogleAuthError) {
         let request = buildTokenRequest(.authorizationCode(code: code, verifier: codeVerifier, redirectURI: redirectURI))
         let (data, response) = try await send(request)
@@ -181,18 +198,36 @@ public actor GoogleAuthManager {
             throw .tokenExchangeFailed(status: response.statusCode)
         }
         let decoded = try decodeTokenResponse(data)
-        applyTokenResponse(decoded)
         guard let refreshToken = decoded.refreshToken else {
             throw .missingRefreshToken
         }
-        try? await tokenStore.setRefreshToken(refreshToken)
-        try? await tokenStore.setAccessToken(decoded.accessToken)
 
+        // Verify BEFORE persisting: the userinfo call needs only the
+        // in-memory access token. A failure here (transport, invalid
+        // response) throws with nothing stored -- the next launch finds no
+        // token and re-prompts, instead of syncing an unverified account.
         let info = try await fetchUserInfo(accessToken: decoded.accessToken)
         if info.hd != nil {
+            // Wipe first, even though this call stored nothing yet: a stale
+            // grant from an earlier session (or an interrupted consent) may
+            // still sit in the Keychain, and leaving it means the next
+            // launch silently syncs under the old grant instead of landing
+            // unauthenticated as this error implies.
             await clearTokens()
             throw .workspaceAccountUnsupported
         }
+
+        applyTokenResponse(decoded)
+        do {
+            try await tokenStore.setRefreshToken(refreshToken)
+        } catch {
+            await clearTokens()
+            throw GoogleAuthError.tokenStorageFailure
+        }
+        // Best-effort (see `performRefresh`): the session is fully usable
+        // from the in-memory token; a refused Keychain write just means the
+        // next launch refreshes from the stored refresh token again.
+        try? await tokenStore.setAccessToken(decoded.accessToken)
     }
 
     private func fetchUserInfo(accessToken: String) async throws(GoogleAuthError) -> UserInfoResponse {

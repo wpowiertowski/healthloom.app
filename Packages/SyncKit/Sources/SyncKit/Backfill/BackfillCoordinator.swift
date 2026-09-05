@@ -96,6 +96,15 @@ public actor BackfillCoordinator {
     private var horizon: BackfillHorizon
     private var isPaused = false
     private var runLoopTask: Task<Void, Never>?
+    /// Monotonic run-loop generation: `stop()` bumps it so a cancelled loop
+    /// still draining its sleeper can't clear a newer loop's handle on exit
+    /// (the two-concurrent-loops race on one `backfillCursor`).
+    private var runLoopGeneration = 0
+    /// The loop `stop()` most recently retired. `start()` awaits it before
+    /// installing a new loop: without this, `stop()`'s suspension on the
+    /// old loop lets a concurrent `start()` pass the `nil` guard first and
+    /// two loops walk one cursor.
+    private var retiredLoop: Task<Void, Never>?
 
     public init(
         types: [GoogleDataType],
@@ -137,9 +146,9 @@ public actor BackfillCoordinator {
         isPaused = true
     }
 
-    public func resume() {
+    public func resume() async {
         isPaused = false
-        start()
+        await start()
     }
 
     /// WP-15 step 3: "chosen horizon changeable (extending re-opens the
@@ -154,17 +163,53 @@ public actor BackfillCoordinator {
     }
 
     /// Starts (or restarts) the `.utility`-priority background walk (WP-15
-    /// step 2). No-op if already running or currently paused.
-    public func start() {
+    /// step 2). No-op if already running or currently paused. `async`
+    /// because it first awaits a loop `stop()` retired (all callers already
+    /// call it with `await`).
+    public func start() async {
+        // Serialize with an in-flight stop: `stop()` nils the handle before
+        // the old loop actually exits, so without this await the guard
+        // below passes while the old loop is still walking the cursor.
+        // Loop until no retired loop remains: another `stop()` may retire a
+        // newer loop while one await suspends.
+        while let retired = retiredLoop {
+            await retired.value
+        }
         guard runLoopTask == nil, !isPaused else { return }
+        runLoopGeneration += 1
+        let generation = runLoopGeneration
         runLoopTask = Task(priority: .utility) { [self] in
-            await runLoop()
+            await runLoop(generation: generation)
         }
     }
 
-    public func stop() {
-        runLoopTask?.cancel()
+    /// Cancels the background walk and waits for it to actually exit.
+    /// `async` (all callers already await `start()`): cancelling alone is
+    /// not enough -- the loop may be mid-`runRound()` (a full paged pull +
+    /// writes, with no cancellation probe inside), and an immediate
+    /// `start()` would otherwise launch a second loop over the same cursor
+    /// while the first is still draining. When this returns, no loop is
+    /// running and `start()` is safe.
+    public func stop() async {
+        let old = runLoopTask
         runLoopTask = nil
+        // Bump so the exiting loop fails its generation check instead of
+        // touching the handle (defense in depth -- by the await below it is
+        // already done, but the check costs nothing). The bump doubles as
+        // the ownership token for `retiredLoop` below.
+        runLoopGeneration += 1
+        let myGeneration = runLoopGeneration
+        old?.cancel()
+        // Publish before awaiting: a `start()` arriving during this
+        // suspension must see (and await) the retiring loop, not sail past
+        // the `nil` handle into a second concurrent walk.
+        retiredLoop = old
+        await old?.value
+        // Clear only if still ours: a newer `stop()` bumps the generation
+        // again and publishes its own retired loop, which must survive.
+        if runLoopGeneration == myGeneration {
+            retiredLoop = nil
+        }
     }
 
     // MARK: - Status (WP-15 step 3: per-type progress UI)
@@ -194,7 +239,7 @@ public actor BackfillCoordinator {
             reachedDate: reachedDate,
             horizonDate: horizonDate,
             isComplete: isComplete,
-            lastError: syncState?.lastStatus == "error" ? syncState?.lastError : nil
+            lastError: syncState?.backfillStatus == SyncStatus.error.rawValue ? syncState?.backfillError : nil
         )
     }
 
@@ -226,6 +271,11 @@ public actor BackfillCoordinator {
     public func runRound() async -> [GoogleDataType: BackfillChunkOutcome] {
         var results: [GoogleDataType: BackfillChunkOutcome] = [:]
         for type in types {
+            // Cancellation probe inside the round (not just around it): a
+            // chunk is a full paged pull + writes, so without this a
+            // `stop()` mid-round still walks every remaining type before
+            // noticing.
+            if Task.isCancelled { break }
             results[type] = await runNextChunk(for: type)
         }
         return results
@@ -277,10 +327,20 @@ public actor BackfillCoordinator {
             // Already at/beyond the horizon -- record completion rather
             // than issuing a zero-or-negative-width chunk (can happen right
             // after a narrowing `setHorizon` call, or a benign race between
-            // two `runNextChunk` calls for the same type).
+            // two `runNextChunk` calls for the same type). Side store after
+            // the save, like the chunk path below.
             syncState.backfillCursor = nil
+            do {
+                try context.save()
+            } catch {
+                // Persistence failed: record nothing. The cursor is still
+                // set on disk, so the next round recomputes this same
+                // branch and retries -- while an unconditional record above
+                // would leave the side store claiming "complete" against a
+                // cursor that disagrees, re-entering this branch forever.
+                return .alreadyDone
+            }
             horizonStore.setCompletedHorizon(horizon, for: type)
-            try? context.save()
             return .alreadyDone
         }
 
@@ -290,26 +350,50 @@ public actor BackfillCoordinator {
         do {
             let itemCount = try await pullMapWrite(type: type, start: chunkStart, end: chunkEnd, context: context)
 
-            if chunkStart <= horizonDate {
+            let reachedHorizon = chunkStart <= horizonDate
+            if reachedHorizon {
                 // This chunk reached the horizon -- fully caught up.
                 syncState.backfillCursor = nil
-                horizonStore.setCompletedHorizon(horizon, for: type)
             } else {
                 syncState.backfillCursor = chunkStart
             }
-            syncState.lastStatus = "ok"
-            syncState.lastError = nil
+            syncState.backfillStatus = SyncStatus.ok.rawValue
+            syncState.backfillError = nil
             syncState.itemCount += itemCount
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                // Same contract as SyncEngine's success path: an unpersisted
+                // cursor advance must report failure, not `.ok`.
+                // Raw here, redacted once at the catch below (same
+                // single-boundary rule as `SyncEngine`).
+                throw HealthKitWriterError.underlying(String(describing: error))
+            }
+            // Only after the save durably landed: the side store is never
+            // rolled back, so recording completion before this point would
+            // permanently disagree with `SyncState` on a save failure.
+            if reachedHorizon {
+                horizonStore.setCompletedHorizon(horizon, for: type)
+            }
             return .processedChunk(window: chunkStart...chunkEnd, itemCount: itemCount)
         } catch {
-            // Cursor deliberately left untouched -- same "leave it, retry
-            // safely" posture as SyncEngine's incremental cursor
-            // (architecture.md D3/D4's idempotency makes re-pulling this
-            // exact chunk next round harmless).
-            let message = String(describing: error)
-            syncState.lastStatus = "error"
-            syncState.lastError = message
+            // Roll back first (same reason as SyncEngine's catch): the
+            // success path above may have thrown out of its own save with
+            // the cursor already advanced in memory, and the error-row save
+            // below would commit it despite the "left untouched" contract.
+            // Re-acquire after: rollback may undo a first-ever insert.
+            context.rollback()
+            let syncState = fetchOrCreateSyncState(for: type, context: context)
+            // Cancellation is a stop, not a failure: no error status, the
+            // cursor stays where the last durable save left it.
+            if error is CancellationError || (error as? GoogleHealthClientError) == .cancelled {
+                syncState.backfillStatus = SyncStatus.cancelled.rawValue
+                try? context.save()
+                return .suspendedCancelled
+            }
+            let message = SyncLogRedactor.redact(String(describing: error))
+            syncState.backfillStatus = SyncStatus.error.rawValue
+            syncState.backfillError = message
             try? context.save()
             return .failed(message)
         }
@@ -317,7 +401,7 @@ public actor BackfillCoordinator {
 
     // MARK: - Background driver
 
-    private func runLoop() async {
+    private func runLoop(generation: Int) async {
         while !Task.isCancelled, !isPaused {
             if await isFullyDone() { break }
             _ = await runRound()
@@ -325,7 +409,14 @@ public actor BackfillCoordinator {
             if await isFullyDone() { break }
             try? await sleeper.sleep(seconds: configuration.interChunkDelay)
         }
-        runLoopTask = nil
+        // Identity-checked: only the current generation clears the handle.
+        // A stale loop (cancelled by `stop()`, resumed late from its
+        // sleeper after `start()` stored a newer task) leaves the new
+        // handle alone, so the `guard runLoopTask == nil` in `start()` can
+        // never admit a second concurrent loop.
+        if generation == runLoopGeneration {
+            runLoopTask = nil
+        }
     }
 
     // MARK: - Pull -> map -> conflict-filter -> write/upsert (one chunk window)
@@ -378,8 +469,8 @@ public actor BackfillCoordinator {
         // drained purely to reset the filter's per-run state -- backfill has
         // no per-chunk log row to surface it in (`BackfillTypeStatus` tracks
         // cursor progress, not per-run counts).
-        applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(), context: context)
-        _ = await conflictFilter.drainSuppressedCount()
+        applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+        _ = await conflictFilter.drainSuppressedCount(for: type)
 
         return totalItemCount
     }

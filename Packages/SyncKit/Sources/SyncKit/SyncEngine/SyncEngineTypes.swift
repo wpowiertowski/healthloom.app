@@ -137,13 +137,18 @@ nonisolated public protocol ConflictFiltering: Sendable {
     /// applies them to the matching `LocalSample` rows' `linkedWatchWorkoutUUID`
     /// after its local upserts -- the resolver can't set the field itself
     /// because the row doesn't exist yet when `resolve` runs.
-    nonisolated func drainDeferredSessionLinks() async -> [String: UUID]
+    /// Drains only `type`'s recorded links, leaving any
+    /// concurrently-running type's run state untouched (one resolver per
+    /// pipeline serves every type that pipeline syncs). There is
+    /// deliberately no typeless overload: it would cross-contaminate runs,
+    /// and a stale conformer must fail to compile, not fail silently.
+    nonisolated func drainDeferredSessionLinks(for type: GoogleDataType) async -> [String: UUID]
 
     /// Drains (returns, then clears) the count of data points `resolve`
     /// suppressed -- fully or by splitting -- in favor of Apple Watch data
     /// since the last drain. Surfaces in `SyncOutcome.suppressedCount` and
     /// the sync log as "deferred to Apple Watch" (test-plan.md §2.3).
-    nonisolated func drainSuppressedCount() async -> Int
+    nonisolated func drainSuppressedCount(for type: GoogleDataType) async -> Int
 }
 
 extension ConflictFiltering {
@@ -153,9 +158,9 @@ extension ConflictFiltering {
         windowEnd: Date
     ) async throws(HealthKitWriterError) {}
 
-    nonisolated public func drainDeferredSessionLinks() async -> [String: UUID] { [:] }
+    nonisolated public func drainDeferredSessionLinks(for type: GoogleDataType) async -> [String: UUID] { [:] }
 
-    nonisolated public func drainSuppressedCount() async -> Int { 0 }
+    nonisolated public func drainSuppressedCount(for type: GoogleDataType) async -> Int { 0 }
 }
 
 /// P0 default (WP-09): identity. WP-12b installs the real watch-priority
@@ -166,16 +171,28 @@ nonisolated public struct IdentityConflictFilter: ConflictFiltering {
     public func resolve(_ mapped: MappedObject, for point: GoogleDataPoint) async -> MappedObject {
         mapped
     }
+    // Explicit (not defaulted): identity records no links and suppresses
+    // nothing, so the drains are honest zeros -- written out so a future
+    // reader sees the conformance is complete, not inherited.
+    public func drainDeferredSessionLinks(for type: GoogleDataType) async -> [String: UUID] { [:] }
+    public func drainSuppressedCount(for type: GoogleDataType) async -> Int { 0 }
 }
 
 // MARK: - Per-type sync result (WP-09 step 3: syncAll's per-type report)
 
 /// `SyncState.lastStatus`'s in-memory counterpart -- see that model's doc
-/// comment (`"idle" | "ok" | "error"`); `SyncEngine` never writes `"idle"`
-/// itself (that's the model's own default for a type never yet synced).
+/// comment (`"idle" | "ok" | "error" | "cancelled"`); `SyncEngine` never
+/// writes `"idle"` itself (that's the model's own default for a type never
+/// yet synced).
 nonisolated public enum SyncStatus: String, Sendable, Equatable, Codable {
     case ok
     case error
+    /// The run was cancelled (task cancellation / `.cancelled` from the
+    /// data client) before finishing: a stop, not a failure. Pipelines
+    /// persist this WITHOUT an error message so the dashboard never shows
+    /// a red row for the system winding the run down; the cursor is
+    /// untouched and the next run retries the same window.
+    case cancelled
 }
 
 /// One type's outcome from `SyncEngine.sync(type:)`/`.syncAll(types:)` (WP-09
