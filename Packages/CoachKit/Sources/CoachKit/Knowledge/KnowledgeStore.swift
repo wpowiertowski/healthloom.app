@@ -323,7 +323,28 @@ public final class KnowledgeStore {
                 .map { ($0.key, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let merged = derived.map { corrections[$0.key] ?? $0 }
+        // WP-30 (durable exclusion): carry each key's previous
+        // `excludedFromAI` forward onto this cycle's rebuilt derived field.
+        // Without this, a You-tab toggle would be wiped by the next
+        // `refresh()`, which rebuilds every non-correction field from
+        // scratch. Correction-sourced fields keep their own flags untouched
+        // (taken as-is below); brand-new keys fall back to the derivation
+        // defaults (D8). A field absent for a cycle then re-derived loses
+        // its flag — accepted and documented on `setExcludedFromAI`.
+        let previousFlags = Dictionary(
+            profile.sections.map { ($0.key, $0.excludedFromAI) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let merged = derived.map { fresh -> ProfileField in
+            if let pinned = corrections[fresh.key] {
+                return pinned
+            }
+            var carried = fresh
+            if let previous = previousFlags[fresh.key] {
+                carried.excludedFromAI = previous
+            }
+            return carried
+        }
         let derivedKeys = Set(derived.map(\.key))
         // Code review (2026-09-01): read from the already-deduped `corrections`
         // dictionary, not `profile.sections` directly -- filtering the raw
@@ -385,12 +406,12 @@ public final class KnowledgeStore {
     /// refreshed) means no exclusions known -- tools answer normally and
     /// the summaries' own "no data" fallbacks apply.
     ///
-    /// Write-path warning for WP-30: no settings UI mutates these flags yet,
-    /// and a naive one (flipping `excludedFromAI` on the persisted row)
-    /// would be wiped by the next `refresh()`, which rebuilds every
-    /// non-correction field from scratch. Correction-sourced fields are the
-    /// only ones whose flags survive a refresh today -- durable exclusion
-    /// needs a design that accounts for that, not a direct flip.
+    /// Write-path note (WP-30 design): `refresh()` carries each key's
+    /// previous `excludedFromAI` onto the rebuilt derived field, so a
+    /// settings toggle survives refreshes. The one gap is a field absent
+    /// for a cycle then re-derived (its flag resets to the derivation
+    /// default) -- accepted: the next `refresh()` after a re-toggle
+    /// re-carries it.
     public func isAnyExcludedFromAI(_ keys: [String]) throws -> Bool {
         guard !keys.isEmpty else { return false }
         if let cachedExcludedKeys {
@@ -409,19 +430,48 @@ public final class KnowledgeStore {
         return keys.contains(where: excluded.contains)
     }
 
-    /// The funneled write path for `excludedFromAI` (WP-30's settings UI
-    /// should call this, never flip flags on the row directly): mutates the
-    /// key's field, persists, and refreshes the exclusion cache in the same
-    /// breath, so the gate and `ContextAssembler`'s live read agree
-    /// immediately. Lasts until the next `refresh()` for derived fields
-    /// (which rebuilds them -- see the gate's write-path warning);
-    /// correction-sourced flags survive refreshes untouched.
+    /// The funneled write path for `excludedFromAI` (the You tab calls this,
+    /// never flips flags on the row directly): mutates the key's field,
+    /// persists, and refreshes the exclusion cache in the same breath, so
+    /// the gate and `ContextAssembler`'s live read agree immediately.
+    /// Durable across `refresh()` cycles via flag carry-over (see
+    /// `performRefresh`); a field absent for a cycle then re-derived resets
+    /// to the derivation default.
     public func setExcludedFromAI(_ excluded: Bool, forKey key: String) throws {
         let context = ModelContext(modelContainer)
         guard let profile = try Self.fetchProfile(from: context),
               let index = profile.sections.firstIndex(where: { $0.key == key })
         else { return }
         profile.sections[index].excludedFromAI = excluded
+        try context.save()
+        cachedExcludedKeys = profile.sections.excludedKeys
+    }
+
+    /// Pins a user correction for `key` (WP-30 "Correct"): inserts or
+    /// replaces a `correctionSourceLabel`-sourced field with the user's
+    /// text. Beats re-derivation — `refresh()` preserves
+    /// correction-sourced fields byte-for-byte. Preserves the existing
+    /// field's `excludedFromAI`/`isClinical` when one exists (a correction
+    /// edits the fact, not its sharing posture); brand-new keys (e.g. user
+    /// goals with no HealthKit counterpart) take the struct defaults.
+    public func pinCorrection(displayText: String, forKey key: String) throws {
+        let context = ModelContext(modelContainer)
+        let profile = try fetchOrCreateProfile(context: context)
+        let trimmed = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = profile.sections.first(where: { $0.key == key })
+        let pinned = ProfileField(
+            key: key,
+            displayText: trimmed,
+            source: Self.correctionSourceLabel,
+            asOf: .now,
+            excludedFromAI: existing?.excludedFromAI,
+            isClinical: existing?.isClinical ?? false
+        )
+        if let index = profile.sections.firstIndex(where: { $0.key == key }) {
+            profile.sections[index] = pinned
+        } else {
+            profile.sections.append(pinned)
+        }
         try context.save()
         cachedExcludedKeys = profile.sections.excludedKeys
     }

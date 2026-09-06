@@ -143,6 +143,11 @@ private struct CoachTurnRow: View {
                 .accessibilityIdentifier(isUser ? "chat.message.user" : "chat.message.assistant")
             if !isUser, turn.contextSnapshotID != nil {
                 CoachContextExpander(turn: turn, viewModel: viewModel)
+                    // Identifier-carrying parent of identified children:
+                    // without `.contain` FIRST, the row identifier collapses
+                    // the tier badge's (`chat.context.tier`) — the same
+                    // framework corner `AIModelsView`'s header documents.
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.context.\(turn.id)")
             }
         }
@@ -189,6 +194,18 @@ private struct CoachContextExpander: View {
 
     var body: some View {
         DisclosureGroup("What did the coach see?", isExpanded: $isExpanded) {
+            // WP-30 trace badge (D15.b — "…and where did it run?"): the
+            // serving tier persisted on the turn (`ChatTurn.provider`).
+            // WP-30 F2: hidden for an empty provider (free-`String` field —
+            // a missed writer must not render a trailing "Served by ");
+            // non-empty unknowns keep the raw-string fallback so WP-32's
+            // future stamps stay readable.
+            if !turn.provider.isEmpty {
+                Text("Served by \(ModelTier(rawValue: turn.provider)?.displayName ?? turn.provider)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("chat.context.tier")
+            }
             if let shared {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(shared.count) fields shared")

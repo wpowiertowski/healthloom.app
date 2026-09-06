@@ -127,6 +127,12 @@ final class AppEnvironment {
     /// it -- the consumer round-2's review anticipated when it made the
     /// other coach pieces locals.
     let promptManager: PromptManager
+    /// WP-30 (implementation-plan.md): the knowledge profile store backing
+    /// the You tab (profile list, exclusion toggles, correction pins).
+    /// Promoted from `init` local to stored (same additive-property
+    /// convention as WP-15/WP-18) because `YouView` builds its view model
+    /// from it.
+    let knowledgeStore: KnowledgeStore
     /// The chat session factory, shared by the chat view model and the
     /// prompt editor (which busts the cached conversation on every
     /// successful write -- round-2 #1).
@@ -263,6 +269,13 @@ final class AppEnvironment {
             Self.seedDashboardFixtures(in: container)
         }
 
+        // WP-30 F3: scrub only rides with the scripted coach (the one
+        // consumer), never standalone — the flag must not be able to wipe
+        // a real on-disk transcript via a stray launch argument.
+        if launchConfiguration.scrubChat && launchConfiguration.scriptedCoach {
+            Self.scrubChatHistory(in: container)
+        }
+
         // WP-25: production chat stack. `HealthKitReadStore()` takes its own
         // `HKHealthStore` (its documented posture); authorization for the
         // read set stays with the app's existing HealthKit screens, and
@@ -272,6 +285,10 @@ final class AppEnvironment {
             healthReadStore: HealthKitReadStore(),
             healthKitAuth: healthKitAuth
         )
+        self.knowledgeStore = knowledgeStore
+        if launchConfiguration.seedYouTab {
+            Self.seedYouTabFixtures(in: container)
+        }
         let promptManager = PromptManager(modelContainer: container)
         self.promptManager = promptManager
         let contextAssembler = ContextAssembler(modelContainer: container)
@@ -390,6 +407,66 @@ final class AppEnvironment {
                 gates.setKeyPresent(present, for: tier)
             }
         }
+    }
+
+    /// Deletes every stored chat turn and context snapshot (test-only
+    /// hermetic-transcript hook for `-UITestScrubChat`; see the flag's doc
+    /// comment — never called in production).
+    private static func scrubChatHistory(in container: ModelContainer) {
+        let context = ModelContext(container)
+        for turn in (try? context.fetch(FetchDescriptor<ChatTurn>())) ?? [] {
+            context.delete(turn)
+        }
+        for snapshot in (try? context.fetch(FetchDescriptor<ContextSnapshot>())) ?? [] {
+            context.delete(snapshot)
+        }
+        try? context.save()
+    }
+
+    /// Fresh You-tab view model per presentation (an in-flight correction
+    /// draft from a previous visit must never reappear).
+    func youViewModel() -> YouViewModel {
+        YouViewModel(container: modelContainer, store: knowledgeStore, factory: coachSessionFactory)
+    }
+
+    /// Seeds one `KnowledgeProfile` spanning every render state the WP-30
+    /// You-tab UI test asserts on: a derived non-clinical field (toggleable),
+    /// a derived clinical field (excluded by default, D8), and a pinned user
+    /// correction — plus one insight and two chat turns so the Forget tests
+    /// have something to clear. Used only under `-UITestYouTab`, never in
+    /// production. Keys are stable (not HealthKit-derived) so assertions
+    /// don't depend on simulator HealthKit data.
+    private static func seedYouTabFixtures(in container: ModelContainer) {
+        let context = ModelContext(container)
+        context.insert(KnowledgeProfile(sections: [
+            ProfileField(
+                key: "steps.dailyAverage",
+                displayText: "~8,200 steps/day (30-day avg)",
+                source: "HealthKit",
+                asOf: Date().addingTimeInterval(-3600)
+            ),
+            ProfileField(
+                key: "heart.ecg",
+                displayText: "Sinus rhythm on latest ECG",
+                source: "Apple Watch",
+                asOf: Date().addingTimeInterval(-7200),
+                isClinical: true
+            ),
+            ProfileField(
+                key: "user.goal",
+                displayText: "Run a marathon",
+                source: KnowledgeStore.correctionSourceLabel,
+                asOf: Date().addingTimeInterval(-86400)
+            ),
+        ]))
+        context.insert(DerivedInsight(
+            text: "Walking consistency is strong.",
+            sourceProvider: "onDevice",
+            sourceFields: ["steps.dailyAverage"]
+        ))
+        context.insert(ChatTurn(role: "user", content: "seeded hello"))
+        context.insert(ChatTurn(role: "assistant", content: "seeded reply", provider: "onDevice"))
+        try? context.save()
     }
 
     /// Fresh settings-screen view model per presentation (sheet state must

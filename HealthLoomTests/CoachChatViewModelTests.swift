@@ -16,68 +16,8 @@ import SyncKit
 import Testing
 @testable import HealthLoom
 
-/// Empty health data: every read returns nothing, so refreshes complete
-/// instantly without touching HealthKit.
-private struct EmptyReadStore: HealthReadStore {
-    func dailySteps(from start: Date, to end: Date) async -> [DailyQuantityValue] { [] }
-    func dailyRestingHeartRate(from start: Date, to end: Date) async -> [QuantityReading] { [] }
-    func dailyHeartRateVariability(from start: Date, to end: Date) async -> [QuantityReading] { [] }
-    func sleepStageSegments(from start: Date, to end: Date) async -> [SleepStageSegment] { [] }
-    func workouts(from start: Date, to end: Date) async -> [WorkoutRecord] { [] }
-}
-
-private struct StreamBoom: Error {}
-
-/// Controllable `CoachSession`: fixed chunks with an optional throw after
-/// `failAfterChunks`, an optional never-yield mode (consumer cancel ends
-/// iteration), and a per-chunk delay so tests can stop mid-stream.
-private final class TestCoachSession: CoachSession, @unchecked Sendable {
-    let chunks: [String]
-    let failAfterChunks: Int?
-    let suspendForever: Bool
-    let chunkDelay: Duration
-
-    init(
-        chunks: [String] = ["Hello ", "world."],
-        failAfterChunks: Int? = nil,
-        suspendForever: Bool = false,
-        chunkDelay: Duration = .milliseconds(50)
-    ) {
-        self.chunks = chunks
-        self.failAfterChunks = failAfterChunks
-        self.suspendForever = suspendForever
-        self.chunkDelay = chunkDelay
-    }
-
-    var isResponding: Bool { false }
-    func prewarm() {}
-    func respond(to prompt: String) async throws -> String { chunks.joined() }
-    func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
-        throw StreamBoom()
-    }
-    func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {
-        let chunks = chunks
-        let failAfterChunks = failAfterChunks
-        let suspendForever = suspendForever
-        let chunkDelay = chunkDelay
-        return AsyncThrowingStream { continuation in
-            if suspendForever { return }
-            let task = Task {
-                for (index, chunk) in chunks.enumerated() {
-                    try? await Task.sleep(for: chunkDelay)
-                    if Task.isCancelled { break }
-                    if failAfterChunks == index {
-                        continuation.finish(throwing: StreamBoom())
-                        return
-                    }
-                    continuation.yield(chunk)
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
-}
+// Shared doubles (`EmptyReadStore`, `TestCoachSession`, `StreamBoom`)
+// live in TestDoubles.swift (WP-30 N3).
 
 private struct WaitTimeout: Error {}
 

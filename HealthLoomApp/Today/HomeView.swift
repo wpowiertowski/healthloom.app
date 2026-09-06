@@ -6,10 +6,9 @@
 // Today view alongside the app's existing screens.
 //
 // **Documented deviation from the mockup's tab set:** the design shows
-// today / coach / you / settings. Coach (WP-25) now ships in its real tab
-// slot; You (WP-30) is still a P3 deliverable that doesn't exist yet, so
-// the shell is Today / Coach / Data (the WP-10 sync dashboard) /
-// Activities (WP-12b) / Settings, using the same tab-bar component.
+// today / coach / you / settings. Coach (WP-25) and You (WP-30) now ship
+// in their real tab slots; Data (the WP-10 sync dashboard) and Activities
+// (WP-12b) are additive app surfaces, using the same tab-bar component.
 //
 // The custom tab bar (not `TabView`) is design-locked per D12: hairline
 // top rule on surface, light-weight icons, ink/tertiary selection states.
@@ -19,6 +18,7 @@ import SwiftUI
 enum HomeTab: CaseIterable {
     case today
     case coach
+    case you
     case data
     case activities
     case settings
@@ -27,6 +27,7 @@ enum HomeTab: CaseIterable {
         switch self {
         case .today: return "Today"
         case .coach: return "Coach"
+        case .you: return "You"
         case .data: return "Data"
         case .activities: return "Activities"
         case .settings: return "Settings"
@@ -37,6 +38,7 @@ enum HomeTab: CaseIterable {
         switch self {
         case .today: return "square.split.1x2"
         case .coach: return "message"
+        case .you: return "person"
         case .data: return "arrow.triangle.2.circlepath"
         case .activities: return "figure.run"
         case .settings: return "slider.horizontal.3"
@@ -47,6 +49,7 @@ enum HomeTab: CaseIterable {
         switch self {
         case .today: return "tabbar.today"
         case .coach: return "tabbar.coach"
+        case .you: return "tabbar.you"
         case .data: return "tabbar.data"
         case .activities: return "tabbar.activities"
         case .settings: return "tabbar.settings"
@@ -70,6 +73,8 @@ struct HomeView: View {
                     TodayView()
                 case .coach:
                     CoachChatView(viewModel: appEnvironment.coachChatViewModel)
+                case .you:
+                    NavigationStack { YouView(viewModel: appEnvironment.youViewModel()) }
                 case .data:
                     // DashboardView owns its own NavigationStack (WP-10).
                     DashboardView()

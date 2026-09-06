@@ -4910,3 +4910,36 @@ touched package, simulator `TEST SUCCEEDED`.
 - Already-at-horizon records completion only after a successful save.
 
 **Counts:** SyncKit 268 to 269 (bucketless-metadata test). Rest unchanged.
+
+## WP-29 · Key management + consent UI
+
+Settings → AI Models screen (`HealthLoomApp/Coach/AIModels/`): per-tier row
+(status from `catalog.availability(for:)`, model picker for keyed tiers),
+consent sheet per off-device tier (`TierConsentCopy` single-sources
+destination / data-leaves / privacy / forget-forward, timestamp recorded in
+`TierSettingsStore`), key entry (SecureField → 1-token ping via
+`LiveCloudKeyValidator` → Keychain, stores only on `.valid`; delete drops
+the effective state while the toggle preference survives), PCC quota line.
+`CloudGateCache` bridges `MainActor` state into the catalog's `@Sendable`
+closures; `AppEnvironment` wires production (live Keychain/HTTPS) vs the
+`-UITestAIModels[=<scenario>]` UI-test scenario (in-memory keys, stub
+validator, scrubbed preferences, PCC+Claude live).
+
+**Review (reviews/wp-29-review.md, 3 rounds):** round 1 found 1 blocker
+(F1 — four mutation paths changed zero `@Observable` state, so rows went
+stale until remount) + 7 lows (F2 launch race, F3 non-live enable flows,
+F4 sticky banner, F5 Gemini bare-400, F6 locale folding, F7 shared stub
+state, F8 doc drift) + 2 test bugs (TMP abort, missing Delete tap). Round 3
+verified F1–F8 fixed and raised F9 (Enter-key side door), closed same round:
+`beginKeyEntry` is the single liveness-guarded choke point, non-live rows
+hide Enter-key/picker (Delete retained for inert-key cleanup),
+`ModelCatalog.isLive` + `TierAvailability` reason constants public with
+tests asserting the constant. Open nits carried: N1 force-unwraps in tests,
+N2 simulator-defaults pollution; residual note (chat-slot key presence reads
+untracked gates) folded into WP-32 if cheap.
+
+**Counts:** HealthLoomTests 84 → 86 (F3 non-live guard, F5 Gemini
+bare-400); new `AIModelsUITests` 5/5 incl. `testKeyDeleteDisablesTier`;
+CoachKit 186/186 beta, 185/185 stable (unchanged — visibility-only diff).
+Full app `xcodebuild build test` green on beta with warnings-as-errors,
+clean build green on stable for the touched package.
