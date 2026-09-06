@@ -36,6 +36,12 @@ final class CoachChatViewModel {
         var assembler: ContextAssembler
         var factory: CoachSessionFactory
         var availability: any CoachAvailabilityChecking
+        /// WP-29: the tier slot renders the effectively-on tiers (row
+        /// toggle AND catalog gate) from this shared wiring -- the same
+        /// instance the AI Models screen mutates, so the slot tracks
+        /// Settings without a relaunch. Interactive switching stays WP-32's.
+        var tierSettings: TierSettingsStore
+        var tierCatalog: ModelCatalog
     }
 
     /// Tool-set identity for the chat session (WP-22 `toolSetID` contract:
@@ -77,6 +83,18 @@ final class CoachChatViewModel {
     /// aborts with an error instead of streaming under a stale `.available`.
     private(set) var availability: CoachAvailability = .available
     var errorMessage: String?
+    /// Effectively-on tier display names for the tier slot ("On-device",
+    /// or "On-device · Apple cloud (PCC)" once a cloud tier is enabled).
+    /// Empty when nothing can serve (slot renders "Off"; the unavailable
+    /// banner carries the reason). Read live on every render -- no cache to
+    /// invalidate when Settings changes under this tab.
+    var enabledTierNames: String {
+        let names = ModelTier.allCases
+            .filter { deps.tierSettings.isTurnedOn($0) && deps.tierCatalog.isEnabled($0) }
+            .map(\.displayName)
+        return names.joined(separator: " · ")
+    }
+
     /// Unsent composer text. Owned here (not view `@State`, round-2 #15):
     /// `HomeView`'s switch unmounts the chat view on tab change, which
     /// would discard view-local text; the view model outlives it.

@@ -31,10 +31,13 @@ public enum TierAvailability: Sendable, Equatable {
 /// spelling); the deeper unification (one availability type) waits for
 /// WP-29's Settings screen.
 extension TierAvailability {
-    static let notLive = "Ships in a later update."
-    static let needsConsent = "Requires opt-in consent."
-    static let needsKey = "Requires an API key."
-    static let modelUnavailable = "Apple Intelligence is unavailable."
+    // WP-29 F3: public so the app target and its tests can assert *which*
+    // blocker a row renders (comparing the constant, not re-typing the
+    // string) without reaching into CoachKit internals.
+    public static let notLive = "Ships in a later update."
+    public static let needsConsent = "Requires opt-in consent."
+    public static let needsKey = "Requires an API key."
+    public static let modelUnavailable = "Apple Intelligence is unavailable."
 }
 
 /// The tier table. Value type with injected seams: the catalog never touches
@@ -254,7 +257,10 @@ public struct ModelCatalog: Sendable {
     /// so `isEnabled`/`availability(for:)`/`makeModel` can never disagree
     /// about which rows are live. WP-28 flips rows by extending the default
     /// `liveTiers` set.
-    private func isLive(_ tier: ModelTier) -> Bool {
+    /// WP-29 F3 (decision (a)): public so the settings screen can disable
+    /// row toggles for tiers that can never serve instead of walking them
+    /// through consent + live-network key validation for nothing.
+    public func isLive(_ tier: ModelTier) -> Bool {
         liveTiers.contains(tier)
     }
 }
