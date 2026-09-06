@@ -347,3 +347,52 @@ struct KnowledgeStoreCorrectionOrderTests {
         #expect(profile.sections.map(\.key) == ["user.apple", "user.zebra"])
     }
 }
+
+@Suite("KnowledgeStore WP-30 exclusion durability + corrections")
+@MainActor
+struct KnowledgeStoreExclusionDurabilityTests {
+    @Test("a toggled exclusion survives the next refresh (flag carry-over)")
+    func exclusionSurvivesRefresh() async throws {
+        let readStore = MockHealthReadStore()
+        readStore.steps = [DailyQuantityValue(day: .now, value: 8000)]
+        let (store, _) = try makeStore(readStore: readStore)
+
+        _ = try await store.refresh(now: .now)
+        #expect(try store.isAnyExcludedFromAI([KnowledgeDerivation.stepsFieldKey]) == false)
+        try store.setExcludedFromAI(true, forKey: KnowledgeDerivation.stepsFieldKey)
+        _ = try await store.refresh(now: .now.addingTimeInterval(3600))
+        #expect(try store.isAnyExcludedFromAI([KnowledgeDerivation.stepsFieldKey]) == true)
+        // And toggling back on sticks too.
+        try store.setExcludedFromAI(false, forKey: KnowledgeDerivation.stepsFieldKey)
+        _ = try await store.refresh(now: .now.addingTimeInterval(7200))
+        #expect(try store.isAnyExcludedFromAI([KnowledgeDerivation.stepsFieldKey]) == false)
+    }
+
+    @Test("pinCorrection beats re-derivation and keeps the sharing posture")
+    func pinCorrectionBeatsReDerivation() async throws {
+        let readStore = MockHealthReadStore()
+        readStore.steps = [DailyQuantityValue(day: .now, value: 8000)]
+        let (store, _) = try makeStore(readStore: readStore)
+
+        _ = try await store.refresh(now: .now)
+        try store.setExcludedFromAI(true, forKey: KnowledgeDerivation.stepsFieldKey)
+        try store.pinCorrection(displayText: "~9,000 steps/day (my tracker)", forKey: KnowledgeDerivation.stepsFieldKey)
+        let profile = try await store.refresh(now: .now.addingTimeInterval(3600))
+        let field = profile.sections.first(where: { $0.key == KnowledgeDerivation.stepsFieldKey })
+        #expect(field?.displayText == "~9,000 steps/day (my tracker)")
+        #expect(field?.source == KnowledgeStore.correctionSourceLabel)
+        #expect(field?.excludedFromAI == true)
+    }
+
+    @Test("pinCorrection creates a goal field for a key with no derivation")
+    func pinCorrectionCreatesGoal() async throws {
+        let (store, container) = try makeStore()
+        try store.pinCorrection(displayText: "Run a marathon", forKey: "user.goal")
+        let context = ModelContext(container)
+        let reloaded = try context.fetch(FetchDescriptor<KnowledgeProfile>())
+        #expect(reloaded.count == 1)
+        let field = reloaded[0].sections.first(where: { $0.key == "user.goal" })
+        #expect(field?.displayText == "Run a marathon")
+        #expect(field?.excludedFromAI == false)
+    }
+}

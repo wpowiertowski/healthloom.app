@@ -89,6 +89,8 @@ enum InitialRoute: Sendable, Equatable {
     case coach
     /// WP-29: past onboarding, on the Settings tab (AI Models UI tests).
     case settings
+    /// WP-30: past onboarding, on the You tab (profile UI tests).
+    case you
 
     /// The tab a non-default route lands on (`.default` is Today).
     var homeTab: HomeTab {
@@ -97,6 +99,7 @@ enum InitialRoute: Sendable, Equatable {
         case .data: .data
         case .coach: .coach
         case .settings: .settings
+        case .you: .you
         }
     }
 }
@@ -121,6 +124,13 @@ struct LaunchConfiguration: Sendable {
     /// shows history, which needs the on-disk store (mirroring how
     /// `TodayUITests`' relaunch leg relies on real `UserDefaults`).
     var scriptedCoach: Bool
+    /// WP-30: `-UITestScrubChat` (with `-UITestScriptedCoach`) deletes every
+    /// stored `ChatTurn` + `ContextSnapshot` at launch, so the transcript
+    /// holds exactly the turns this run sends. Without it the on-disk store
+    /// grows unboundedly across runs and history-dependent tests (scroll to
+    /// Nth expander) slow down and eventually can't reach their target —
+    /// each failed run appending more turns makes the next run worse.
+    var scrubChat: Bool
     /// Forced gate state, or `nil` for the live/scripted path (see
     /// `forcedAvailability(from:)`).
     var forcedCoachAvailability: CoachAvailability?
@@ -134,6 +144,11 @@ struct LaunchConfiguration: Sendable {
     /// WP-29: scripted AI Models screen (`-UITestAIModels[=<scenario>]`),
     /// or nil for the live Keychain/validator wiring.
     var aiModelsScenario: AIModelsScenario?
+    /// WP-30: `-UITestYouTab` seeds an in-memory `KnowledgeProfile` (two
+    /// derived fields incl. one clinical, one user correction) and lands
+    /// past onboarding on the You tab, so the profile/correct/forget flows
+    /// are deterministic without HealthKit data on a simulator.
+    var seedYouTab: Bool
 
     static var current: LaunchConfiguration {
         Self.resolve(arguments: ProcessInfo.processInfo.arguments)
@@ -145,14 +160,18 @@ struct LaunchConfiguration: Sendable {
         let stubGoogle = arguments.contains("-UITestStubGoogle")
         let seedDashboardData = arguments.contains("-UITestSeedData")
         let scriptedCoach = arguments.contains("-UITestScriptedCoach")
+        let scrubChat = arguments.contains("-UITestScrubChat")
         let forcedCoachAvailability = Self.forcedAvailability(from: arguments)
         // The `.data` branch is `seedDashboardData` ONLY (round-2 #2):
         // `-UITestStubGoogle` alone is the onboarding happy-path test and
         // must keep landing on Welcome, exactly the pre-WP-25 rule.
         let aiModelsScenario = Self.aiModelsScenario(from: arguments)
+        let seedYouTab = arguments.contains("-UITestYouTab")
         let initialRoute: InitialRoute
         if aiModelsScenario != nil {
             initialRoute = .settings
+        } else if seedYouTab {
+            initialRoute = .you
         } else if scriptedCoach || forcedCoachAvailability != nil {
             initialRoute = .coach
         } else if seedDashboardData {
@@ -166,13 +185,15 @@ struct LaunchConfiguration: Sendable {
             // Scripted wins over forced unconditionally (round-2 #7): the
             // on-disk guarantee `-UITestScriptedCoach` documents holds even
             // when both flags are passed together.
-            useInMemoryContainer: (stubGoogle || seedDashboardData || forcedCoachAvailability != nil || aiModelsScenario != nil) && !scriptedCoach,
+            useInMemoryContainer: (stubGoogle || seedDashboardData || forcedCoachAvailability != nil || aiModelsScenario != nil || seedYouTab) && !scriptedCoach,
             resetTodayMetrics: arguments.contains("-UITestResetTodayMetrics"),
             scriptedCoach: scriptedCoach,
+            scrubChat: scrubChat,
             forcedCoachAvailability: forcedCoachAvailability,
             initialRoute: initialRoute,
             coachSessionMode: Self.sessionMode(scriptedCoach: scriptedCoach, forced: forcedCoachAvailability),
-            aiModelsScenario: aiModelsScenario
+            aiModelsScenario: aiModelsScenario,
+            seedYouTab: seedYouTab
         )
     }
 

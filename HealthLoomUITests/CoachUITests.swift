@@ -64,6 +64,46 @@ final class CoachUITests: XCTestCase {
     }
 
     @MainActor
+    func testTraceExpanderNamesServingTier() throws {
+        // WP-30 trace badge (D15.b): the per-message "What did the coach
+        // see?" expander names the serving tier persisted on the turn.
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestScriptedCoach", "-UITestScrubChat"]
+        app.launch()
+
+        let anyElement = app.descendants(matching: .any)
+        XCTAssertTrue(anyElement["chat.screen"].waitForExistence(timeout: 10))
+        let input = anyElement["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        input.tap()
+        input.typeText("UITest trace \(UUID().uuidString)")
+        anyElement["chat.send"].tap()
+        XCTAssertTrue(
+            app.staticTexts["Scripted coach reply: rest well and hydrate."].waitForExistence(timeout: 10)
+        )
+        // Wait for the stream to finish: the reply text above also matches
+        // the mid-stream draft, so the stop button's *disappearance* (not
+        // the reply's appearance) is the stream-end signal.
+        let streamEnd = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: anyElement["chat.stop"]
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [streamEnd], timeout: 30), .completed,
+            "stream did not finish"
+        )
+        // The DisclosureGroup label renders as a static text; tapping it
+        // toggles expansion. Scrubbed transcript, so exactly one expander
+        // exists and no scroll is needed.
+        let expanders = app.staticTexts.matching(NSPredicate(format: "label == %@", "What did the coach see?"))
+        XCTAssertEqual(expanders.count, 1, "scrubbed transcript holds exactly this run's turn")
+        expanders.firstMatch.tap()
+        let tier = anyElement["chat.context.tier"]
+        XCTAssertTrue(tier.waitForExistence(timeout: 10))
+        XCTAssertTrue(tier.label.contains("On-device"))
+    }
+
+    @MainActor
     func testUnavailableStateRenders() throws {
         // `-UITestCoachUnavailable` forces `.modelNotReady`: the iOS 27
         // simulator's on-device model reports `.available` (verified via a
