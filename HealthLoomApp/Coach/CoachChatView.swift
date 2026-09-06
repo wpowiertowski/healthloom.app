@@ -31,7 +31,7 @@ struct CoachChatView: View {
             // `isScrollable: false` leaves scrolling to the transcript's
             // own ScrollView (a chat column must not double-scroll).
             ThemedScreen(title: "Coach", isScrollable: false) {
-                Text("On-device")
+                Text(viewModel.enabledTierNames.isEmpty ? "Off" : viewModel.enabledTierNames)
                     .font(Theme.font(12, .medium, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                     .accessibilityIdentifier("chat.tierSlot")

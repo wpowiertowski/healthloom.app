@@ -101,7 +101,9 @@ struct CoachChatViewModelTests {
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
             factory: CoachSessionFactory(build: { _, _ in session }),
-            availability: FixedCoachAvailabilityChecker(availability: availability)
+            availability: FixedCoachAvailabilityChecker(availability: availability),
+            tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
+            tierCatalog: ModelCatalog(onDeviceAvailable: { true })
         ))
     }
 
@@ -223,7 +225,9 @@ struct CoachRoundTwoTests {
                 chunks: ["one ", "two ", "three."],
                 chunkDelay: .milliseconds(200)
             ) }),
-            availability: FixedCoachAvailabilityChecker(availability: .available)
+            availability: FixedCoachAvailabilityChecker(availability: .available),
+            tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
+            tierCatalog: ModelCatalog(onDeviceAvailable: { true })
         ))
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ viewModel.isResponding })
@@ -253,7 +257,9 @@ struct CoachRoundTwoTests {
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
             factory: CoachSessionFactory(build: { _, _ in TestCoachSession() }),
-            availability: FixedCoachAvailabilityChecker(availability: .modelNotReady)
+            availability: FixedCoachAvailabilityChecker(availability: .modelNotReady),
+            tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
+            tierCatalog: ModelCatalog(onDeviceAvailable: { true })
         ))
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })

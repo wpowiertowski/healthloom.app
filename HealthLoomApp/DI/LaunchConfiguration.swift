@@ -29,6 +29,14 @@
 //                       persisted across launches shows history, which needs
 //                       the on-disk store.
 //
+//   -UITestAIModels[=<scenario>]
+//                       WP-29 AI Models test. Skips onboarding, lands on the
+//                       Settings tab, scripts the catalog (PCC + Claude rows
+//                       live with stubbed gate inputs) and the key validator
+//                       so the consent/key enable flows are deterministic.
+//                       Resets all tier preferences at launch (UserDefaults
+//                       outlives UI-test launches) before applying the
+//                       scenario's seed.
 //   -UITestCoachUnavailable[=<case>]
 //                       Forces an unavailable gate state on the Coach tab
 //                       (default `modelNotReady`; also `deviceNotEligible`,
@@ -60,12 +68,27 @@ enum CoachSessionMode: Sendable, Equatable {
 }
 
 /// Where the app lands at launch (WP-25 review #17).
+/// WP-29 UI-test scenario for the AI Models screen. The scripted
+/// catalog enables the PCC + Claude rows (non-live in production) with
+/// fully stubbed gate inputs, so the enable/consent/key flows are
+/// deterministic on a simulator where the real gates never pass:
+///   - clean: nothing consented, no keys, validator accepts any key.
+///   - invalidKey: the validator rejects every key (blocked-key copy).
+///   - pccOn: PCC pre-consented and toggled on (chat slot + quota render).
+enum AIModelsScenario: String, Sendable, Equatable {
+    case clean
+    case invalidKey
+    case pccOn
+}
+
 enum InitialRoute: Sendable, Equatable {
     /// Normal path: onboarding until completed, then Today.
     case `default`
     /// Past onboarding, on the named tab (UI-test launches only).
     case data
     case coach
+    /// WP-29: past onboarding, on the Settings tab (AI Models UI tests).
+    case settings
 
     /// The tab a non-default route lands on (`.default` is Today).
     var homeTab: HomeTab {
@@ -73,6 +96,7 @@ enum InitialRoute: Sendable, Equatable {
         case .default: .today
         case .data: .data
         case .coach: .coach
+        case .settings: .settings
         }
     }
 }
@@ -107,6 +131,9 @@ struct LaunchConfiguration: Sendable {
     var initialRoute: InitialRoute
     /// Coach wiring selection (see `CoachSessionMode`).
     var coachSessionMode: CoachSessionMode
+    /// WP-29: scripted AI Models screen (`-UITestAIModels[=<scenario>]`),
+    /// or nil for the live Keychain/validator wiring.
+    var aiModelsScenario: AIModelsScenario?
 
     static var current: LaunchConfiguration {
         Self.resolve(arguments: ProcessInfo.processInfo.arguments)
@@ -122,8 +149,11 @@ struct LaunchConfiguration: Sendable {
         // The `.data` branch is `seedDashboardData` ONLY (round-2 #2):
         // `-UITestStubGoogle` alone is the onboarding happy-path test and
         // must keep landing on Welcome, exactly the pre-WP-25 rule.
+        let aiModelsScenario = Self.aiModelsScenario(from: arguments)
         let initialRoute: InitialRoute
-        if scriptedCoach || forcedCoachAvailability != nil {
+        if aiModelsScenario != nil {
+            initialRoute = .settings
+        } else if scriptedCoach || forcedCoachAvailability != nil {
             initialRoute = .coach
         } else if seedDashboardData {
             initialRoute = .data
@@ -136,13 +166,27 @@ struct LaunchConfiguration: Sendable {
             // Scripted wins over forced unconditionally (round-2 #7): the
             // on-disk guarantee `-UITestScriptedCoach` documents holds even
             // when both flags are passed together.
-            useInMemoryContainer: (stubGoogle || seedDashboardData || forcedCoachAvailability != nil) && !scriptedCoach,
+            useInMemoryContainer: (stubGoogle || seedDashboardData || forcedCoachAvailability != nil || aiModelsScenario != nil) && !scriptedCoach,
             resetTodayMetrics: arguments.contains("-UITestResetTodayMetrics"),
             scriptedCoach: scriptedCoach,
             forcedCoachAvailability: forcedCoachAvailability,
             initialRoute: initialRoute,
-            coachSessionMode: Self.sessionMode(scriptedCoach: scriptedCoach, forced: forcedCoachAvailability)
+            coachSessionMode: Self.sessionMode(scriptedCoach: scriptedCoach, forced: forcedCoachAvailability),
+            aiModelsScenario: aiModelsScenario
         )
+    }
+
+    /// `-UITestAIModels` (bare = `.clean`) or `-UITestAIModels=<scenario>`.
+    /// Unknown values fall back to `.clean`: the flag's job is exercising
+    /// the enable flows, so a typo still exercises them (against clean
+    /// state) rather than silently testing the live-wiring path.
+    static func aiModelsScenario(from arguments: [String]) -> AIModelsScenario? {
+        let prefix = "-UITestAIModels"
+        guard let flag = arguments.first(where: { $0 == prefix || $0.hasPrefix(prefix + "=") }) else {
+            return nil
+        }
+        let value = flag == prefix ? "clean" : String(flag.dropFirst(prefix.count + 1))
+        return AIModelsScenario(rawValue: value) ?? .clean
     }
 
     /// One derived value for coach wiring (round-2 #11): `AppEnvironment`'s

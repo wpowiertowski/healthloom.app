@@ -131,6 +131,25 @@ final class AppEnvironment {
     /// prompt editor (which busts the cached conversation on every
     /// successful write -- round-2 #1).
     let coachSessionFactory: CoachSessionFactory
+    /// WP-29 (implementation-plan.md): tier preferences (consent dates,
+    /// row toggles, model overrides) backing the AI Models screen and the
+    /// chat tier slot. Single instance shared by both, so a toggle flipped
+    /// in Settings re-renders the slot without a relaunch.
+    let tierSettingsStore: TierSettingsStore
+    /// WP-29: the sync bridge `ModelCatalog`'s gating closures read
+    /// through (see `CloudGateCache`). Filled at launch and after every
+    /// settings mutation (via `AIModelsViewModel.refresh()`).
+    let gateCache: CloudGateCache
+    /// WP-29: provider-key storage (live Keychain; in-memory under the AI
+    /// Models UI-test scenario for determinism).
+    let cloudKeys: any CloudKeyStoring
+    /// WP-29: 1-token key validation (live HTTPS; stubbed under the UI-test
+    /// scenario).
+    let keyValidator: any CloudKeyValidating
+    /// WP-29: the tier table with app wiring (Keychain reads via the gate
+    /// cache, `AvailabilityGate` for on-device, live PCC reads). The chat
+    /// tier slot and the AI Models rows read this same instance's gate.
+    let modelCatalog: ModelCatalog
     init(launchConfiguration: LaunchConfiguration = .current) {
         self.launchConfiguration = launchConfiguration
 
@@ -275,13 +294,114 @@ final class AppEnvironment {
             availabilityChecker = FixedCoachAvailabilityChecker(availability: availability)
         }
         self.coachSessionFactory = coachSessionFactory
+
+        // WP-29 tier wiring. The UI-test scenario scripts every gate input
+        // (PCC + Claude rows live, stubbed availability/quota/validator,
+        // in-memory keys, scrubbed preferences + scenario seed) so the
+        // consent/key flows are deterministic on a simulator where the real
+        // gates never pass; production reads the live stores.
+        let tierSettings = TierSettingsStore()
+        self.tierSettingsStore = tierSettings
+        let gates = CloudGateCache()
+        self.gateCache = gates
+        let cloudKeys: any CloudKeyStoring
+        let keyValidator: any CloudKeyValidating
+        let modelCatalog: ModelCatalog
+        if let scenario = launchConfiguration.aiModelsScenario {
+            TierSettingsStore.resetAll()
+            // The store above was built before the wipe, so its F1 mirrors
+            // still hold pre-reset values — resync before seeding.
+            tierSettings.resyncFromDefaults()
+            cloudKeys = InMemoryCloudKeyStore()
+            switch scenario {
+            case .clean:
+                keyValidator = StubCloudKeyValidator(result: .valid)
+            case .invalidKey:
+                keyValidator = StubCloudKeyValidator(result: .invalidKey)
+            case .pccOn:
+                keyValidator = StubCloudKeyValidator(result: .valid)
+                tierSettings.recordConsent(for: .privateCloudCompute)
+                tierSettings.setTurnedOn(true, for: .privateCloudCompute)
+            }
+            modelCatalog = ModelCatalog(
+                onDeviceAvailable: { true },
+                hasConsent: { gates.hasConsent($0) },
+                hasKey: { gates.hasKey($0) },
+                pccAvailable: { true },
+                pccQuota: { .ok },
+                liveTiers: [.onDevice, .privateCloudCompute, .claude]
+            )
+            // Seed the cache from the (just-scrubbed, maybe seeded)
+            // preferences so the first render agrees with the gate.
+            for tier in ModelTier.allCases {
+                gates.setConsent(tierSettings.hasConsent(for: tier), for: tier)
+            }
+        } else {
+            cloudKeys = KeychainStore()
+            keyValidator = LiveCloudKeyValidator()
+            // WP-29 F2: consent is synchronously readable (`UserDefaults`),
+            // so seed it inline before the catalog exists — the chat tier
+            // slot can render on the first frame without waiting for the
+            // `Task` below. Only the Keychain presence reads (async) stay
+            // in the fire-and-forget fill; the settings screen re-fills on
+            // every appear via `AIModelsViewModel.refresh()`.
+            for tier in ModelTier.allCases {
+                gates.setConsent(tierSettings.hasConsent(for: tier), for: tier)
+            }
+            modelCatalog = ModelCatalog.live(
+                hasConsent: { gates.hasConsent($0) },
+                hasKey: { gates.hasKey($0) }
+            )
+            // Fill Keychain presence for readers that never visit the
+            // settings screen (the chat tier slot).
+            let fillKeys = cloudKeys
+            let fillGates = gates
+            Task {
+                await Self.fillKeyPresence(keys: fillKeys, gates: fillGates)
+            }
+        }
+        self.cloudKeys = cloudKeys
+        self.keyValidator = keyValidator
+        self.modelCatalog = modelCatalog
         self.coachChatViewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
             container: container,
             store: knowledgeStore,
             prompts: promptManager,
             assembler: contextAssembler,
             factory: coachSessionFactory,
-            availability: availabilityChecker
+            availability: availabilityChecker,
+            tierSettings: tierSettings,
+            tierCatalog: modelCatalog
+        ))
+    }
+
+    /// One-shot Keychain-presence fill (WP-29 F2: consent is seeded
+    /// synchronously in `init`; only this async half runs in the launch
+    /// `Task`). `static` (not instance) so the launch `Task` in `init`
+    /// doesn't capture a half-initialized `self` -- it takes only what it
+    /// reads.
+    private static func fillKeyPresence(
+        keys: any CloudKeyStoring,
+        gates: CloudGateCache
+    ) async {
+        for tier in ModelTier.allCases {
+            if let secretKey = tier.secretKey {
+                let present = (try? await keys.get(secretKey)) != nil
+                gates.setKeyPresent(present, for: tier)
+            }
+        }
+    }
+
+    /// Fresh settings-screen view model per presentation (sheet state must
+    /// not survive dismissal -- a half-entered key draft from a previous
+    /// visit must never reappear).
+    func aiModelsViewModel() -> AIModelsViewModel {
+        AIModelsViewModel(deps: AIModelsViewModel.Dependencies(
+            catalog: modelCatalog,
+            settings: tierSettingsStore,
+            gates: gateCache,
+            keys: cloudKeys,
+            validator: keyValidator
         ))
     }
 

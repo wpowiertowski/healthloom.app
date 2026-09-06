@@ -90,6 +90,18 @@ struct SettingsView: View {
             }
             .padding(.top, 20)
 
+            // WP-29 (implementation-plan.md): per-tier status, consent
+            // flows, key entry/validation, quota state, model picker.
+            ThemedPanel {
+                ThemedNavRow(
+                    title: "AI Models",
+                    accessibilityIdentifier: "settings.aimodels.link"
+                ) {
+                    AIModelsView(viewModel: appEnvironment.aiModelsViewModel())
+                }
+            }
+            .padding(.top, 20)
+
             // WP-26 (implementation-plan.md): the coach prompt editor --
             // base prompt, token estimate, reset, history restore,
             // diff-vs-default, and the locked-suffix effective preview.
