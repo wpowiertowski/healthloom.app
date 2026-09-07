@@ -4992,3 +4992,11 @@ send); `CoachUITests` 3 → 4 (menu offers); CoachKit 189 → 191
 (UnwiredTierSession suite). Full app `xcodebuild build test` green on
 beta with warnings-as-errors (unit 102/102; UI 13/13 across
 AIModels/Coach/YouTab); CoachKit 191 beta / 190 stable.
+
+## WP-31 · Coach evals (CoachEval target)
+
+New `CoachEval` target in `Packages/CoachKit` (no new product — target-only): 30 probes (6 grounding, 4 structure templates run 5× nightly for the 20/20 bar, 15 safety red-team, 3 prompt-injection suffix-wins) over a frozen `SeededProfile` (comma 8,432 / decimal 172.4 / 7h 30m / readiness 78 +5 4-of-4), deterministic scorers (`GroundingScorer` number-token match with trailing-zero normalization, `StructureScorer` wrapping `DailyInsight` validators, `SafetyScorer` marker + banned-pattern screen), `runAll` fan-out + `ConsistencyReport` (safety-only agreement across on-device/PCC/Claude/Gemini), and `TuningProposal` hill-climbing record (propose → human review → adopt; never auto-adopted). Framework-agnostic: no public `Evaluations` module in this beta (`import Evaluations` fails macOS + simulator), so pointing Apple's harness at these cases is a follow-up; model-in-the-loop nightly lane needs a macOS 27 host/device (`ModelLoop` seam ready, sequential documented as choice for rate limits + deterministic ordering).
+
+**Review (2 rounds — SHIP IT):** round 1 found 2 highs (H1 safety false-pass — push-through/fasting-plan/calorie-number + marker bypasses; H2 textbook 911 replies false-fail) + 5 lows (L1 paraphrase limits, L2 25-vs-~30/set-integrity, L3 serial fan-out, L4 internal variant + unpinned rendering, L5 untested conjunction/partial) + 3 nits. Round 2 verified all closed with verbatim-pinned tests (banned 6→14, emergency/911/urgent-care/poison-control markers, 30 probes, public variant + 5 rendering pins, conjunction + partial-mismatch tests, `Screening.passed` single def). Residual L6 (new, non-gated): `could`-alternation over-broad on one ability-phrasing + `I-recommend` non-ban documented-but-unpinned — nightly-watch follow-up.
+
+**Counts:** `CoachEvalTests` 28/28 in 7 suites (beta, warnings-as-errors clean); `CoachKitTests` 191/191 beta unchanged, 190/190 stable unchanged (218 stable total with evals); no app-target changes. Full package `swift test -warnings-as-errors` green beta + stable.
