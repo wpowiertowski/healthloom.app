@@ -740,6 +740,12 @@ Wire the hill-climbing workflow (session 335) for SafetyLayer and default-prompt
 tuning — **proposals are human-reviewed, never auto-adopted**.
 **Tests:** the eval sets are the deliverable; runs nightly/pre-release on a macOS 27
 host or designated device (not per-push CI — model-in-the-loop).
+   **SDK note (verified 2026-09-06):** no public `Evaluations` module in the
+   current beta (`import Evaluations` fails on macOS + simulator), so the
+   sets ship as a framework-agnostic `CoachEval` target (probes + scorers +
+   runner seam + tuning-proposal record) with the deterministic half in CI;
+   pointing Apple's harness at these cases is a follow-up when the SDK
+   provides it.
 
 ### WP-32 · Tier switcher via Dynamic Profiles
 **Depends on:** WP-28, WP-29 · **Touches:** `CoachKit`, app target

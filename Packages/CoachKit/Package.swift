@@ -23,6 +23,9 @@ let package = Package(
     products: [
         .library(name: "CoachKit", targets: ["CoachKit"]),
     ],
+    // NOTE: CoachEval ships no product — the nightly model-in-the-loop lane
+    // links it directly when the SDK provides the Evaluations module
+    // (WP-31). Keeping it target-only avoids new public package surface.
     dependencies: [
         .package(path: "../CoreModel"),
         .package(path: "../Secrets"),
@@ -41,6 +44,27 @@ let package = Package(
         .testTarget(
             name: "CoachKitTests",
             dependencies: ["CoachKit", "SyncKit"],
+            swiftSettings: [
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+            ]
+        ),
+        // WP-31: eval sets + deterministic scorers + nightly runner seam.
+        // Runs in CI with canned outputs (no model); the model-in-the-loop
+        // half needs a macOS 27 host or designated device (test plan §11).
+        .target(
+            name: "CoachEval",
+            dependencies: ["CoachKit", "CoreModel"],
+            swiftSettings: [
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+            ]
+        ),
+        .testTarget(
+            name: "CoachEvalTests",
+            dependencies: ["CoachEval", "CoachKit", "CoreModel"],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
