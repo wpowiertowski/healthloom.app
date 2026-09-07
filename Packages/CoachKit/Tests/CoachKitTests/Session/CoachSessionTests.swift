@@ -159,11 +159,9 @@ struct UnwiredTierSessionTests {
     @Test("the default build routes on-device live and everything else closed")
     func defaultBuildRoutesByTier() async {
         // No model touched: the unwired arm constructs without one, and the
-        // on-device arm is only *constructed* here through the live path on
-        // a host where `SystemLanguageModel.default` exists as a value —
-        // the test asserts the routing decision (type identity), then
-        // exercises only the unwired side. (Live generation stays manual,
-        // test plan §7.)
+        // on-device arm is never built here — the test asserts the routing
+        // decision (type identity), then exercises only the unwired side.
+        // (Live generation stays manual, test plan §7.)
         let factory = CoachSessionFactory()
         let pcc = factory.makeSession(for: .oneShot, instructions: "x", tier: .privateCloudCompute)
         #expect(pcc is UnwiredTierSession)

@@ -4970,3 +4970,25 @@ load; N3 shared doubles moved to `TestDoubles.swift`, not widened).
 `YouTabUITests` 4/4 new; `CoachUITests` 2 → 3 (trace badge);
 CoachKit 186 → 189 (exclusion-durability + correction suites). Full app
 `xcodebuild build test` green on beta with warnings-as-errors.
+
+## WP-32 · In-chat tier switcher (slice 1)
+
+Toolbar tier menu over `enabledTiers` (single source for menu, slot text,
+and dispatch): `selectTier` choke point (menu + future escalation offers),
+dispatch re-validation with captured `servingTier`, per-turn stamps,
+untouched transcript, per-turn prompt re-resolution (suffix sweep).
+Tier threaded into the session-build seam; default build serves
+on-device live and every other tier fail-closed (`UnwiredTierSession`,
+copy single-sourced with the orchestrator); flip checklist names routing.
+
+**Review (reviews/wp-32-review.md, 2 rounds — SHIP IT):** round 1 high
+(F1 tier-blind build stamping unserved tiers) fixed structurally +
+per-tier identity test; F2 sticky select error. Round 2: 1 low (F1
+unwired-error copy unpinned end-to-end — VM-level named-error +
+user-turn-only test) + nits (comment reword, this paragraph).
+
+**Counts:** HealthLoomTests 93 → 102 (7 switcher + routing + unwired
+send); `CoachUITests` 3 → 4 (menu offers); CoachKit 189 → 191
+(UnwiredTierSession suite). Full app `xcodebuild build test` green on
+beta with warnings-as-errors (unit 102/102; UI 13/13 across
+AIModels/Coach/YouTab); CoachKit 191 beta / 190 stable.

@@ -214,6 +214,48 @@ struct TierSwitcherTests {
         #expect(viewModel.turns.last?.provider == ModelTier.onDevice.rawValue)
     }
 
+    @Test("an unwired tier send surfaces the named error with no reply turn (F1)")
+    func unwiredSendIsNamedAndPersistsNothing() async throws {
+        // Default-build factory (no injected build): the PCC arm touches
+        // no model. PCC live + consented + keyed + toggled, so both guards
+        // pass and the fail-closed arm is what answers.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let settings = TierSettingsStore(defaults: UserDefaults(suiteName: "test.\(UUID().uuidString)")!)
+        let gates = CloudGateCache()
+        let catalog = ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { gates.hasConsent($0) },
+            hasKey: { gates.hasKey($0) },
+            pccAvailable: { true },
+            pccQuota: { .ok },
+            liveTiers: [.onDevice, .privateCloudCompute]
+        )
+        let store = KnowledgeStore(
+            modelContainer: container,
+            healthReadStore: EmptyReadStore(),
+            healthKitAuth: HealthKitAuth()
+        )
+        let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
+            container: container,
+            store: store,
+            prompts: PromptManager(modelContainer: container),
+            assembler: ContextAssembler(modelContainer: container),
+            factory: CoachSessionFactory(),
+            availability: FixedCoachAvailabilityChecker(availability: .available),
+            tierSettings: settings,
+            tierCatalog: catalog
+        ))
+        settings.recordConsent(for: .privateCloudCompute)
+        gates.setConsent(true, for: .privateCloudCompute)
+        settings.setTurnedOn(true, for: .privateCloudCompute)
+        #expect(viewModel.selectTier(.privateCloudCompute) == true)
+        #expect(viewModel.send("hi") == true)
+        try await waitForIdle(viewModel)
+        #expect(viewModel.errorMessage == "Apple cloud (PCC) isn't available right now (\(UnwiredTierSession.unwiredReason)).")
+        #expect(viewModel.turns.count == 1)
+        #expect(viewModel.turns.first?.role == "user")
+    }
+
     @Test("onAppear clamps a selection disabled while chat was away")
     func onAppearClampsStaleSelection() throws {
         let (viewModel, settings, gates) = try makeViewModel()
