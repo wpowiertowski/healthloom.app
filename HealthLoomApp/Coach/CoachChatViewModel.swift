@@ -83,16 +83,53 @@ final class CoachChatViewModel {
     /// aborts with an error instead of streaming under a stale `.available`.
     private(set) var availability: CoachAvailability = .available
     var errorMessage: String?
+    /// Selected serving tier (WP-32). In-memory (resets to on-device per
+    /// launch); the menu offers only enabled tiers, `onAppear` clamps a
+    /// stale selection, and `send` re-validates at dispatch — so this is
+    /// always enabled at the moment a turn streams, never merely at the
+    /// moment it was picked.
+    var selectedTier: ModelTier = .onDevice
+
+    /// Enabled tiers in ladder order (row toggle AND catalog gate: consent,
+    /// key, liveness, availability). The single source for the menu, the
+    /// slot text, and the dispatch gate below.
+    var enabledTiers: [ModelTier] {
+        ModelTier.allCases.filter { isTierEnabled($0) }
+    }
+
     /// Effectively-on tier display names for the tier slot ("On-device",
     /// or "On-device · Apple cloud (PCC)" once a cloud tier is enabled).
     /// Empty when nothing can serve (slot renders "Off"; the unavailable
     /// banner carries the reason). Read live on every render -- no cache to
     /// invalidate when Settings changes under this tab.
     var enabledTierNames: String {
-        let names = ModelTier.allCases
-            .filter { deps.tierSettings.isTurnedOn($0) && deps.tierCatalog.isEnabled($0) }
-            .map(\.displayName)
-        return names.joined(separator: " · ")
+        enabledTiers.map(\.displayName).joined(separator: " · ")
+    }
+
+    /// Whether `tier` can serve right now, read live (toggle + gate).
+    func isTierEnabled(_ tier: ModelTier) -> Bool {
+        deps.tierSettings.isTurnedOn(tier) && deps.tierCatalog.isEnabled(tier)
+    }
+
+    /// The single choke point for tier changes: the menu, (future)
+    /// escalation offers (WP-27.3 routes through this when chat surfaces
+    /// them), and tests. Returns false — leaving the selection untouched —
+    /// when the tier is not enabled, so a non-consented/non-live tier is
+    /// blocked here even if a stale menu row offered it. Switching never
+    /// touches the transcript (`turns` live here, per-tier sessions keep
+    /// their model-side history in the factory's slots); an in-flight
+    /// stream keeps its captured session.
+    @discardableResult
+    func selectTier(_ tier: ModelTier) -> Bool {
+        guard isTierEnabled(tier) else {
+            errorMessage = "\(tier.displayName) isn't enabled right now. Pick an available tier."
+            return false
+        }
+        // WP-32 F2 (the WP-29 F4 shape, one round later): success clears a
+        // previous failure's banner instead of leaving it stale.
+        errorMessage = nil
+        selectedTier = tier
+        return true
     }
 
     /// Unsent composer text. Owned here (not view `@State`, round-2 #15):
@@ -120,6 +157,14 @@ final class CoachChatViewModel {
     /// throwing contract promises (review #8).
     func onAppear() {
         reloadTurns()
+        // WP-32: Settings may have disabled the selection while chat was
+        // unmounted (tab switches rebuild the view). Clamp quietly to the
+        // first enabled tier — the menu/slot already communicate state, and
+        // `send` still guards the (now unreachable except by reordering)
+        // disabled-selection case at dispatch.
+        if !isTierEnabled(selectedTier), let fallback = enabledTiers.first {
+            selectedTier = fallback
+        }
         // A repeated appear without an intervening disappear (documented
         // SwiftUI corner) must not orphan the previous warm-up (round-2
         // #9). The stream is deliberately NOT touched here: a tab switch
@@ -151,7 +196,10 @@ final class CoachChatViewModel {
             // (round-2 #5), not a bare `try?`.
             if !Task.isCancelled {
                 do {
-                    chatSession(instructions: try deps.prompts.effectivePrompt()).prewarm()
+                    chatSession(
+                        instructions: try deps.prompts.effectivePrompt(),
+                        tier: selectedTier
+                    ).prewarm()
                 } catch {
                     Self.logger.warning(
                         "Coach warm-up prompt fetch failed: \(error.localizedDescription, privacy: .public)"
@@ -177,6 +225,16 @@ final class CoachChatViewModel {
     func send(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isResponding, availability == .available else { return false }
+        // WP-32 dispatch gate: the selection may have lost enablement
+        // (consent withdrawn, key deleted) since it was picked. Block with
+        // a named error instead of dispatching on a dead tier or silently
+        // falling back to another one. Captured here so a mid-stream
+        // switch can't retarget the in-flight turn.
+        let servingTier = selectedTier
+        guard isTierEnabled(servingTier) else {
+            errorMessage = "\(servingTier.displayName) isn't enabled right now. Pick an available tier."
+            return false
+        }
         errorMessage = nil
         let userTurn = ChatTurn(role: "user", content: trimmed)
         do {
@@ -207,8 +265,11 @@ final class CoachChatViewModel {
             }
             var snapshotID: UUID?
             do {
+                // Effective prompt (user base + safety suffix) re-resolved
+                // per turn, so every tier swap re-applies it — the suffix
+                // property the switcher tests pin.
                 let instructions = try deps.prompts.effectivePrompt()
-                let session = chatSession(instructions: instructions)
+                let session = chatSession(instructions: instructions, tier: servingTier)
                 let assembled = try deps.assembler.assemble(
                     for: .chat,
                     promptTokens: PromptManager.estimatedTokens(for: instructions)
@@ -233,7 +294,7 @@ final class CoachChatViewModel {
                         let reply = ChatTurn(
                             role: "assistant",
                             content: draft,
-                            provider: "onDevice",
+                            provider: servingTier.rawValue,
                             contextSnapshotID: snapshotID
                         )
                         try persist(reply)
@@ -244,10 +305,10 @@ final class CoachChatViewModel {
                     }
                 }
                 if !Task.isCancelled, let streamError {
-                    errorMessage = "The coach couldn't reply. \(streamError.localizedDescription)"
+                    errorMessage = Self.replyErrorMessage(streamError)
                 }
             } catch {
-                errorMessage = "The coach couldn't reply. \(error.localizedDescription)"
+                errorMessage = Self.replyErrorMessage(error)
             }
             draft = ""
         }
@@ -292,12 +353,26 @@ final class CoachChatViewModel {
         try viewContext.save()
     }
 
-    private func chatSession(instructions: String) -> any CoachSession {
+    /// Names tier-routing failures (WP-32 F1 fail-closed arm) instead of
+    /// leaking the default `Error.localizedDescription` rendering
+    /// ("operation couldn't be completed") for a `CoachError` that
+    /// carries its own UI copy.
+    private static func replyErrorMessage(_ error: Error) -> String {
+        if let coachError = error as? CoachError,
+           case .tierUnavailable(let tier, let reason) = coachError
+        {
+            return "\(tier.displayName) isn't available right now (\(reason))."
+        }
+        return "The coach couldn't reply. \(error.localizedDescription)"
+    }
+
+    private func chatSession(instructions: String, tier: ModelTier) -> any CoachSession {
         deps.factory.makeSession(
             for: .conversation,
             instructions: instructions,
             tools: CoachTools.all(store: deps.store),
-            toolSetID: Self.chatToolSetID
+            toolSetID: Self.chatToolSetID,
+            tier: tier
         )
     }
 

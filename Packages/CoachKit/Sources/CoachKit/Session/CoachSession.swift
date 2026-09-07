@@ -32,6 +32,43 @@ public protocol CoachSession: AnyObject, Sendable {
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content
 }
 
+/// Fail-closed session for live-but-unwired tiers (WP-32 F1). Returned by
+/// the factory's default build for any non-on-device tier until that tier's
+/// adapter lands with the flip: every answering method fails with
+/// `.tierUnavailable` (same copy the orchestrator uses for unwired tiers),
+/// so a gated-open tier can never serve on-device output badged as cloud.
+/// Final class (the protocol is class-bound) with immutable `Sendable`
+/// state, so tests on both toolchains can hold one without a model.
+public final class UnwiredTierSession: CoachSession, Sendable {
+    public let tier: ModelTier
+
+    public init(tier: ModelTier) {
+        self.tier = tier
+    }
+
+    public var isResponding: Bool { false }
+
+    public func prewarm() {}
+
+    public func respond(to prompt: String) async throws -> String {
+        throw CoachError.tierUnavailable(tier: tier, reason: Self.unwiredReason)
+    }
+
+    public func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
+        throw CoachError.tierUnavailable(tier: tier, reason: Self.unwiredReason)
+    }
+
+    public func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {
+        let error = CoachError.tierUnavailable(tier: tier, reason: Self.unwiredReason)
+        return AsyncThrowingStream { $0.finish(throwing: error) }
+    }
+
+    /// Shared with `CoachOrchestrator`'s unwired-tier throw: one copy for
+    /// "live, enabled, but no session provider," owned here next to the
+    /// type that raises it.
+    public static let unwiredReason = "This tier isn't wired to a session provider yet."
+}
+
 /// Live `LanguageModelSession` adapter. Constructed only through
 /// `CoachSessionFactory` so model/tools/instructions wiring stays in one place.
 ///

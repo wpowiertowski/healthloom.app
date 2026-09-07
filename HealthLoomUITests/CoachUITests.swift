@@ -104,6 +104,28 @@ final class CoachUITests: XCTestCase {
     }
 
     @MainActor
+    func testTierMenuOffersEnabledTiers() throws {
+        // WP-32 switcher menu: the pccOn scenario enables On-device + PCC
+        // (Claude neither consented nor keyed), so the menu offers exactly
+        // those two — a tier that cannot serve never appears.
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestAIModels=pccOn"]
+        app.launch()
+
+        let anyElement = app.descendants(matching: .any)
+        anyElement["tabbar.coach"].tap()
+        XCTAssertTrue(anyElement["chat.screen"].waitForExistence(timeout: 10))
+        anyElement["chat.tierSlot"].tap()
+        XCTAssertTrue(anyElement["chat.tier.onDevice"].waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement["chat.tier.privateCloudCompute"].exists)
+        XCTAssertFalse(anyElement["chat.tier.claude"].exists)
+        XCTAssertFalse(anyElement["chat.tier.gemini"].exists)
+        // Picking an offered tier dismisses the menu without error.
+        anyElement["chat.tier.privateCloudCompute"].tap()
+        XCTAssertFalse(anyElement["chat.tier.onDevice"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testUnavailableStateRenders() throws {
         // `-UITestCoachUnavailable` forces `.modelNotReady`: the iOS 27
         // simulator's on-device model reports `.available` (verified via a

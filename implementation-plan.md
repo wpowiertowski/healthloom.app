@@ -815,6 +815,10 @@ sync memory profile on a 1-year backfill (Instruments — no unbounded page accu
 - [ ] Google OAuth verification **approved** for Restricted scopes (started in P-1).
 - [ ] **PCC entitlement granted** (applied in P-1.5); PCC quota behavior verified on a
       real iCloud account; app degrades correctly if the entitlement lapses.
+      Session routing lands with the flip (WP-32 F1): the PCC adapter arm in
+      the factory's default build (fail-closed `UnwiredTierSession` until
+      then) plus before/after tests proving the serving model per tier —
+      flipping `liveTiers` without routing stamps on-device output as cloud.
 - [ ] Toolchain finalization: ~~CI un-guarded onto Xcode 27~~ (done 2026-07 — app job
       runs on the `xcode-27` preview image, see Toolchain note); still open: package
       manifests bumped to `swift-tools-version: 6.4`, built against the iOS 27 GA SDK,

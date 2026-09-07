@@ -5,8 +5,8 @@
 // while responding, prewarm on appear, stop button, and error/unavailable
 // states from `AvailabilityGate`. Each assistant message with a linked
 // snapshot carries a "What did the coach see?" expander (summary list here;
-// full UI in WP-30). The trailing toolbar slot is reserved for WP-32's tier
-// switcher.
+// full UI in WP-30). The trailing toolbar slot is WP-32's tier switcher
+// (enabled tiers only; selection re-validated at dispatch).
 //
 // Render scoping (WP-25 review #5/#11): only the draft bubble reads
 // `viewModel.draft`, only the list reads `viewModel.turns` -- a streamed
@@ -31,10 +31,38 @@ struct CoachChatView: View {
             // `isScrollable: false` leaves scrolling to the transcript's
             // own ScrollView (a chat column must not double-scroll).
             ThemedScreen(title: "Coach", isScrollable: false) {
-                Text(viewModel.enabledTierNames.isEmpty ? "Off" : viewModel.enabledTierNames)
-                    .font(Theme.font(12, .medium, relativeTo: .caption))
-                    .foregroundStyle(Theme.secondary)
-                    .accessibilityIdentifier("chat.tierSlot")
+                // WP-32 tier switcher: the slot text (unchanged copy +
+                // identifier, so existing tests keep passing) is the menu
+                // label; the menu offers enabled tiers only — a tier that
+                // cannot serve never appears, and `selectTier` re-validates
+                // stale picks (blocked at dispatch, not just at the menu).
+                Menu {
+                    if viewModel.enabledTiers.isEmpty {
+                        Text("No tiers available")
+                    } else {
+                        ForEach(viewModel.enabledTiers) { tier in
+                            Button {
+                                viewModel.selectTier(tier)
+                            } label: {
+                                if viewModel.selectedTier == tier {
+                                    Label(tier.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(tier.displayName)
+                                }
+                            }
+                            .accessibilityIdentifier("chat.tier.\(tier.rawValue)")
+                        }
+                    }
+                } label: {
+                    Text(viewModel.enabledTierNames.isEmpty ? "Off" : viewModel.enabledTierNames)
+                        .font(Theme.font(12, .medium, relativeTo: .caption))
+                        .foregroundStyle(Theme.secondary)
+                }
+                // Identifier on the Menu (not the label Text): labeling
+                // both reports the id twice and every lookup goes
+                // ambiguous — the menu's own label still carries the
+                // slot text the existing tests assert on.
+                .accessibilityIdentifier("chat.tierSlot")
             } content: {
                 VStack(spacing: 0) {
                     if viewModel.availability != .available {

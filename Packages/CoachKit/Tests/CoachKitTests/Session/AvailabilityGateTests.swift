@@ -62,7 +62,7 @@ struct AvailabilityGateTests {
     func factoryLifecycleIsLoadBearing() {
         // Scripted builder: the factory under test never constructs a real
         // `LanguageModelSession`, so this suite has no model dependency.
-        let factory = CoachSessionFactory(build: { _, _ in ScriptedCoachSession(chunks: ["ok"]) })
+        let factory = CoachSessionFactory(build: { _, _, _ in ScriptedCoachSession(chunks: ["ok"]) })
         let conversationA = factory.makeSession(for: .conversation, instructions: "base")
         let conversationB = factory.makeSession(for: .conversation, instructions: "base")
         // Same conversation, same instructions: identical session (shared
@@ -136,7 +136,7 @@ struct AvailabilityGateTests {
         // space -- so an explicit ID that happened to spell the same string
         // as a tool's name handed the second caller the first caller's
         // session, the exact stale-tool-set bug the key exists to prevent.
-        let factory = CoachSessionFactory { instructions, _ in
+        let factory = CoachSessionFactory { _, instructions, _ in
             ScriptedCoachSession(chunks: [instructions])
         }
         let byID = factory.makeSession(

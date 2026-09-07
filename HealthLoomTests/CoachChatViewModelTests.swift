@@ -40,7 +40,7 @@ struct CoachChatViewModelTests {
             store: store,
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
-            factory: CoachSessionFactory(build: { _, _ in session }),
+            factory: CoachSessionFactory(build: { _, _, _ in session }),
             availability: FixedCoachAvailabilityChecker(availability: availability),
             tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
             tierCatalog: ModelCatalog(onDeviceAvailable: { true })
@@ -161,7 +161,7 @@ struct CoachRoundTwoTests {
             store: store,
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
-            factory: CoachSessionFactory(build: { _, _ in TestCoachSession(
+            factory: CoachSessionFactory(build: { _, _, _ in TestCoachSession(
                 chunks: ["one ", "two ", "three."],
                 chunkDelay: .milliseconds(200)
             ) }),
@@ -196,7 +196,7 @@ struct CoachRoundTwoTests {
             store: store,
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
-            factory: CoachSessionFactory(build: { _, _ in TestCoachSession() }),
+            factory: CoachSessionFactory(build: { _, _, _ in TestCoachSession() }),
             availability: FixedCoachAvailabilityChecker(availability: .modelNotReady),
             tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
             tierCatalog: ModelCatalog(onDeviceAvailable: { true })
@@ -370,7 +370,7 @@ struct PromptEditorRoundTwoTests {
 
     @Test("successful writes bust the cached conversation session")
     func writesBustSessionCache() throws {
-        let factory = CoachSessionFactory(build: { _, _ in TestCoachSession() })
+        let factory = CoachSessionFactory(build: { _, _, _ in TestCoachSession() })
         let editor = try makeEditor(factory: factory)
         editor.load()
         // Same instructions twice: cached without an intervening write.
@@ -445,7 +445,7 @@ struct PromptEditorNoOpTests {
 
     @Test("whitespace-only save writes no row and normalizes")
     func whitespaceNoOp() throws {
-        let factory = CoachSessionFactory(build: { _, _ in TestCoachSession() })
+        let factory = CoachSessionFactory(build: { _, _, _ in TestCoachSession() })
         let editor = try makeEditor(factory: factory)
         editor.load()
         editor.baseText = PromptManager.defaultPrompt + "   \n"
@@ -459,7 +459,7 @@ struct PromptEditorNoOpTests {
 
     @Test("restoring the active version writes no row and keeps the session")
     func restoreCurrentNoOp() throws {
-        let factory = CoachSessionFactory(build: { _, _ in TestCoachSession() })
+        let factory = CoachSessionFactory(build: { _, _, _ in TestCoachSession() })
         let editor = try makeEditor(factory: factory)
         editor.load()
         editor.baseText += " More."

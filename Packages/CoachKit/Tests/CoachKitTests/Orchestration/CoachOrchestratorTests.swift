@@ -39,7 +39,7 @@ final class RecordingBuild {
     func factory() -> CoachSessionFactory {
         // The build closure is `@MainActor`-isolated, so `self` (also
         // `@MainActor`) is directly accessible -- no lock, no hopping.
-        CoachSessionFactory(build: { instructions, _ in
+        CoachSessionFactory(build: { _, instructions, _ in
             self.instructions.append(instructions)
             let session = ScriptedCoachSession(chunks: [self.answer])
             session.failure = self.failure

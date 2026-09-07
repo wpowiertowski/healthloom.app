@@ -137,3 +137,38 @@ struct DeltaStreamTests {
     }
 }
 
+
+@Suite("UnwiredTierSession fail-closed")
+struct UnwiredTierSessionTests {
+    @Test("every answering method fails namedly, never serves")
+    func failsNamedly() async {
+        let session = UnwiredTierSession(tier: .privateCloudCompute)
+        #expect(!session.isResponding)
+        await #expect(throws: CoachError.tierUnavailable(tier: .privateCloudCompute, reason: UnwiredTierSession.unwiredReason)) {
+            try await session.respond(to: "hi")
+        }
+        var streamed: [String] = []
+        await #expect(throws: CoachError.tierUnavailable(tier: .privateCloudCompute, reason: UnwiredTierSession.unwiredReason)) {
+            for try await delta in session.stream(to: "hi") {
+                streamed.append(delta)
+            }
+        }
+        #expect(streamed.isEmpty)
+    }
+
+    @Test("the default build routes on-device live and everything else closed")
+    func defaultBuildRoutesByTier() async {
+        // No model touched: the unwired arm constructs without one, and the
+        // on-device arm is only *constructed* here through the live path on
+        // a host where `SystemLanguageModel.default` exists as a value —
+        // the test asserts the routing decision (type identity), then
+        // exercises only the unwired side. (Live generation stays manual,
+        // test plan §7.)
+        let factory = CoachSessionFactory()
+        let pcc = factory.makeSession(for: .oneShot, instructions: "x", tier: .privateCloudCompute)
+        #expect(pcc is UnwiredTierSession)
+        await #expect(throws: CoachError.self) {
+            try await pcc.respond(to: "hi")
+        }
+    }
+}

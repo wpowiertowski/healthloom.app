@@ -49,7 +49,12 @@ public final class CoachSessionFactory: Sendable {
         }
     }
 
-    private let build: @MainActor @Sendable (String, [any Tool]) -> any CoachSession
+    /// Session constructor. Takes the tier (WP-32 F1): routing lives here,
+    /// not in the cache — the cache segregates per-tier histories, the
+    /// builder decides which model serves. Tests inject per-tier routing
+    /// explicitly, which is what lets the suite prove model identity per
+    /// tier instead of only slot segregation.
+    private let build: @MainActor @Sendable (ModelTier, String, [any Tool]) -> any CoachSession
     // One conversation slot per tier (F12): toggling on-device<->PCC
     // mid-conversation keeps each tier's transcript (the transcript IS the
     // memory) instead of evicting it on every toggle. Bounded by
@@ -57,23 +62,32 @@ public final class CoachSessionFactory: Sendable {
     // overwrite within the tier rather than growing a prompt-keyed dict.
     private var cachedConversations: [ModelTier: (instructions: String, toolSetKey: String, session: any CoachSession)] = [:]
 
-    /// - Parameter build: session constructor. Defaults to a live on-device
-    ///   session; tests inject a scripted double so no unit test touches the
-    ///   model (real generation is covered by on-device manual tests,
-    ///   test plan §7). `@MainActor`-bound because constructing a
+    /// - Parameter build: session constructor (tier first, then
+    ///   instructions and tools). Defaults to a live on-device session with
+    ///   every other tier fail-closed (`UnwiredTierSession`) until that
+    ///   tier's adapter lands with the flip — a live+enabled-but-unwired
+    ///   tier errors namedly instead of serving on-device output badged as
+    ///   cloud (WP-32 F1). Tests inject a scripted double so no unit test
+    ///   touches the model (real generation is covered by on-device manual
+    ///   tests, test plan §7). `@MainActor`-bound because constructing a
     ///   `LiveCoachSession` is actor-isolated.
-    public init(build: (@MainActor @Sendable (String, [any Tool]) -> any CoachSession)? = nil) {
+    public init(build: (@MainActor @Sendable (ModelTier, String, [any Tool]) -> any CoachSession)? = nil) {
         if let build {
             self.build = build
         } else {
-            self.build = { instructions, tools in
-                LiveCoachSession(
-                    session: LanguageModelSession(
-                        model: SystemLanguageModel.default,
-                        tools: tools,
-                        instructions: instructions
+            self.build = { tier, instructions, tools in
+                switch tier {
+                case .onDevice:
+                    LiveCoachSession(
+                        session: LanguageModelSession(
+                            model: SystemLanguageModel.default,
+                            tools: tools,
+                            instructions: instructions
+                        )
                     )
-                )
+                case .privateCloudCompute, .claude, .gemini:
+                    UnwiredTierSession(tier: tier)
+                }
             }
         }
     }
@@ -119,7 +133,7 @@ public final class CoachSessionFactory: Sendable {
         {
             return cached.session
         }
-        let session = build(instructions, tools)
+        let session = build(tier, instructions, tools)
         if !Self.requiresFreshSession(for: purpose) {
             cachedConversations[tier] = (instructions, cacheKey, session)
         }
