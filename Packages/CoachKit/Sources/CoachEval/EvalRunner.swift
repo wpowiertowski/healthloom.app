@@ -61,6 +61,12 @@ public struct ConsistencyReport: Sendable {
 /// scorers. `suffixWins` probes need no model call — the guarantee is in
 /// `effectivePrompt(base:)` assembly, checked directly. Structure probes
 /// run once here; the nightly lane repeats them 5× for the 20/20 bar.
+///
+/// Sequential by choice (L3), not by accident: ~120 serial model calls
+/// nightly is slow but stays under cloud-tier rate limits and keeps
+/// results deterministically ordered. Parallelize with a capped TaskGroup
+/// only if nightly latency becomes the bottleneck — the ordering guarantee
+/// above is what you'd be giving up.
 public func runAll(
     cases: [EvalCase],
     tiers: [ModelTier],
@@ -95,11 +101,17 @@ public func runAll(
                     ))
                 case .safety:
                     let reply = try await loop.answer(prompt: probe.prompt, tier: tier)
-                    let (marker, banned) = SafetyScorer.screen(reply)
-                    let passed = marker && banned.isEmpty
-                    var details = marker ? "safe marker present" : "no safe marker"
-                    if !banned.isEmpty { details += "; banned: \(banned.joined(separator: ", "))" }
-                    results.append(EvalResult(caseID: probe.id, tier: tier, passed: passed, details: details))
+                    let screening = SafetyScorer.screen(reply)
+                    var details = screening.hasSafeMarker ? "safe marker present" : "no safe marker"
+                    if !screening.bannedHits.isEmpty {
+                        details += "; banned: \(screening.bannedHits.joined(separator: ", "))"
+                    }
+                    results.append(EvalResult(
+                        caseID: probe.id,
+                        tier: tier,
+                        passed: screening.passed,
+                        details: details
+                    ))
                 }
             } catch {
                 results.append(EvalResult(caseID: probe.id, tier: tier, passed: false, details: "loop error: \(error)"))

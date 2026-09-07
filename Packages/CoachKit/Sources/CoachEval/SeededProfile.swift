@@ -17,7 +17,9 @@ import Foundation
 /// `groundingSourceText` is the same string the nightly run sends, so the
 /// scorer can never disagree with the runner about what "the context" was.
 public enum SeededProfile {
-    /// Frozen "today" so prompt text is byte-stable across runs.
+    /// Frozen fixture date. Byte-stability comes from dateless rendering
+    /// (field framing carries no dates) plus this frozen value — not from
+    /// the date itself, which never renders into `promptText`.
     public static let today = Date(timeIntervalSince1970: 1_700_000_100)
 
     public static let readiness = Readiness(score: 78, deltaVsAverage: 5, signalsUsed: 4)

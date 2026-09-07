@@ -64,8 +64,11 @@ public struct TuningProposal: Sendable, Hashable {
         self.reviewer = reviewer
     }
 
-    /// A reviewed proposal must name its reviewer; an adopted one must have
-    /// passed through approval. Structural backstop for "never auto-adopted".
+    /// A reviewed proposal must name its reviewer. For `adopted`, the
+    /// reviewer field records who signed off — the transition history
+    /// (proposed → approved → adopted) lives in review tooling, not in
+    /// this single-snapshot record, so the bool proves sign-off, not the
+    /// path. Structural backstop for "never auto-adopted".
     public var reviewIsComplete: Bool {
         switch status {
         case .proposed: true
