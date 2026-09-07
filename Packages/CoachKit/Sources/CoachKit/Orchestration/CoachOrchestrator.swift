@@ -271,7 +271,7 @@ public final class CoachOrchestrator: Sendable {
             )
         } else {
             guard let wired = providerFactories[tier] else {
-                throw CoachError.tierUnavailable(tier: tier, reason: "This tier isn't wired to a session provider yet.")
+                throw CoachError.tierUnavailable(tier: tier, reason: UnwiredTierSession.unwiredReason)
             }
             session = wired.makeSession(
                 for: CoachSessionFactory.Purpose(purpose),

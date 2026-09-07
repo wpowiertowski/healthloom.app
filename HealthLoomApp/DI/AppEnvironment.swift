@@ -304,7 +304,7 @@ final class AppEnvironment {
             coachSessionFactory = CoachSessionFactory()
             availabilityChecker = LiveCoachAvailabilityChecker()
         case .scripted:
-            coachSessionFactory = CoachSessionFactory(build: { _, _ in UITestScriptedCoachSession() })
+            coachSessionFactory = CoachSessionFactory(build: { _, _, _ in UITestScriptedCoachSession() })
             availabilityChecker = FixedCoachAvailabilityChecker(availability: .available)
         case .forced(let availability):
             coachSessionFactory = CoachSessionFactory()

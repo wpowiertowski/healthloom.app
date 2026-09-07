@@ -4943,3 +4943,52 @@ bare-400); new `AIModelsUITests` 5/5 incl. `testKeyDeleteDisablesTier`;
 CoachKit 186/186 beta, 185/185 stable (unchanged — visibility-only diff).
 Full app `xcodebuild build test` green on beta with warnings-as-errors,
 clean build green on stable for the touched package.
+
+## WP-30 · Knowledge transparency UI ("You" tab)
+
+New You tab (`HealthLoomApp/You/`, `HomeTab.you` between Coach and Data)
+over the persisted `KnowledgeProfile`: per-field rows (display text,
+source, as-of, AI-context toggle, Clinical / Your-correction badges),
+correction sheet pinning user overrides, Forget section (derived-insight
+reset + chat-history wipe, both confirmed). Durable exclusion by design:
+`KnowledgeStore.refresh()` carries each key's previous `excludedFromAI`
+onto the rebuilt derived field (the write-path warning's accepted gap —
+absent-for-a-cycle resets — documented at mechanism and contract);
+`pinCorrection(displayText:forKey:)` preserves sharing posture.
+`KnowledgeStore` promoted to a stored `AppEnvironment` property with a
+`youViewModel()` factory; `-UITestYouTab` seeds profile/insight/turns and
+lands on the tab; `-UITestScrubChat` keeps the scripted coach transcript
+hermetic. Trace expander names the serving tier (`chat.context.tier`).
+
+**Review (reviews/wp-30-review.md, 2 rounds):** round 1 found 1 high (F1 —
+wipe deleted rows but the factory's cached session kept the transcript;
+fixed via `factory` in deps + `resetConversation()`) + 2 lows (F2 empty-
+provider badge, F3 scrub gated on scripted) + nits (N1 notice cleared on
+load; N3 shared doubles moved to `TestDoubles.swift`, not widened).
+
+**Counts:** HealthLoomTests 86 → 93 (6 You VM + F1 session test);
+`YouTabUITests` 4/4 new; `CoachUITests` 2 → 3 (trace badge);
+CoachKit 186 → 189 (exclusion-durability + correction suites). Full app
+`xcodebuild build test` green on beta with warnings-as-errors.
+
+## WP-32 · In-chat tier switcher (slice 1)
+
+Toolbar tier menu over `enabledTiers` (single source for menu, slot text,
+and dispatch): `selectTier` choke point (menu + future escalation offers),
+dispatch re-validation with captured `servingTier`, per-turn stamps,
+untouched transcript, per-turn prompt re-resolution (suffix sweep).
+Tier threaded into the session-build seam; default build serves
+on-device live and every other tier fail-closed (`UnwiredTierSession`,
+copy single-sourced with the orchestrator); flip checklist names routing.
+
+**Review (reviews/wp-32-review.md, 2 rounds — SHIP IT):** round 1 high
+(F1 tier-blind build stamping unserved tiers) fixed structurally +
+per-tier identity test; F2 sticky select error. Round 2: 1 low (F1
+unwired-error copy unpinned end-to-end — VM-level named-error +
+user-turn-only test) + nits (comment reword, this paragraph).
+
+**Counts:** HealthLoomTests 93 → 102 (7 switcher + routing + unwired
+send); `CoachUITests` 3 → 4 (menu offers); CoachKit 189 → 191
+(UnwiredTierSession suite). Full app `xcodebuild build test` green on
+beta with warnings-as-errors (unit 102/102; UI 13/13 across
+AIModels/Coach/YouTab); CoachKit 191 beta / 190 stable.

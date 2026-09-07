@@ -69,7 +69,7 @@ struct DailyInsightPromptTests {
 @MainActor
 struct DailyInsightGeneratorTests {
     private func scriptedFactory(_ insight: DailyInsight) -> CoachSessionFactory {
-        CoachSessionFactory(build: { _, _ in
+        CoachSessionFactory(build: { _, _, _ in
             let session = ScriptedCoachSession(chunks: [])
             session.scriptedStructured = insight
             return session
@@ -96,7 +96,7 @@ struct DailyInsightGeneratorTests {
     @Test("every insight builds a fresh session")
     func freshSessionPerInsight() async throws {
         var builds = 0
-        let factory = CoachSessionFactory(build: { _, _ in
+        let factory = CoachSessionFactory(build: { _, _, _ in
             builds += 1
             let session = ScriptedCoachSession(chunks: [])
             session.scriptedStructured = DailyInsight(headline: "h", suggestions: ["a", "b"], effortLevel: "low")
@@ -113,7 +113,7 @@ struct DailyInsightGeneratorTests {
     func errorsPropagate() async throws {
         // No scripted structured answer configured: the double throws
         // instead of answering, and the generator lets it through.
-        let factory = CoachSessionFactory(build: { _, _ in ScriptedCoachSession(chunks: []) })
+        let factory = CoachSessionFactory(build: { _, _, _ in ScriptedCoachSession(chunks: []) })
         let generator = DailyInsightGenerator.live(factory: factory, instructions: "base")
         await #expect(throws: ScriptedCoachSession.NoStructuredResponse.self) {
             try await generator.insight(forPrompt: "anything")

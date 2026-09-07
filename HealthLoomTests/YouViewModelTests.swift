@@ -24,7 +24,7 @@ struct YouViewModelTests {
             healthKitAuth: HealthKitAuth()
         )
         // Fresh session per build so cache hits are observable by identity.
-        let factory = CoachSessionFactory(build: { _, _ in TestCoachSession() })
+        let factory = CoachSessionFactory(build: { _, _, _ in TestCoachSession() })
         return (
             YouViewModel(container: container, store: store, factory: factory),
             container, store, factory
