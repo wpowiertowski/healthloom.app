@@ -31,6 +31,15 @@ import SwiftUI
 struct TodayView: View {
     @Query private var syncStates: [SyncState]
     @Query(sort: \LocalSample.end, order: .reverse) private var localSamples: [LocalSample]
+    // WP-34: the coach panel binds the latest generated morning insight
+    // (persisted by `MorningInsightRunner`); nil until the first run.
+    // Unfiltered query + in-code prefix match: `#Predicate` supports no
+    // `hasPrefix`, and the table is tiny (insights are daily).
+    @Query(sort: \DerivedInsight.createdAt, order: .reverse) private var derivedInsights: [DerivedInsight]
+
+    private var latestMorningInsight: DerivedInsight? {
+        derivedInsights.first { $0.sourceProvider.hasPrefix(MorningInsightRunner.insightSourceProvider) }
+    }
     @State private var preferences = TodayMetricPreferences()
     @State private var readings: [TodayMetricKind: TodayMetricReading] = [:]
     @State private var readiness: ReadinessDisplay = .pending
@@ -138,7 +147,7 @@ struct TodayView: View {
                         .accessibilityIdentifier("today.emptyHint")
                 }
 
-                CoachPanel(insightText: nil)
+                CoachPanel(insightText: latestMorningInsight?.text)
                     .padding(.top, 14)
             }
             .padding(.horizontal, 22).padding(.bottom, 24)

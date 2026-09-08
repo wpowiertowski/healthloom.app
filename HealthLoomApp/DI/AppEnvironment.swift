@@ -156,6 +156,13 @@ final class AppEnvironment {
     /// cache, `AvailabilityGate` for on-device, live PCC reads). The chat
     /// tier slot and the AI Models rows read this same instance's gate.
     let modelCatalog: ModelCatalog
+    /// WP-34 (implementation-plan.md): morning-insight preferences + the
+    /// notification seam. The notifier is stubbed under
+    /// `-UITestStubNotifications` (grants on request) and starts denied
+    /// under `-UITestNotificationsDenied`, so the permission flow is
+    /// deterministic in UI tests.
+    let insightPreferences = InsightPreferences()
+    let insightNotifier: any InsightNotifying
     init(launchConfiguration: LaunchConfiguration = .current) {
         self.launchConfiguration = launchConfiguration
 
@@ -163,6 +170,11 @@ final class AppEnvironment {
         // order (see LaunchConfiguration.resetTodayMetrics's doc comment).
         if launchConfiguration.resetTodayMetrics {
             TodayMetricPreferences.reset()
+        }
+        // WP-34: the notification-flow flags start from clean insight
+        // preferences (see `InsightPreferences.reset`).
+        if launchConfiguration.stubNotifications || launchConfiguration.denyNotifications {
+            InsightPreferences.reset()
         }
 
         let container: ModelContainer
@@ -389,6 +401,45 @@ final class AppEnvironment {
             availability: availabilityChecker,
             tierSettings: tierSettings,
             tierCatalog: modelCatalog
+        ))
+
+        // WP-34: notification seam + shared morning-insight runner. The
+        // route closure reads live gates on every call (evaluated at
+        // scheduling AND re-evaluated at dispatch inside the runner) —
+        // PCC needs the catalog gate, consent cache, and the separate
+        // cloud opt-in; on-device needs live availability.
+        if launchConfiguration.denyNotifications {
+            self.insightNotifier = StubInsightNotifier(status: .denied)
+        } else if launchConfiguration.stubNotifications {
+            self.insightNotifier = StubInsightNotifier(status: .notDetermined)
+        } else {
+            self.insightNotifier = LiveInsightNotifier()
+        }
+        let insightPrefs = self.insightPreferences
+        let insightNotify = self.insightNotifier
+        InsightRunnerHost.runner = MorningInsightRunner(deps: MorningInsightRunner.Dependencies(
+            container: container,
+            prefs: insightPrefs,
+            notifier: insightNotify,
+            factory: coachSessionFactory,
+            assembler: contextAssembler,
+            promptManager: promptManager,
+            history: ReadinessScoreHistory(),
+            availability: availabilityChecker,
+            catalog: modelCatalog,
+            routeTier: {
+                InsightTierRouter.route(
+                    pccTierEnabled: modelCatalog.isEnabled(.privateCloudCompute),
+                    viaCloudOptIn: insightPrefs.insightsViaCloud,
+                    onDeviceAvailable: await availabilityChecker.current() == .available
+                )
+            },
+            readInputs: {
+                let provider = ReadinessInputsProvider()
+                return ReadinessInputsProvider.assemble(await provider.aggregates())
+            },
+            now: Date.init,
+            calendar: .current
         ))
     }
 

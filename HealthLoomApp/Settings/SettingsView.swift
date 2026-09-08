@@ -45,6 +45,9 @@ struct SettingsView: View {
     @State private var preferences = SyncPreferences()
     // WP-12b: "Prefer Apple Watch during workouts" (architecture.md D13.5).
     @State private var watchPriority = WatchPriorityPreferences()
+    // WP-34: morning-insight toggles + live notification posture.
+    @State private var insightPrefs = InsightPreferences()
+    @State private var insightAuthStatus: InsightAuthStatus = .notDetermined
     private let consentPresenter = IncrementalConsentPresenter()
 
     @State private var pendingTypes: Set<GoogleDataType> = []
@@ -101,6 +104,56 @@ struct SettingsView: View {
                 }
             }
             .padding(.top, 20)
+
+            // WP-34 (implementation-plan.md): morning insights. Enabling
+            // the toggle is the in-context notification-permission moment
+            // (never at launch): a `.notDetermined` status triggers the
+            // system request right here; a denial flips the toggle back
+            // off and the guidance line below points at Settings.
+            ThemedPanel {
+                ThemedToggleRow(
+                    title: "Morning insights",
+                    accessibilityIdentifier: "settings.insights.toggle",
+                    isOn: Binding(
+                        get: { insightPrefs.morningInsightsEnabled },
+                        set: { toggleInsights(isOn: $0) }
+                    )
+                )
+                ThemedRowDivider()
+                ThemedToggleRow(
+                    title: "Show details on lock screen",
+                    accessibilityIdentifier: "settings.insights.fullText",
+                    isOn: $insightPrefs.lockScreenDetails
+                )
+                ThemedRowDivider()
+                ThemedToggleRow(
+                    title: "Generate via Apple cloud",
+                    accessibilityIdentifier: "settings.insights.viaCloud",
+                    isOn: $insightPrefs.insightsViaCloud
+                )
+                if insightAuthStatus == .denied {
+                    Text("Notifications are off for HealthLoom — enable them in Settings to receive morning insights.")
+                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .foregroundStyle(Theme.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .accessibilityIdentifier("settings.insights.deniedHint")
+                }
+            }
+            .padding(.top, 20)
+
+            Text("After the first sync past 5am, HealthLoom generates one insight — on-device unless Apple cloud (PCC) is enabled in AI Models and generation via Apple cloud is on above. The lock-screen notification shows the headline only (numbers removed) unless details are on.")
+                .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+                .task {
+                    insightAuthStatus = await appEnvironment.insightNotifier.authorizationStatus()
+                }
 
             // WP-26 (implementation-plan.md): the coach prompt editor --
             // base prompt, token estimate, reset, history restore,
@@ -204,6 +257,27 @@ struct SettingsView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
             }
+        }
+    }
+
+    /// Morning-insights toggle with the in-context permission request.
+    /// Optimistic ON: enabling requests unless already authorized — the
+    /// user action is the context, never launch. A denial (or an already-
+    /// denied status, which answers immediately) reverts the toggle and
+    /// the guidance line appears.
+    private func toggleInsights(isOn: Bool) {
+        insightPrefs.morningInsightsEnabled = isOn
+        guard isOn else { return }
+        Task {
+            let already = await appEnvironment.insightNotifier.authorizationStatus() == .authorized
+            var granted = already
+            if !granted {
+                granted = await appEnvironment.insightNotifier.requestAuthorization()
+            }
+            if !granted {
+                insightPrefs.morningInsightsEnabled = false
+            }
+            insightAuthStatus = await appEnvironment.insightNotifier.authorizationStatus()
         }
     }
 
