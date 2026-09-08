@@ -53,7 +53,10 @@ public enum CoreModel {
         return container
     }
 
-    private static func productionStoreURL() throws -> URL {
+    /// On-disk store location. Public for WP-35's `StoreDeleter` only —
+    /// the single source both the container factory and the wipe delete
+    /// through, so the wipe can never miss the live store's files.
+    public static func productionStoreURL() throws -> URL {
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,

@@ -147,7 +147,8 @@ public final class HealthKitWriter: Sendable {
     /// round-trip): the sweep aborts on its first failure, so a
     /// nondeterministic order would make which buckets get cleaned before
     /// an error arbitrary run to run.
-    nonisolated static var distanceIdentifiersForCleanup: [HKQuantityTypeIdentifier] {
+    /// Public for WP-35's wipe set (same table the share request uses).
+    nonisolated public static var distanceIdentifiersForCleanup: [HKQuantityTypeIdentifier] {
         var seen: [HKQuantityTypeIdentifier] = []
         for activityType in MappedWorkoutActivityType.allCases {
             guard let identifier = distanceIdentifier(for: activityType),
@@ -165,7 +166,8 @@ public final class HealthKitWriter: Sendable {
     /// distance buckets are structurally unreachable from `writability`,
     /// and -- found while fixing that -- `.exercise` share itself was never
     /// requested anywhere, so this set closes both gaps at once).
-    nonisolated static var workoutShareTypes: Set<HKSampleType> {
+    /// Public for WP-35's wipe set (same union the share request makes).
+    nonisolated public static var workoutShareTypes: Set<HKSampleType> {
         var types: Set<HKSampleType> = [HKObjectType.workoutType()]
         if let energy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
             types.insert(energy)

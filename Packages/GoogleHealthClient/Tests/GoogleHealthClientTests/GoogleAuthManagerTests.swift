@@ -327,4 +327,71 @@ struct GoogleAuthManagerTests {
         let store: any GoogleTokenStoring = KeychainStore()
         _ = store
     }
+// MARK: - Revocation (WP-35 disconnect)
+
+    @Test("revocation request encodes the token against the revoke endpoint")
+    func revocationRequestEncoding() {
+        let manager = GoogleAuthManager(
+            config: Self.testConfig,
+            httpSession: RecordingHTTPSession { _, _ in fatalError("no network expected") },
+            tokenStore: FakeTokenStore()
+        )
+        let request = manager.buildRevocationRequest("refresh-xyz")
+        #expect(request.url?.absoluteString == "https://oauth2.googleapis.com/revoke")
+        #expect(request.httpMethod == "POST")
+        let body = Self.parseFormBody(request.httpBody ?? Data())
+        #expect(body == ["token": "refresh-xyz"])
+    }
+
+    @Test("successful revocation clears the store and reports revoked")
+    func revocationClearsStore() async throws {
+        let http = RecordingHTTPSession { request, _ in
+            (Data(), httpResponse(url: request.url!, statusCode: 200))
+        }
+        let store = FakeTokenStore(refreshToken: "refresh-abc", accessToken: "stale-access")
+        let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: store)
+        #expect(try await manager.revokeRefreshToken() == .revoked)
+        #expect(await http.requestCount(urlContains: "oauth2.googleapis.com/revoke") == 1)
+        #expect(try await store.refreshToken() == nil)
+        #expect(try await store.accessToken() == nil)
+    }
+
+    @Test("transport failure still clears the cache but keeps the store")
+    func revocationTransportFailure() async throws {
+        struct TransportBoom: Error {}
+        let http = RecordingHTTPSession { _, _ in throw TransportBoom() }
+        let store = FakeTokenStore(refreshToken: "refresh-abc", accessToken: "stale-access")
+        let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: store)
+        // Seed the actor cache so the defer-clear is observable.
+        _ = try? await manager.validAccessToken()
+        await #expect(throws: GoogleAuthError.self) {
+            try await manager.revokeRefreshToken()
+        }
+        // Actor cache cleared via defer (granted scopes dropped)…
+        #expect(await manager.currentGrantedScopes.isEmpty)
+        // …but the store is untouched: clearing secrets is the wipe's
+        // keychain step, not the failed request's.
+        #expect(try await store.refreshToken() == "refresh-abc")
+    }
+
+    @Test("nothing stored is success without a request")
+    func revocationNothingStored() async throws {
+        let http = RecordingHTTPSession { _, _ in fatalError("no network expected") }
+        let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: FakeTokenStore())
+        #expect(try await manager.revokeRefreshToken() == .nothingStored)
+        #expect(await http.requestCount(urlContains: "revoke") == 0)
+    }
+
+    @Test("non-200 revocation still clears locally and reports the status")
+    func revocationFailureStillClears() async throws {
+        let http = RecordingHTTPSession { request, _ in
+            (Data(), httpResponse(url: request.url!, statusCode: 400))
+        }
+        let store = FakeTokenStore(refreshToken: "refresh-abc")
+        let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: store)
+        await #expect(throws: GoogleAuthError.revocationFailed(status: 400)) {
+            try await manager.revokeRefreshToken()
+        }
+        #expect(try await store.refreshToken() == nil)
+    }
 }

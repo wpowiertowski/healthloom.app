@@ -197,7 +197,10 @@ public final class HealthKitAuth: Sendable {
         return result
     }
 
-    private func resolveSampleType(
+    /// Maps one type the way `requestShareAndRead` does (WP-35's wipe
+    /// set derives from this, so wipe covers exactly what onboarding
+    /// authorized — a future P0 addition lands in both or neither).
+    public func resolveSampleType(
         for type: GoogleDataType
     ) throws(HealthKitAuthError) -> HKSampleType {
         guard case .healthKit(let identifier) = type.writability else {

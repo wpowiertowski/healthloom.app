@@ -27,6 +27,9 @@ nonisolated public struct GoogleAuthConfig: Sendable {
     public var authorizationEndpoint: String
     public var tokenEndpoint: String
 
+    /// RFC 7009 revocation endpoint (WP-35 disconnect).
+    public var revocationEndpoint: String
+
     /// Google's OpenID Connect userinfo endpoint -- queried once after first
     /// consent to read the `hd` (hosted domain) claim for Workspace-account
     /// detection (WP-04 step 5). Requires the `openid`/`email` scopes to be
@@ -45,6 +48,7 @@ nonisolated public struct GoogleAuthConfig: Sendable {
         redirectURIScheme: String,
         authorizationEndpoint: String = "https://accounts.google.com/o/oauth2/v2/auth",
         tokenEndpoint: String = "https://oauth2.googleapis.com/token",
+        revocationEndpoint: String = "https://oauth2.googleapis.com/revoke",
         userInfoEndpoint: String = "https://openidconnect.googleapis.com/v1/userinfo",
         additionalScopes: [String] = ["openid", "email"]
     ) {
@@ -53,6 +57,7 @@ nonisolated public struct GoogleAuthConfig: Sendable {
         self.redirectURIScheme = redirectURIScheme
         self.authorizationEndpoint = authorizationEndpoint
         self.tokenEndpoint = tokenEndpoint
+        self.revocationEndpoint = revocationEndpoint
         self.userInfoEndpoint = userInfoEndpoint
         self.additionalScopes = additionalScopes
     }

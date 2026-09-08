@@ -34,6 +34,7 @@
 
 import CoreModel
 import GoogleHealthClient
+import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
@@ -49,6 +50,10 @@ struct SettingsView: View {
     @State private var insightPrefs = InsightPreferences()
     @State private var insightAuthStatus: InsightAuthStatus = .notDetermined
     @Environment(\.scenePhase) private var scenePhase
+    // WP-35: export file state.
+    @State private var exportURL: URL?
+    @State private var isExporting = false
+    @State private var exportError: String?
     private let consentPresenter = IncrementalConsentPresenter()
 
     @State private var pendingTypes: Set<GoogleDataType> = []
@@ -164,6 +169,72 @@ struct SettingsView: View {
                     }
                 }
 
+            // WP-35 (implementation-plan.md): export (JSON dump + share
+            // sheet, user-initiated) and the disconnect-and-wipe flow.
+            ThemedPanel {
+                Button {
+                    prepareExport()
+                } label: {
+                    HStack {
+                        Text("Export my data")
+                            .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                            .foregroundStyle(Theme.ink)
+                        Spacer()
+                        if isExporting {
+                            ProgressView().controlSize(.mini).tint(Theme.accent)
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 11)
+                }
+                .buttonStyle(.plain)
+                .disabled(isExporting)
+                .accessibilityIdentifier("settings.export.prepare")
+                if let exportURL {
+                    ThemedRowDivider()
+                    ShareLink(item: exportURL, subject: Text("HealthLoom data export")) {
+                        HStack {
+                            Text("Share export file")
+                                .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                                .foregroundStyle(Theme.accentDeep)
+                            Spacer()
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 15, weight: .light))
+                                .foregroundStyle(Theme.accentDeep)
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("settings.export.share")
+                }
+                if let exportError {
+                    ThemedErrorText(
+                        message: exportError,
+                        accessibilityIdentifier: "settings.export.error"
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+                ThemedRowDivider()
+                // NavigationLink, not a sheet: nav rows are the proven
+                // drill-in pattern on this screen (AI Models UI tests),
+                // and a multi-step flow wants a back stack anyway.
+                ThemedNavRow(
+                    title: "Disconnect & wipe",
+                    accessibilityIdentifier: "settings.wipe.open"
+                ) {
+                    WipeFlowView()
+                }
+            }
+            .padding(.top, 20)
+
+            Text("Export downloads LocalSample rows, your knowledge profile, and chat history as one JSON file. Disconnect & wipe signs out of Google, deletes saved keys, HealthKit samples HealthLoom wrote, all app data, and settings — then restart the app.")
+                .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+
             // WP-26 (implementation-plan.md): the coach prompt editor --
             // base prompt, token estimate, reset, history restore,
             // diff-vs-default, and the locked-suffix effective preview.
@@ -271,6 +342,44 @@ struct SettingsView: View {
 
     private func refreshInsightAuthStatus() async {
         insightAuthStatus = await appEnvironment.insightNotifier.authorizationStatus()
+    }
+
+    /// WP-35 export: fetches every exportable row, encodes the versioned
+    /// document, and stages a temp file for the `ShareLink` above. Errors
+    /// surface inline (never a silent no-op). Previous staged files are
+    /// swept first (F3): exports must not accumulate health JSON in tmp.
+    private func prepareExport() {
+        isExporting = true
+        exportError = nil
+        exportURL = nil
+        Task {
+            defer { isExporting = false }
+            do {
+                let context = ModelContext(appEnvironment.modelContainer)
+                let samples = try context.fetch(FetchDescriptor<LocalSample>())
+                let profile = try context.fetch(FetchDescriptor<KnowledgeProfile>()).first
+                let turns = try context.fetch(FetchDescriptor<ChatTurn>(
+                    sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+                ))
+                let document = ExportBuilder.build(
+                    samples: samples,
+                    profile: profile,
+                    turns: turns,
+                    now: Date()
+                )
+                let data = try ExportBuilder.encode(document)
+                // Sweep previous staged exports before writing (F3).
+                try StoreDeleter.deleteExportFiles()
+                let url = FileManager.default.temporaryDirectory.appending(
+                    path: "healthloom-export-\(Int(Date().timeIntervalSince1970)).json",
+                    directoryHint: .notDirectory
+                )
+                try data.write(to: url, options: .atomic)
+                exportURL = url
+            } catch {
+                exportError = "Couldn't prepare the export file."
+            }
+        }
     }
 
     /// Morning-insights toggle with the in-context permission request.
