@@ -20,9 +20,13 @@ this file is its enforceable distillate plus build policy.
    is upgrading to a warning-free release, patching, or removing the
    dependency (e.g. WP-33: `swift-snapshot-testing` 1.19.4 — newest upstream
    — carried iOS-15 deprecations, so it was replaced with a local snapshot
-   helper). `SWIFT_SUPPRESS_WARNINGS=NO` stays on so upstream warnings stay
-   visible instead of silently suppressed. Never narrow strictness to make a
-   dependency pass.
+   helper). No warning-suppression flag rides anywhere: with zero remote
+   SPM dependencies there is nothing to suppress, and the planted-warning
+   probe (unused `let` in a local package → build exit 65 naming the file)
+   proves local-package iOS warnings surface and promote. If a remote
+   dependency ever returns, its warnings stay visible — never silently
+   suppressed — and a warning there holds the merge until fixed at the
+   source per this rule. Never narrow strictness to make a dependency pass.
 4. **Keep the scopes in sync.** `Makefile`, `project.yml` (base note +
    per-target flags), and `.github/workflows/ci.yml` must describe the same
    policy. A change to one is a change to all three, with comments rewritten
