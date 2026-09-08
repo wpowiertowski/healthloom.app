@@ -254,6 +254,20 @@ struct CoachRoundTwoTests {
         #expect(config.initialRoute == .coach)
         #expect(config.useInMemoryContainer == false)
         #expect(config.coachSessionMode == .forced(.modelNotReady))
+
+        // WP-34: any -UITest* flag marks a UI-test launch (the morning
+        // runner stays out); notification stubbing is opt-in per flag.
+        config = LaunchConfiguration.resolve(arguments: [])
+        #expect(config.isUITest == false)
+        config = LaunchConfiguration.resolve(arguments: ["-UITestSeedData"])
+        #expect(config.isUITest == true)
+        #expect(config.stubNotifications == false)
+        config = LaunchConfiguration.resolve(arguments: ["-UITestSeedData", "-UITestStubNotifications"])
+        #expect(config.isUITest == true)
+        #expect(config.stubNotifications == true)
+        #expect(config.denyNotifications == false)
+        config = LaunchConfiguration.resolve(arguments: ["-UITestNotificationsDenied"])
+        #expect(config.denyNotifications == true)
     }
 }
 

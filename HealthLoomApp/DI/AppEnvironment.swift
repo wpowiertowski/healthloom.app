@@ -171,11 +171,6 @@ final class AppEnvironment {
         if launchConfiguration.resetTodayMetrics {
             TodayMetricPreferences.reset()
         }
-        // WP-34: the notification-flow flags start from clean insight
-        // preferences (see `InsightPreferences.reset`).
-        if launchConfiguration.stubNotifications || launchConfiguration.denyNotifications {
-            InsightPreferences.reset()
-        }
 
         let container: ModelContainer
         do {
@@ -415,8 +410,19 @@ final class AppEnvironment {
         } else {
             self.insightNotifier = LiveInsightNotifier()
         }
+        // WP-34 CI fix (PR #26): the runner stays out of UI-test launches
+        // entirely. Proven by device log: it fired on every scene
+        // activation under `-UITest*` flags, and past the once-daily gate
+        // (CI wall-clock ≥5am + leftover opt-in from an earlier suite) it
+        // does model-availability + HealthKit work on MainActor — starving
+        // animation-driven assertions on loaded machines. Unit tests cover
+        // the runner scripted; a future generated-insight UI test seeds
+        // `DerivedInsight` rows instead of running generation.
         let insightPrefs = self.insightPreferences
         let insightNotify = self.insightNotifier
+        if launchConfiguration.isUITest {
+            return
+        }
         InsightRunnerHost.runner = MorningInsightRunner(deps: MorningInsightRunner.Dependencies(
             container: container,
             prefs: insightPrefs,

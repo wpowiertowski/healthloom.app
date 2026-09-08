@@ -70,12 +70,4 @@ final class InsightPreferences {
         lastRun = interval > 0 ? Date(timeIntervalSince1970: interval) : nil
     }
 
-    /// UI-test hook: the notification-flow flags start from a clean slate
-    /// (see `AppEnvironment`).
-    static func reset(in defaults: UserDefaults = .standard) {
-        defaults.removeObject(forKey: enabledKey)
-        defaults.removeObject(forKey: detailsKey)
-        defaults.removeObject(forKey: viaCloudKey)
-        defaults.removeObject(forKey: lastRunKey)
-    }
 }
