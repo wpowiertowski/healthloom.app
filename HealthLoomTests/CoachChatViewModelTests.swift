@@ -153,6 +153,17 @@ struct CoachChatViewModelTests {
         #expect(viewModel.send("   ") == false)
         #expect(viewModel.turns.isEmpty)
     }
+
+    @Test("every non-available gate blocks sends with no turns (WP-38 degradation matrix)")
+    func allUnavailableGatesBlock() async throws {
+        for availability in [CoachAvailability.deviceNotEligible, .appleIntelligenceNotEnabled, .unavailable] {
+            let viewModel = try makeViewModel(session: TestCoachSession(), availability: availability)
+            viewModel.onAppear()
+            try await waitForCondition({ viewModel.availability != .available }, timeout: 2)
+            #expect(viewModel.send("hi") == false, "gate \(availability) let a send through")
+            #expect(viewModel.turns.isEmpty)
+        }
+    }
 }
 
 @Suite("Coach stream survival + launch matrix (WP-25 round-2)")

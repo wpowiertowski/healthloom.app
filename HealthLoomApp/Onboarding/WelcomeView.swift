@@ -10,6 +10,14 @@
 
 import SwiftUI
 
+/// WP-38 launch gate: the non-medical disclaimer, shown pre-consent on
+/// the welcome step (the SafetyLayer suffix carries the same promise at
+/// generation time; both are pinned — see `DisclaimerTests`).
+enum OnboardingDisclaimer {
+    static let welcomeFootnote =
+        "HealthLoom is a wellness coach, not a medical professional. Nothing here is medical advice, diagnosis, or treatment — talk to a qualified clinician about symptoms, medications, or whether to seek care."
+}
+
 struct WelcomeView: View {
     var onContinue: () -> Void
 
@@ -19,6 +27,7 @@ struct WelcomeView: View {
             symbol: "heart.text.square",
             title: "Welcome to HealthLoom",
             message: "HealthLoom brings your Fitbit or Pixel Watch data -- steps, heart rate, weight, and sleep -- into Apple Health, so all your health data lives in one place.",
+            footnote: OnboardingDisclaimer.welcomeFootnote,
             actions: {
                 OnboardingPrimaryButton(
                     title: "Get Started",

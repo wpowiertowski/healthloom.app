@@ -33,6 +33,53 @@ env:
   XCODE_VERSION: "26.4.1"
 
 jobs:
+  # WP-38 launch gates: repo-wide source guards that fail fast on
+  # ubuntu (no Xcode needed). Each grep below is scoped to production
+  # Swift sources (docs, reviews, and tests may legitimately mention
+  # these strings — e.g. a test asserting the new endpoint — so they
+  # are excluded; see the per-rule comments).
+  launch-guards:
+    name: launch-gate source guards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: No legacy Fitbit Web API calls
+        # The Fitbit Web API sunsets September 2026; all traffic must go
+        # through the Google Health Connect REST API (health.googleapis.com).
+        # Excludes Tests (a test may name the legacy host to assert against
+        # it) and markdown (changelog/progress history).
+        run: |
+          set -euo pipefail
+          if grep -rn "api\.fitbit\.com" --include='*.swift' Packages/*/Sources HealthLoomApp; then
+            echo "legacy Fitbit Web API reference found" >&2
+            exit 1
+          fi
+          echo "no legacy Fitbit Web API references"
+
+      - name: No Claude server tools in any code path
+        # BYO-key tiers are chat-only with no tool use; server-side tool
+        # execution must never appear (both known spellings). Same
+        # production-only scope as above.
+        run: |
+          set -euo pipefail
+          if grep -rn -E "serverTools|server_tools" --include='*.swift' Packages/*/Sources HealthLoomApp; then
+            echo "Claude server-tools reference found" >&2
+            exit 1
+          fi
+          echo "no Claude server-tools references"
+
+      - name: Display name is HealthLoom (bundle + HealthKit attribution)
+        # The HealthKit source attribution derives from the bundle display
+        # name; a rename here silently rebrands every sample the app wrote.
+        # (App Store Connect listing itself is a human checklist item.)
+        run: |
+          set -euo pipefail
+          grep -q '<string>HealthLoom</string>' HealthLoomApp/Info.plist
+          grep -q 'CFBundleDisplayName: HealthLoom' project.yml
+          echo "display name consistent"
+
   packages:
     name: swift test (${{ matrix.package }})
     runs-on: macos-26
