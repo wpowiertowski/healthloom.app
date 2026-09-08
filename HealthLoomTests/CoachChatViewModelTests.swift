@@ -156,7 +156,7 @@ struct CoachChatViewModelTests {
 
     @Test("every non-available gate blocks sends with no turns (WP-38 degradation matrix)")
     func allUnavailableGatesBlock() async throws {
-        for availability in [CoachAvailability.deviceNotEligible, .appleIntelligenceNotEnabled, .unavailable] {
+        for availability in [CoachAvailability.deviceNotEligible, .appleIntelligenceNotEnabled, .modelNotReady, .unavailable] {
             let viewModel = try makeViewModel(session: TestCoachSession(), availability: availability)
             viewModel.onAppear()
             try await waitForCondition({ viewModel.availability != .available }, timeout: 2)
