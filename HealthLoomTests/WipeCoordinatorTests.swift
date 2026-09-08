@@ -67,7 +67,7 @@ struct HealthKitSourceDeleterTests {
                 deleted.append(contentsOf: objects)
             }
         )
-        let stepsType = HKObjectType.quantityType(forIdentifier: .stepCount)!
+        let stepsType = try StubSource.stepsType()
         let outcomes = await deleter.deleteAppWritten(
             types: [stepsType],
             ownBundleID: StubSource.ownBundle,
@@ -167,7 +167,11 @@ struct WipeCoordinatorTests {
                 },
                 deleteHealthKit: {
                     hkCalls += 1
-                    let steps = HKObjectType.quantityType(forIdentifier: .stepCount)!
+                    // Absent type object (no HealthKit) fails the step
+                    // instead of silently reporting zero types.
+                    guard let steps = HKObjectType.quantityType(forIdentifier: .stepCount) else {
+                        throw WipeBoom()
+                    }
                     return [steps: .success(3)]
                 },
                 deleteStore: {
@@ -257,19 +261,17 @@ struct WipeCoordinatorTests {
 
 @Suite("WipeableTypes derivation")
 struct WipeableTypesTests {
-    @Test("wipe set equals exactly the authorized set (F1/F2)")
+    @Test("wipe set equals exactly the authorized set (F1/F2/F10)")
     func matchesShareRequest() throws {
-        // The wipe must cover exactly what onboarding authorizes: the
-        // P0-mapped types plus the writer's workout-attachment set. A
-        // future addition on either side breaks this equality loudly
-        // instead of drifting one side into over- or under-deletion.
+        // Pinned against the SHARED computation (F10), not rebuilt from
+        // its sources: a future share extension through
+        // `authorizedShareTypes` lands in the wipe automatically, and one
+        // through any other channel breaks this equality loudly.
         let wipeable = try HealthKitSourceDeleter.wipeableTypes()
-        let auth = HealthKitAuth()
-        var expected = Set<HKSampleType>()
-        for dataType in AppEnvironment.p0Types {
-            expected.insert(try auth.resolveSampleType(for: dataType))
-        }
-        expected.formUnion(HealthKitWriter.workoutShareTypes)
+        let expected = try HealthKitAuth().authorizedShareTypes(
+            sharing: AppEnvironment.p0Types,
+            includingWorkoutShare: true
+        )
         #expect(Set(wipeable) == expected)
         // Every cleanup distance bucket rides along (F2: cycling /
         // swimming / rowing distances must not survive).

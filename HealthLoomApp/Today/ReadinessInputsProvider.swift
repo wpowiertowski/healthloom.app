@@ -88,12 +88,12 @@ final class ReadinessInputsProvider {
     func aggregates(now: Date = Date()) async -> ReadinessAggregates {
         guard HKHealthStore.isHealthDataAvailable() else { return ReadinessAggregates() }
         let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) ?? now
-        async let hrvLatest = latestQuantity(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli))
+        async let hrvLatest = latestQuantity(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), now: now)
         async let hrvBaseline = averageQuantity(
             .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli),
             from: thirtyDaysAgo, to: now
         )
-        async let rhrLatest = latestQuantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()))
+        async let rhrLatest = latestQuantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), now: now)
         async let rhrBaseline = averageQuantity(
             .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()),
             from: thirtyDaysAgo, to: now
@@ -118,9 +118,9 @@ final class ReadinessInputsProvider {
     /// months still holds ancient HRV/RHR samples, and scoring those as
     /// current would render a stale-data score as fresh. Older than 7 days
     /// reads as no data — the hero degrades to pending/insufficient.
-    private func latestQuantity(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
+    private func latestQuantity(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, now: Date) async -> Double? {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { return nil }
-        let cutoff = calendar.date(byAdding: .day, value: -7, to: Date())
+        let cutoff = calendar.date(byAdding: .day, value: -7, to: now)
         let predicate = cutoff.map { HKQuery.predicateForSamples(withStart: $0, end: nil, options: []) }
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(

@@ -68,6 +68,10 @@ struct DashboardView: View {
                         .font(.system(size: 18, weight: .light))
                         .foregroundStyle(Theme.ink)
                         .frame(width: 24, height: 24)
+                        // WP-37: 44pt touch target (the 24pt glyph alone
+                        // fails the hit-region audit).
+                        .padding(10)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Settings")

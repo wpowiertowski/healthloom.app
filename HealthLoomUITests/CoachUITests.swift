@@ -148,5 +148,7 @@ final class CoachUITests: XCTestCase {
         XCTAssertTrue(banner.label.contains("The on-device model is still downloading. Try again shortly."))
         XCTAssertTrue(banner.label.contains("Wait for the download to finish, or use a cloud coach tier once enabled."))
         XCTAssertFalse(anyElement["chat.input"].isEnabled, "input must be disabled while unavailable")
+        // WP-37: hit-region audit over the Coach screen (test plan §6).
+        try app.performAccessibilityAudit(for: [.hitRegion])
     }
 }

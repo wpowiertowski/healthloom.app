@@ -25,6 +25,21 @@
 import XCTest
 
 extension XCTestCase {
+    /// Scrolls `app` upward in small fixed increments until `element` is
+    /// hittable (not merely existing -- non-lazy stacks materialize every
+    /// row, so existence alone never implies tappability), or gives up
+    /// after `maxAttempts`. Same fling-free drag as below.
+    @MainActor
+    func scrollToHittable(_ element: XCUIElement, in app: XCUIApplication, maxAttempts: Int = 20) {
+        var attempts = 0
+        while !element.isHittable, attempts < maxAttempts {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            attempts += 1
+        }
+    }
+
     /// Scrolls `app` upward in small fixed increments until `element`
     /// exists, or gives up after `maxAttempts` -- the caller's subsequent
     /// assertion reports the failure. ~0.3 screens per attempt, so the

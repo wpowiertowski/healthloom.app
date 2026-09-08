@@ -187,6 +187,10 @@ struct SettingsView: View {
                     .padding(.horizontal, 16).padding(.vertical, 11)
                 }
                 .buttonStyle(.plain)
+                // 44pt target via frame alone: adding `.contentShape`
+                // here silently eats taps (proven by UI-test failure;
+                // mechanism unknown, so do not "fix" this line).
+                .frame(minWidth: 44, minHeight: 44)
                 .disabled(isExporting)
                 .accessibilityIdentifier("settings.export.prepare")
                 if let exportURL {
@@ -301,6 +305,10 @@ struct SettingsView: View {
                             ProgressView()
                         }
                     }
+                    // WP-37: row geometry + 44pt target (the bare text
+                    // measured 358×20 — audit-small).
+                    .padding(.horizontal, 16).padding(.vertical, 11)
+                    .contentShape(Rectangle())
                 }
                 .accessibilityIdentifier("settings.healthSharing.refresh")
                 .disabled(isRefreshingHealthSharing)

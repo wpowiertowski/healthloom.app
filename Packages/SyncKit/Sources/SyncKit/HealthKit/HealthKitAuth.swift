@@ -95,24 +95,35 @@ public final class HealthKitAuth: Sendable {
     /// presentation can reject with a "view is not in the window
     /// hierarchy" failure. Incremental callers that only need one half
     /// keep using `requestWrite(for:)` / `requestRead(_:)`.
+    /// The exact share set `requestShareAndRead` requests (F10): the
+    /// mapped types plus the writer's workout-attachment union. Public so
+    /// WP-35's wipe derives from the same function the share sheet uses --
+    /// a future share extension through this function lands in the wipe
+    /// automatically; one through any other channel stays visible in
+    /// review (this is the only share-set computation to grep).
+    public func authorizedShareTypes(
+        sharing types: [GoogleDataType],
+        includingWorkoutShare: Bool
+    ) throws(HealthKitAuthError) -> Set<HKSampleType> {
+        var shareTypes = try resolveSampleTypes(for: types)
+        if includingWorkoutShare {
+            shareTypes.formUnion(HealthKitWriter.workoutShareTypes)
+        }
+        return shareTypes
+    }
+
     public func requestShareAndRead(
         share: [GoogleDataType],
         read: [GoogleDataType],
         includingWorkoutShare: Bool = false
     ) async throws(HealthKitAuthError) {
-        var shareTypes = try resolveSampleTypes(for: share)
+        let shareTypes = try authorizedShareTypes(sharing: share, includingWorkoutShare: includingWorkoutShare)
         let readTypes = try resolveSampleTypes(for: read)
         // Workout-attachment buckets (cycling/swimming/rowing distance) are
         // unreachable from `GoogleDataType.writability`, so no type list
         // can ever authorize them -- without this union every cycled/swam/
-        // rowed workout fails its entire save with an authorization error,
-        // permanently (cursor never advances, window re-pulled forever).
-        // Derived from the writer's own table (`HealthKitWriter
-        // .workoutShareTypes`), never hand-duplicated, and unioned into
-        // this same single sheet (never a second prompt -- see above).
-        if includingWorkoutShare {
-            shareTypes.formUnion(HealthKitWriter.workoutShareTypes)
-        }
+        // (Workout-attachment rationale lives on `authorizedShareTypes`
+        // above -- this call site just uses the shared computation.)
         guard isAvailable else { throw .healthDataUnavailable }
         do {
             try await store.requestAuthorization(

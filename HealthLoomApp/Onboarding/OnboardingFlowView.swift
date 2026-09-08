@@ -44,6 +44,16 @@ struct OnboardingFlowView: View {
                 FirstSyncView(onFinished: onFinished)
             }
         }
-        .animation(.default, value: step)
+        // WP-37: step transitions animate unless Reduce Motion is on —
+        // an explicit `.animation` does not follow the reduce-motion
+        // setting on its own (only system transitions do).
+        .animation(.default, value: animatedStep)
     }
+
+    /// Nil when Reduce Motion is on, suppressing the transition above.
+    private var animatedStep: OnboardingStep? {
+        reduceMotion ? nil : step
+    }
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 }

@@ -112,24 +112,32 @@ extension HealthKitSourceDeleter {
     /// sheet and the wipe, or neither. Deterministic order (never a Set
     /// round-trip): progress rows and tests read this sequence.
     static func wipeableTypes() throws -> [HKSampleType] {
+        // Membership comes from the shared share-set computation (F10):
+        // whatever onboarding authorizes, the wipe covers — no parallel
+        // source to drift. Order is imposed here (P0 order, then the
+        // writer-table order) because neither source promises sequence.
+        let shared = try HealthKitAuth().authorizedShareTypes(
+            sharing: AppEnvironment.p0Types,
+            includingWorkoutShare: true
+        )
         let auth = HealthKitAuth()
         var ordered: [HKSampleType] = []
         var seen = Set<HKSampleType>()
-        func append(_ type: HKSampleType) {
-            if seen.insert(type).inserted {
+        func take(_ type: HKSampleType) {
+            if shared.contains(type), seen.insert(type).inserted {
                 ordered.append(type)
             }
         }
         for dataType in AppEnvironment.p0Types {
-            append(try auth.resolveSampleType(for: dataType))
+            take(try auth.resolveSampleType(for: dataType))
         }
-        append(HKObjectType.workoutType())
+        take(HKObjectType.workoutType())
         if let energy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
-            append(energy)
+            take(energy)
         }
         for identifier in HealthKitWriter.distanceIdentifiersForCleanup {
             if let distance = HKObjectType.quantityType(forIdentifier: identifier) {
-                append(distance)
+                take(distance)
             }
         }
         return ordered

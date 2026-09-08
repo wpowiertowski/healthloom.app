@@ -8,6 +8,7 @@
 // progress.md's WP-33 entry (the swift-snapshot-testing dependency can't
 // be resolved from this authoring environment).
 
+import CoreModel
 import Foundation
 import SwiftUI
 import Testing
@@ -112,6 +113,7 @@ struct TodayMetricPreferencesTests {
 @Suite("TodayMetricFormatter")
 struct TodayMetricFormatterTests {
     static let enUS = Locale(identifier: "en_US")
+    static let deDE = Locale(identifier: "de_DE")
 
     @Test func groupedCountUsesThousandsSeparators() {
         #expect(TodayMetricFormatter.groupedCount(8240, locale: Self.enUS) == "8,240")
@@ -128,7 +130,7 @@ struct TodayMetricFormatterTests {
     }
 
     @Test func missingReadingRendersTheEmptyRow() {
-        let display = TodayMetricFormatter.display(kind: .heart, reading: nil, locale: Self.enUS)
+        let display = TodayMetricFormatter.display(kind: .heart, reading: nil, locale: Self.enUS, unitSystem: .imperial)
         #expect(display.value == nil)
         #expect(display.sub == "No data yet")
         #expect(display.accessibilityText == "Heart, no data yet")
@@ -138,7 +140,8 @@ struct TodayMetricFormatterTests {
         let display = TodayMetricFormatter.display(
             kind: .steps,
             reading: TodayMetricReading(value: 8240, date: nil),
-            locale: Self.enUS
+            locale: Self.enUS,
+            unitSystem: .imperial
         )
         #expect(display.value == "8,240")
         #expect(display.sub == "82% of 10,000 goal")
@@ -149,7 +152,8 @@ struct TodayMetricFormatterTests {
         let over = TodayMetricFormatter.display(
             kind: .steps,
             reading: TodayMetricReading(value: 13_000, date: nil),
-            locale: Self.enUS
+            locale: Self.enUS,
+            unitSystem: .imperial
         )
         #expect(over.progress == 1.0)
         #expect(over.sub == "130% of 10,000 goal")
@@ -159,7 +163,8 @@ struct TodayMetricFormatterTests {
         let display = TodayMetricFormatter.display(
             kind: .bloodOxygen,
             reading: TodayMetricReading(value: 0.97, date: nil),
-            locale: Self.enUS
+            locale: Self.enUS,
+            unitSystem: .imperial
         )
         #expect(display.value == "97")
         #expect(display.unit == "%")
@@ -167,22 +172,53 @@ struct TodayMetricFormatterTests {
 
     @Test func sleepDistanceAndEnergyFormatTheirUnits() {
         let sleep = TodayMetricFormatter.display(
-            kind: .sleep, reading: TodayMetricReading(value: 7 * 3600 + 12 * 60, date: nil), locale: Self.enUS
+            kind: .sleep, reading: TodayMetricReading(value: 7 * 3600 + 12 * 60, date: nil), locale: Self.enUS,
+            unitSystem: .imperial
         )
         #expect(sleep.value == "7h 12m")
         #expect(sleep.sub == "Last night")
 
+        // en_US renders imperial miles…
         let distance = TodayMetricFormatter.display(
-            kind: .distance, reading: TodayMetricReading(value: 5230, date: nil), locale: Self.enUS
+            kind: .distance, reading: TodayMetricReading(value: 5230, date: nil), locale: Self.enUS,
+            unitSystem: .imperial
         )
-        #expect(distance.value == "5.2")
-        #expect(distance.unit == "km")
+        #expect(distance.value == "3.2")
+        #expect(distance.unit == "mi")
+        #expect(distance.accessibilityText.contains("miles"))
+        // …while de_DE renders metric kilometers from the same canonical meters.
+        let metricDistance = TodayMetricFormatter.display(
+            kind: .distance, reading: TodayMetricReading(value: 5230, date: nil), locale: Self.deDE,
+            unitSystem: .metric
+        )
+        #expect(metricDistance.value == "5,2")
+        #expect(metricDistance.unit == "km")
+        #expect(metricDistance.accessibilityText.contains("kilometers"))
 
         let energy = TodayMetricFormatter.display(
-            kind: .activeEnergy, reading: TodayMetricReading(value: 1421, date: nil), locale: Self.enUS
+            kind: .activeEnergy, reading: TodayMetricReading(value: 1421, date: nil), locale: Self.enUS,
+            unitSystem: .imperial
         )
         #expect(energy.value == "1,421")
         #expect(energy.unit == "kcal")
+    }
+
+    @Test func weightFollowsLocaleUnitSystem() {
+        // 78 kg canonical: en_US reads pounds, de_DE reads kilograms.
+        let imperial = TodayMetricFormatter.display(
+            kind: .weight, reading: TodayMetricReading(value: 78, date: nil), locale: Self.enUS,
+            unitSystem: .imperial
+        )
+        #expect(imperial.value == "172.0")
+        #expect(imperial.unit == "lb")
+        #expect(imperial.accessibilityText.contains("pounds"))
+        let metric = TodayMetricFormatter.display(
+            kind: .weight, reading: TodayMetricReading(value: 78, date: nil), locale: Self.deDE,
+            unitSystem: .metric
+        )
+        #expect(metric.value == "78,0")
+        #expect(metric.unit == "kg")
+        #expect(metric.accessibilityText.contains("kilograms"))
     }
 }
 

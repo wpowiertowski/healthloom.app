@@ -52,4 +52,14 @@ final class CloudGateCache: Sendable {
     nonisolated func setKeyPresent(_ present: Bool, for tier: ModelTier) {
         lock.withLock { keyPresent[tier] = present }
     }
+
+    /// Drops all cached presence (F9): after a wipe the memory snapshot
+    /// claims deleted keys still exist. Cleared maps read as absent —
+    /// the correct post-wipe posture — until the next refresh re-fills.
+    nonisolated func reset() {
+        lock.withLock {
+            consent = [:]
+            keyPresent = [:]
+        }
+    }
 }

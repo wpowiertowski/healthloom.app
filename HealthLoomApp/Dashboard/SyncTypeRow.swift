@@ -47,6 +47,10 @@ struct SyncTypeRow: View {
                     Circle()
                         .fill(statusDotColor)
                         .frame(width: 6, height: 6)
+                        // Decorative status dot (WP-37): an exposed 6pt
+                        // element fails the hit-region audit; the row's
+                        // freshness text carries the same meaning.
+                        .accessibilityHidden(true)
                         .accessibilityIdentifier("dashboard.row.\(type.rawValue).statusIcon")
                     Text(displayName)
                         .font(Theme.font(14, .medium, relativeTo: .subheadline))

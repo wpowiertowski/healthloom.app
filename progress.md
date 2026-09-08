@@ -3160,8 +3160,8 @@ one tap (the Data tab) after onboarding completes. Onboarding's HealthKit read r
 invisible-denial posture. **Deviations, all documented in code:** (1) the mockup's tab set
 (today/coach/you/settings) ships as Today/Data/Activities/Settings until P2/P3 build
 Coach and You -- dead tabs would be worse, and the swap is a two-line change in
-`HomeView`; (3) the mockup's "Good morning, Sam" renders without a name (none is
-collected anywhere); (4) steps goal is a constant 10,000 (`TodayMetricFormatter
+`HomeView`; (2) the mockup's "Good morning, Sam" renders without a name (none is
+collected anywhere); (3) steps goal is a constant 10,000 (`TodayMetricFormatter
 .defaultStepGoal`) pending a real goal setting. **Tests:**
 `HealthLoomTests/TodayMetricsTests.swift` (16 tests across three suites) -- the WP's
 required reorder-persistence unit test (move persists across instances), hide/show
@@ -5014,3 +5014,16 @@ GoogleHealthClient: `revokeRefreshToken()` (RFC 7009 POST to `oauth2.googleapis.
 **Review (round 1 — DO NOT MERGE):** 2 blockers (F1 4 wiped types never share-authorized → permanent failure; F2 workout-attachment distances survive) fixed by derivation + set-equality test; 2 highs (F3 tmp export sweep both sides; F4 done-phase containment); 1 medium (F5 humanized detail); 3 lows (F6 per-key continue-all, F7 transport-throw revoke pin, F8 this entry); 3 nits (let deps, no-`!` tests, pass-through).
 
 **Counts:** GHC 40→41 (revoke suite); app unit 142→143 (wipe-set equality); UI 23 (export + wipe flow, sim run lands donePartial deterministically); CoachKit/Secrets/SyncKit/CoreModel carried per round. Full matrix green under global strictness, zero-warning grep.
+
+## WP-37 · Accessibility, localization & performance pass
+
+**Contrast (D12 re-check):** computed every text/background pair (verified math against black/white 21.0 + #767676 4.54 references): light secondary was 4.48/3.94 and both tertiaries ~2–3 — all darkened to AA (secondary-L #527078 5.32/4.68; tertiary-L #54707B 5.28/4.64; tertiary-D #7A969D 4.77/5.33). Coach placeholder moved to ink (secondary fails on the rust tint). 36 snapshots re-recorded (6 subjects × light/dark × XS/XL/AXB3).
+**Beta-audit anomaly (documented, not hidden):** the full `performAccessibilityAudit()` verdict flip-flops on identical trees (fail/near-pass across 30+ probe runs) and fails with all content hidden — evidence points at beta measurement noise around thin strokes plus a custom-element background-resolution gap (`.ignore`+label rows failed; `.contain`+label passes with identical pixels; native small texts pass). Committed UI tests pin hit-region (deterministic, caught real 28–39pt targets on every screen); contrast is verified by computation + rendering snapshots. Full-audit green stays a toolchain follow-up, not a product gap.
+**VoiceOver:** row spoken lines kept via contain+label (plan's "beats per minute" wording); decorative icons hidden (tab bar, activity rows, wipe status); sync status restructured to native text; coach chevron actionable only with content (+ hint); tab/minor touch targets to 44pt+.
+**Dynamic Type:** AXXXL snapshot configs caught real truncation (goal-percent and long names clipped) — rows redesigned (name+value top line, full-width wrapping sub, fixed numbers) so text wraps instead of clipping at any size; hero score pending state drops "/100" (dash-only text mis-seated beside it).
+**Reduce Motion:** onboarding step animation gated on `accessibilityReduceMotion` (sole explicit animation in the app).
+**Localization:** display units follow locale (en_US lb/mi, de_DE kg/km incl. spoken units + locale-aware decimal separators); canonical HK units untouched. Formatter + accessibility goldens.
+**Performance:** first-token prewarm pinned (a single onAppear warms the session; re-appear re-warms by design — the warm-up Task is cancelled and recreated, so no count is pinned across appears); backfill memory audited structurally (per-chunk ModelContexts, one-chunk-per-type fairness, bounded result dicts — no accumulation shape; Instruments pre-release per test-plan §10).
+**Carryovers closed:** WP-31 L6 (could-narrowing), WP-33 N2/N3/snapshot-docs, WP-35 F9 (gate-cache reset + explicit swipe acceptance), F10 (shared authorizedShareTypes), F11 (genuine seeding), N2 (zero `!`).
+
+**Counts:** unit 143→145 (locale + prewarm); UI 23 (hit-region audits on Today/Coach/Dashboard/Activities/PromptEditor; toggle screens documented out); CoachKit 191+29 beta / 219 stable; snapshots 36. Full matrix green under global strictness, zero-warning grep.

@@ -74,14 +74,26 @@ struct HeroInstrument: View {
                 .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.4)
                 .foregroundStyle(Theme.secondary)
             HStack(alignment: .bottom, spacing: 18) {
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                // The pending dashes render alone: dash-only text has no
+                // ascenders, so any side-by-side arrangement with "/100"
+                // stacks or floats them instead of seating them —
+                // misplaced text the audit flags as inaccessible (WP-37).
+                // Dropping "/100" with no score is also simply honest.
+                if case .scored(let score, _, _) = readiness {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text("\(score)")
+                            .font(Theme.font(60, .light, relativeTo: .largeTitle))
+                            .foregroundStyle(Theme.ink)
+                            .monospacedDigit()
+                        Text("/100")
+                            .font(Theme.font(18, .regular, relativeTo: .title3))
+                            .foregroundStyle(Theme.ink)
+                    }
+                } else {
                     Text(scoreText)
                         .font(Theme.font(60, .light, relativeTo: .largeTitle))
-                        .foregroundStyle(readinessAvailable ? Theme.ink : Theme.tertiary)
+                        .foregroundStyle(Theme.ink)
                         .monospacedDigit()
-                    Text("/100")
-                        .font(Theme.font(18, .regular, relativeTo: .title3))
-                        .foregroundStyle(Theme.tertiary)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 8) {
@@ -96,11 +108,6 @@ struct HeroInstrument: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("today.readiness")
-    }
-
-    private var readinessAvailable: Bool {
-        if case .scored = readiness { return true }
-        return false
     }
 
     private var scoreText: String {
@@ -167,7 +174,7 @@ struct TodayMetricRowView: View {
             if metric.isPriority {
                 Rectangle().fill(Theme.accent).frame(width: 2).frame(maxHeight: .infinity)
             }
-            HStack {
+            HStack(alignment: .top) {
                 if editing, let onRemove {
                     // Explicit remove affordance: deterministic for the UI
                     // test, one obvious VoiceOver action. Drag-reorder
@@ -185,25 +192,42 @@ struct TodayMetricRowView: View {
                     .accessibilityLabel("Remove \(metric.name)")
                     .accessibilityIdentifier("today.remove.\(metric.kind.rawValue)")
                 }
+                // WP-37 Dynamic-Type audit: name+value share the top line
+                // while the sub spans full width below. At AX sizes the
+                // old side-by-side columns squeezed subs into "…"
+                // (information loss); full-width subs wrap instead — rows
+                // grow taller, text never clips.
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(metric.name)
-                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
-                        .foregroundStyle(Theme.ink)
+                    // Center-aligned (not firstTextBaseline): baseline
+                    // stacks truncate overlong text instead of wrapping it.
+                    HStack(alignment: .center) {
+                        Text(metric.name)
+                            .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                            .foregroundStyle(Theme.ink)
+                            // Ideal height (all lines): HStack compression
+                            // truncates instead of wrapping without it.
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        // Numbers never compress or wrap (a clipped value
+                        // is data loss); the name wraps instead — readable
+                        // at any size.
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(metric.value ?? "\u{2014}")
+                                .font(Theme.font(21, .regular, relativeTo: .title3))
+                                .foregroundStyle(metric.value == nil ? Theme.tertiary : Theme.ink)
+                                .monospacedDigit()
+                            if let unit = metric.unit {
+                                Text(unit)
+                                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                                    .foregroundStyle(Theme.tertiary)
+                            }
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
                     Text(metric.sub)
                         .font(Theme.font(11, .regular, relativeTo: .caption2))
                         .foregroundStyle(Theme.tertiary)
-                }
-                Spacer()
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(metric.value ?? "\u{2014}")
-                        .font(Theme.font(21, .regular, relativeTo: .title3))
-                        .foregroundStyle(metric.value == nil ? Theme.tertiary : Theme.ink)
-                        .monospacedDigit()
-                    if let unit = metric.unit {
-                        Text(unit)
-                            .font(Theme.font(12, .regular, relativeTo: .caption))
-                            .foregroundStyle(Theme.tertiary)
-                    }
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 14)
@@ -218,7 +242,12 @@ struct TodayMetricRowView: View {
                 .accessibilityHidden(true)
             }
         }
-        .accessibilityElement(children: .ignore)
+        // Contained children + explicit spoken label (WP-37 audit
+        // finding): `.ignore` removes the native text runs the contrast
+        // audit resolves backgrounds against, failing the whole row —
+        // `.contain` keeps them auditable while the label still drives
+        // the announcement (plan's "beats per minute" wording kept).
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(metric.accessibilityText)
         .accessibilityIdentifier("today.metric.\(metric.kind.rawValue)")
     }
@@ -297,7 +326,11 @@ struct CoachPanel: View {
                     .foregroundStyle(Theme.accentDeep)
                 Text(insightText ?? "Your daily insight will appear here once the on-device coach arrives.")
                     .font(Theme.font(13.5, .regular, relativeTo: .footnote))
-                    .foregroundStyle(insightText == nil ? Theme.secondary : Theme.ink)
+                    // Always ink: the placeholder sits on the rust tint,
+                    // where secondary fails contrast (WP-37 audit) — the
+                    // quieter wording (not a quieter color) marks the
+                    // placeholder state.
+                    .foregroundStyle(Theme.ink)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }

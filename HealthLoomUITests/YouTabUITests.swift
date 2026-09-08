@@ -44,6 +44,8 @@ final class YouTabUITests: XCTestCase {
         XCTAssertTrue(anyElement["you.correction.user.goal"].exists)
         // Steps starts included for AI replies.
         XCTAssertEqual((anyElement["you.ai.steps.dailyAverage"].value as? String), "1")
+        // WP-37: hit-region audit over the You screen (test plan §6).
+        try app.performAccessibilityAudit(for: [.hitRegion])
     }
 
     @MainActor

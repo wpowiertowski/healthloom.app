@@ -109,6 +109,22 @@ struct WipeFlowView: View {
                 phase = .running
                 Task {
                     await coordinator?.run()
+                    // F9: in-memory singletons must match the wiped world
+                    // (the store files and defaults are gone, but these
+                    // caches still claim the old state). Consent mirrors
+                    // re-read wiped defaults (all false); the gate cache
+                    // drops to absent until the next refresh re-fills.
+                    // This does NOT make post-wipe navigation safe in
+                    // general — the open container is still invalid — which
+                    // is why the done phase stays contained. But IF the
+                    // user swipe-backs anyway (no public API disables the
+                    // nav gesture; likelihood recalibrated down on an
+                    // explicit restart screen), gates fail closed on
+                    // keychain misses and rows render the true
+                    // post-wipe state instead of stale presence: confusion
+                    // risk contained, leak risk nil by construction.
+                    appEnvironment.tierSettingsStore.resyncFromDefaults()
+                    appEnvironment.gateCache.reset()
                     phase = .done
                 }
             } label: {
@@ -156,16 +172,17 @@ struct WipeFlowView: View {
     }
 
     private func stepIcon(_ step: WipeCoordinator.Step) -> some View {
+        // Decorative: the adjacent detail text carries the status.
         Group {
             switch coordinator?.states[step] {
             case .done:
-                Image(systemName: "checkmark.circle").foregroundStyle(Theme.accent)
+                Image(systemName: "checkmark.circle").foregroundStyle(Theme.accent).accessibilityHidden(true)
             case .failed:
-                Image(systemName: "exclamationmark.circle").foregroundStyle(Theme.accent)
+                Image(systemName: "exclamationmark.circle").foregroundStyle(Theme.accent).accessibilityHidden(true)
             case .running:
                 ProgressView().controlSize(.mini).tint(Theme.accent)
             default:
-                Image(systemName: "circle").foregroundStyle(Theme.tertiary)
+                Image(systemName: "circle").foregroundStyle(Theme.tertiary).accessibilityHidden(true)
             }
         }
         .font(.system(size: 16, weight: .light))
