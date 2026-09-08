@@ -22,7 +22,14 @@ import SwiftUI
 /// this is the subset of synced types that has a meaningful *today* reading
 /// and a HealthKit query the app can run; `LocalSample`-only types render
 /// on the Data tab instead).
-enum TodayMetricKind: String, CaseIterable, Identifiable, Codable {
+/// Shorthand for the reorderable-content difference over Today kinds.
+typealias TodayReorderDestination = ReorderDifference<
+    TodayMetricKind, ReorderableSingleCollectionIdentifier
+>.Destination.Position
+
+/// `Sendable`: the kind serves as `TodayMetricDisplay.id`, and iOS 27's
+/// `reorderContainer` requires `Item.ID: Sendable`.
+enum TodayMetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case heart
     case steps
     case sleep
@@ -223,6 +230,21 @@ final class TodayMetricPreferences {
         persist()
     }
 
+    /// iOS 27 reorderable-content path (WP-33 step 2, as planned): applies
+    /// the container's difference to the stored order. The `IndexSet` move
+    /// above stays for the pure-logic unit tests; both persist identically.
+    func reorder(_ difference: ReorderDifference<TodayMetricKind, ReorderableSingleCollectionIdentifier>) {
+        reorder(sources: difference.sources, destination: difference.destination.position)
+    }
+
+    /// Testable half of `reorder(_:)`: the difference struct has no
+    /// accessible initializer outside SwiftUI, so the container closure
+    /// maps onto sources + position and both paths share this.
+    func reorder(sources: [TodayMetricKind], destination: TodayReorderDestination) {
+        visibleKinds = Self.applying(sources: sources, destination: destination, to: visibleKinds)
+        persist()
+    }
+
     func hide(_ kind: TodayMetricKind) {
         visibleKinds = Self.removing(kind, from: visibleKinds)
         persist()
@@ -248,6 +270,35 @@ final class TodayMetricPreferences {
 
     static func adding(_ kind: TodayMetricKind, to visible: [TodayMetricKind]) -> [TodayMetricKind] {
         visible.contains(kind) ? visible : visible + [kind]
+    }
+
+    /// Applies an iOS 27 reorder difference (WP-33 step 2's
+    /// reorderable-content path) to a visible order: lifted-out sources
+    /// re-insert before the destination anchor, appended on `.end` (or when
+    /// the anchor itself moved away — it can't be found post-removal).
+    /// Takes sources + position rather than the `ReorderDifference` itself
+    /// because that struct has no accessible initializer outside SwiftUI;
+    /// the container closure maps its difference onto these two. Pure so
+    /// `TodayMetricPreferencesTests` pins it without gestures.
+    static func applying(
+        sources: [TodayMetricKind],
+        destination: TodayReorderDestination,
+        to visible: [TodayMetricKind]
+    ) -> [TodayMetricKind] {
+        let moving = visible.filter { sources.contains($0) }
+        guard !moving.isEmpty else { return visible }
+        var result = visible.filter { !sources.contains($0) }
+        switch destination {
+        case .before(let anchor):
+            if let index = result.firstIndex(of: anchor) {
+                result.insert(contentsOf: moving, at: index)
+            } else {
+                result.append(contentsOf: moving)
+            }
+        case .end:
+            result.append(contentsOf: moving)
+        }
+        return result
     }
 
     static func decode(_ rawValues: [String]?) -> [TodayMetricKind] {

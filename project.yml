@@ -19,14 +19,14 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-    # NOTE: warnings-as-errors is enforced twice -- per first-party
-    # target below (covers Xcode-GUI builds, which get no command line)
-    # AND on the `make test` / CI command line (covers everything the
-    # project builds, including local packages). Command-line scope also
-    # reaches SPM package targets, so `SWIFT_SUPPRESS_WARNINGS=NO` rides
-    # next to it there: it overrides the `-suppress-warnings` Xcode's
-    # SwiftPM integration injects into remote package targets, which
-    # otherwise conflicts with `-warnings-as-errors` and fails the build.
+    # NOTE: warnings-as-errors is enforced per first-party target below
+    # (covers Xcode-GUI builds, which get no command line) and per-package
+    # via `make test`'s `swift test -Xswiftc -warnings-as-errors` lines. It
+    # is deliberately NOT on the `make test` xcodebuild command line: that
+    # scope reaches SPM package targets too, and remote deps carry their
+    # own warnings (WP-33: swift-snapshot-testing's iOS-15-era
+    # deprecations). `SWIFT_SUPPRESS_WARNINGS=NO` still rides there so
+    # upstream warnings stay visible instead of silently suppressed.
     # Known gap: the five local packages get no warnings-as-errors in GUI
     # builds (only their `swift test` runs and CI enforce it) -- project
     # settings can't reach package targets, and command-line flags can't
@@ -48,6 +48,12 @@ packages:
     path: Packages/SyncKit
   CoachKit:
     path: Packages/CoachKit
+  # WP-33: snapshot tests (light/dark x Dynamic Type XS/XL) via
+  # pointfreeco's snapshot testing. Pinned to the 1.19 line; the Makefile
+  # note about SWIFT_SUPPRESS_WARNINGS already covers remote deps.
+  SnapshotTesting:
+    url: https://github.com/pointfreeco/swift-snapshot-testing
+    version: "1.19.4"
 
 targets:
   HealthLoom:
@@ -151,6 +157,9 @@ targets:
     # CoachKit) come along with it, so no per-package entry is needed here.
     dependencies:
       - target: HealthLoom
+      # WP-33: snapshot strategies for the Today screen tests.
+      - package: SnapshotTesting
+        product: SnapshotTesting
 
   # WP-10: XCUITest target for the onboarding happy-path + dashboard
   # per-type-states tests (implementation-plan.md WP-10's "Tests" line).

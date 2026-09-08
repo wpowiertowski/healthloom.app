@@ -31,13 +31,18 @@ struct TodayHeader: View {
                 Circle()
                     .fill(syncStatus.freshness == .fresh ? Theme.accent : Theme.gray)
                     .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                // Native Text (not a combined custom element): the audit's
+                // hit-region check flags small *custom* accessibility
+                // elements but exempts native small static texts (the
+                // TODAY label, greeting, and subs all pass at 11-14pt).
+                // VoiceOver still announces one line via the label below.
                 Text(syncStatus.text)
                     .font(Theme.font(11.5, .regular, relativeTo: .caption))
                     .foregroundStyle(syncStatus.freshness == .never ? Theme.tertiary : Theme.secondary)
+                    .accessibilityLabel("Sync status: \(syncStatus.text)")
+                    .accessibilityIdentifier("today.syncStatus")
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Sync status: \(syncStatus.text)")
-            .accessibilityIdentifier("today.syncStatus")
         }
     }
 }
@@ -45,11 +50,9 @@ struct TodayHeader: View {
 // MARK: - Readiness hero instrument
 
 /// What the hero renders. `.pending` is WP-33 step 4's "readiness
-/// insufficient signals" family: until WP-33 binds it there is no score at
-/// all (WP-23's `ReadinessEngine` has landed in CoachKit), and sparse data
-/// renders the same shape with a "based on N of 4 signals" caption --
-/// `.scored(score:delta:signalsUsed:)` is already plumbed for it so WP-33
-/// binds without reshaping this view.
+/// insufficient signals" family: no HealthKit data (or zero usable
+/// signals) renders the pending instrument, and sparse data renders the
+/// same shape with a "based on N of 4 signals" caption.
 enum ReadinessDisplay: Equatable {
     case pending
     case scored(score: Int, deltaVsBaseline: Int, signalsUsed: Int)
@@ -146,6 +149,8 @@ struct HeroInstrument: View {
 
 struct TodayMetricRowView: View {
     let metric: TodayMetricDisplay
+    var editing = false
+    var onRemove: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -153,6 +158,23 @@ struct TodayMetricRowView: View {
                 Rectangle().fill(Theme.accent).frame(width: 2).frame(maxHeight: .infinity)
             }
             HStack {
+                if editing, let onRemove {
+                    // Explicit remove affordance: deterministic for the UI
+                    // test, one obvious VoiceOver action. Drag-reorder
+                    // handles come from the panel's reorderable-content.
+                    Button(action: onRemove) {
+                        Image(systemName: "minus.circle")
+                            .font(.system(size: 16, weight: .light))
+                            .foregroundStyle(Theme.accent)
+                            // 44pt touch target: the glyph alone is too
+                            // small to tap (and to audit cleanly).
+                            .padding(14)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(metric.name)")
+                    .accessibilityIdentifier("today.remove.\(metric.kind.rawValue)")
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(metric.name)
                         .font(Theme.font(14, .medium, relativeTo: .subheadline))
@@ -194,16 +216,33 @@ struct TodayMetricRowView: View {
 
 struct InstrumentPanel: View {
     let metrics: [TodayMetricDisplay]
+    var editing = false
+    var onRemove: ((TodayMetricKind) -> Void)?
+    var onMove: ((ReorderDifference<TodayMetricDisplay.ID, ReorderableSingleCollectionIdentifier>) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
-                if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
-                TodayMetricRowView(metric: metric)
+            // WP-33 step 2's reorderable-content path: the ForEach is the
+            // reorderable content; the container below gates on the Edit
+            // toggle. Both callbacks are optional so previews stay dumb;
+            // `TodayView` always sets them.
+            ForEach(metrics) { metric in
+                VStack(spacing: 0) {
+                    if metric.id != metrics.first?.id {
+                        Rectangle().fill(Theme.border).frame(height: 1)
+                    }
+                    TodayMetricRowView(metric: metric, editing: editing) {
+                        onRemove?(metric.kind)
+                    }
+                }
             }
+            .reorderable()
         }
         .background(RoundedRectangle(cornerRadius: 4).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(editing ? Theme.accent : Theme.border))
+        .reorderContainer(for: TodayMetricDisplay.self, isEnabled: editing) { difference in
+            onMove?(difference)
+        }
     }
 }
 

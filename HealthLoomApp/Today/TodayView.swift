@@ -8,25 +8,22 @@
 //     (TodayHeaderModel.swift);
 //   - metric rows <- HealthKit today-values (TodayMetricsProvider.swift),
 //     ordered/filtered by `TodayMetricPreferences` (UserDefaults);
-//   - readiness hero <- `.pending` until WP-33 binds it (WP-23's
-//     `ReadinessEngine` has landed in CoachKit; `ReadinessDisplay` is
-//     already shaped for `.scored`, including the insufficient-signals
-//     caption, so WP-33 binds without reshaping);
+//   - readiness hero <- `ReadinessEngine` via `ReadinessInputsProvider`
+//     (HealthKit aggregates) + `ReadinessScoreHistory` (delta caption);
+//     zero-signal results render `.pending`, never the engine's
+//     all-nil fallback;
 //   - coach panel <- placeholder until WP-25/34 surface a `DailyInsight`
 //     (WP-23's struct + generator exist in CoachKit; no chat surface yet).
 //
-// **Edit mode (WP-33 step 2) -- documented deviation:** the plan names
-// "SwiftUI's iOS 27 reorderable-content API (no custom Edit-mode drag
-// plumbing)". This session cannot verify that API against a real SDK (no
-// toolchain in the authoring environment -- see progress.md's WP-33
-// entry), so Edit presents a themed sheet (`TodayMetricsEditor` below)
-// built on the long-standing `List` + `.onMove`/`.onDelete` + active
-// `EditMode` machinery -- standard system reorder handles, zero custom
-// drag plumbing, and the same `TodayMetricPreferences` persistence the
-// final API would bind to. Swapping the sheet for in-place
-// reorderable-content once buildable on the Mac is a contained,
-// view-only change, flagged in progress.md.
+// **Edit mode (WP-33 step 2, as planned):** in-place editing with iOS 27's
+// reorderable-content API (`ForEach.reorderable()` + `reorderContainer`,
+// gated on the Edit toggle) -- system drag handles, zero custom drag
+// plumbing, bound to the same `TodayMetricPreferences` store. Add/remove
+// stays explicit minus/plus buttons (deterministic for the UI test, one
+// obvious VoiceOver affordance each); drag-reorder itself is covered by
+// unit tests over the pure difference-mapping, not by UI-test gestures.
 
+import CoachKit
 import CoreModel
 import SwiftData
 import SwiftUI
@@ -36,8 +33,11 @@ struct TodayView: View {
     @Query(sort: \LocalSample.end, order: .reverse) private var localSamples: [LocalSample]
     @State private var preferences = TodayMetricPreferences()
     @State private var readings: [TodayMetricKind: TodayMetricReading] = [:]
-    @State private var isEditorPresented = false
+    @State private var readiness: ReadinessDisplay = .pending
+    @State private var isEditing = false
     private let provider = TodayMetricsProvider()
+    private let readinessProvider = ReadinessInputsProvider()
+    private let scoreHistory = ReadinessScoreHistory()
 
     var body: some View {
         ScrollView {
@@ -55,7 +55,7 @@ struct TodayView: View {
 
                 Rectangle().fill(Theme.gray).frame(height: 1).padding(.top, 16)
 
-                HeroInstrument(readiness: .pending)
+                HeroInstrument(readiness: readiness)
                     .padding(.top, 20)
 
                 Rectangle().fill(Theme.border).frame(height: 1).padding(.top, 22)
@@ -66,18 +66,63 @@ struct TodayView: View {
                         .foregroundStyle(Theme.secondary)
                     Spacer()
                     Button {
-                        isEditorPresented = true
+                        isEditing.toggle()
                     } label: {
-                        Text("Edit")
+                        Text(isEditing ? "Done" : "Edit")
                             .font(Theme.font(12, .regular, relativeTo: .caption))
-                            .foregroundStyle(Theme.accentDeep)
+                            .foregroundStyle(isEditing ? Theme.accent : Theme.accentDeep)
+                            .overlay(
+                                Rectangle()
+                                    .fill(isEditing ? Theme.accent : .clear)
+                                    .frame(height: 1),
+                                alignment: .bottom
+                            )
                     }
                     .buttonStyle(.plain)
+                    // Generous touch target (and audit-clean): the 12pt
+                    // label alone is too small to tap reliably.
+                    .frame(minWidth: 48, minHeight: 48)
+                    .contentShape(Rectangle())
                     .accessibilityIdentifier("today.editButton")
                 }
                 .padding(.top, 22).padding(.bottom, 12)
 
-                InstrumentPanel(metrics: displayMetrics)
+                InstrumentPanel(
+                    metrics: displayMetrics,
+                    editing: isEditing,
+                    onRemove: { preferences.hide($0) },
+                    onMove: { preferences.reorder($0) }
+                )
+
+                if isEditing, !preferences.hiddenKinds.isEmpty {
+                    Text("MORE METRICS")
+                        .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.top, 16).padding(.bottom, 8)
+                    VStack(spacing: 0) {
+                        ForEach(preferences.hiddenKinds) { kind in
+                            Button {
+                                preferences.show(kind)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "plus.circle")
+                                        .font(.system(size: 16, weight: .light))
+                                        .foregroundStyle(Theme.accent)
+                                    Text(kind.displayName)
+                                        .font(Theme.font(14, .regular, relativeTo: .subheadline))
+                                        .foregroundStyle(Theme.ink)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 16).padding(.vertical, 12)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Add \(kind.displayName)")
+                            .accessibilityIdentifier("today.add.\(kind.rawValue)")
+                        }
+                    }
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+                }
 
                 if syncStatus.freshness == .never {
                     // WP-33 step 4's pre-first-sync empty state: the rows
@@ -98,12 +143,11 @@ struct TodayView: View {
         .background(Theme.canvas.ignoresSafeArea())
         .task(id: preferences.visibleKinds) {
             await refreshReadings()
+            await refreshReadiness()
         }
         .refreshable {
             await refreshReadings()
-        }
-        .sheet(isPresented: $isEditorPresented) {
-            TodayMetricsEditor(preferences: preferences)
+            await refreshReadiness()
         }
     }
 
@@ -124,131 +168,18 @@ struct TodayView: View {
     private func refreshReadings() async {
         readings = await provider.readings(for: preferences.visibleKinds)
     }
-}
 
-// MARK: - Edit sheet (WP-33 step 2)
-
-struct TodayMetricsEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    let preferences: TodayMetricPreferences
-
-    // WP-33 follow-on (Shared/ThemedChrome.swift): the one modal in the app,
-    // brought onto the same palette as the screens behind it. It keeps `List`
-    // + `EditMode` -- the system reorder handles are the whole point of this
-    // sheet, and reimplementing drag-and-drop to avoid a `List` would trade
-    // real functionality for cosmetics -- but the system background is
-    // replaced with `Theme.canvas`, rows sit on `Theme.surface`, and the
-    // remove affordance moves from `.red` to the palette's accent.
-    var body: some View {
-        VStack(spacing: 0) {
-            // Done lives in the header, not a `ToolbarItem`. On iOS 27 a
-            // `ToolbarItem` reports its content's `accessibilityIdentifier`
-            // on *both* the toolbar's wrapper element and the inner button,
-            // so `TodayUITests`' identifier-only
-            // `.descendants(matching: .any)` query matched two elements and
-            // the tap failed with "Multiple matching elements found"
-            // (element dump: Other[today.editor.done] > Other >
-            // Button[today.editor.done]). Neither
-            // `.accessibilityElement(children: .ignore)` on the button nor
-            // moving the identifier onto the label suppressed the wrapper's
-            // copy -- both tried against a real simulator run. A plain
-            // in-content button has exactly one element, which is why
-            // `dashboard.syncNow` (a `ThemedIconButton`) resolves cleanly
-            // under the same query. Dropping the toolbar also removes the
-            // last stock navigation bar in the app.
-            ThemedHeader(title: "Edit Today") {
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Done")
-                        .font(Theme.font(15, .medium, relativeTo: .callout))
-                        .foregroundStyle(Theme.accentDeep)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("today.editor.done")
-            }
-            .padding(.horizontal, 22)
-
-            List {
-                Section {
-                    ForEach(preferences.visibleKinds) { kind in
-                        HStack(spacing: 12) {
-                            // Explicit remove button rather than the system
-                            // EditMode delete flow -- deterministic for the
-                            // WP-33 edit-mode UI test and a single obvious
-                            // affordance for VoiceOver.
-                            Button {
-                                preferences.hide(kind)
-                            } label: {
-                                Image(systemName: "minus.circle")
-                                    .font(.system(size: 16, weight: .light))
-                                    .foregroundStyle(Theme.accent)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Remove \(kind.displayName)")
-                            .accessibilityIdentifier("today.editor.remove.\(kind.rawValue)")
-                            Text(kind.displayName)
-                                .font(Theme.font(14, .medium, relativeTo: .subheadline))
-                                .foregroundStyle(Theme.ink)
-                                .accessibilityIdentifier("today.editor.row.\(kind.rawValue)")
-                        }
-                        .listRowBackground(Theme.surface)
-                    }
-                    .onMove { source, destination in
-                        preferences.move(fromOffsets: source, toOffset: destination)
-                    }
-                } header: {
-                    Text("SHOWN")
-                        .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
-                        .foregroundStyle(Theme.secondary)
-                } footer: {
-                    Text("Drag to reorder. Removed metrics keep syncing \u{2014} they just leave this panel.")
-                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
-                        .foregroundStyle(Theme.tertiary)
-                }
-
-                if !preferences.hiddenKinds.isEmpty {
-                    Section {
-                        ForEach(preferences.hiddenKinds) { kind in
-                            Button {
-                                preferences.show(kind)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "plus.circle")
-                                        .font(.system(size: 16, weight: .light))
-                                        .foregroundStyle(Theme.accent)
-                                    Text(kind.displayName)
-                                        .font(Theme.font(14, .regular, relativeTo: .subheadline))
-                                        .foregroundStyle(Theme.ink)
-                                }
-                            }
-                            // Deliberately NO `.buttonStyle(.plain)` here,
-                            // unlike the remove button above. This button IS
-                            // the whole row, and with `EditMode` active a
-                            // `List` row only delivers taps to a full-row
-                            // button under the default style -- `.plain`
-                            // made this silently dead: a diagnostic run
-                            // showed `today.editor.add.weight` still present
-                            // and no `today.editor.row.weight` after tapping
-                            // it, while the (inset, non-full-row) remove
-                            // button kept working. The label sets its own
-                            // colors, so the default style changes nothing
-                            // visually.
-                            .listRowBackground(Theme.surface)
-                            .accessibilityIdentifier("today.editor.add.\(kind.rawValue)")
-                        }
-                    } header: {
-                        Text("MORE METRICS")
-                            .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
-                            .foregroundStyle(Theme.secondary)
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .environment(\.editMode, .constant(.active))
+    /// WP-33 step 1's readiness binding: aggregates -> engine -> history
+    /// -> hero. Any HealthKit gap (denied/unavailable/empty) surfaces as
+    /// all-nil inputs, which `display` maps to `.pending` — the hero never
+    /// renders the engine's all-nil fallback score.
+    private func refreshReadiness() async {
+        let inputs = ReadinessInputsProvider.assemble(await readinessProvider.aggregates())
+        let result = ReadinessEngine.score(inputs: inputs, recentScores: scoreHistory.recentScores())
+        if result.signalsUsed > 0 {
+            scoreHistory.record(score: result.score)
         }
-        .background(Theme.canvas.ignoresSafeArea())
-        .tint(Theme.accent)
+        readiness = ReadinessInputsProvider.display(result)
     }
 }
 

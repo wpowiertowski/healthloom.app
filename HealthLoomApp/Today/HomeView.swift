@@ -109,11 +109,18 @@ struct HomeTabBar: View {
                     VStack(spacing: 7) {
                         Image(systemName: tab.icon)
                             .font(.system(size: 18, weight: .light))
+                            // Decorative inside an already-labeled button —
+                            // hiding keeps VoiceOver to one stop per tab
+                            // (and keeps small glyph frames out of audits).
+                            .accessibilityHidden(true)
                         Text(tab.title)
                             .font(Theme.font(10, .medium, relativeTo: .caption2))
                     }
                     .foregroundStyle(selection == tab ? Theme.ink : Theme.tertiary)
-                    .frame(maxWidth: .infinity)
+                    // Audit-clean 44pt+ touch target (test plan §6): the
+                    // icon+label stack alone is ~37pt tall.
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier(tab.accessibilityIdentifier)
