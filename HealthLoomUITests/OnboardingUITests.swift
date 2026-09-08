@@ -30,6 +30,20 @@ final class OnboardingUITests: XCTestCase {
     }
 
     @MainActor
+    func testWelcomeShowsNonMedicalDisclaimer() throws {
+        // WP-38 launch gate: the disclaimer is visible pre-consent on the
+        // welcome step. Stops here on purpose — driving further reaches
+        // the quarantined HealthKit sheet (see below).
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestStubGoogle"]
+        app.launch()
+
+        let footnote = app.staticTexts["onboarding.footnote"]
+        XCTAssertTrue(footnote.waitForExistence(timeout: 10))
+        XCTAssertTrue(footnote.label.contains("not a medical professional"))
+    }
+
+    @MainActor
     func testOnboardingHappyPathWithStubbedGoogle() throws {
         // QUARANTINED (2026-07), not deleted: this test drives HealthKit's
         // real permission sheet, and the iOS 27 beta does not deliver

@@ -59,6 +59,10 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
     let symbol: String?
     let title: String
     let message: String
+    /// Small print rendered under `message` (WP-38: the non-medical
+    /// disclaimer on the welcome step). Optional so the other steps —
+    /// consent sheets with their own legal copy — stay untouched.
+    let footnote: String?
     // Plain stored properties -- `@ViewBuilder` belongs on the `init`
     // parameters below (which build these), not on the storage itself.
     let content: Content
@@ -69,6 +73,7 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
         symbol: String? = nil,
         title: String,
         message: String,
+        footnote: String? = nil,
         @ViewBuilder content: () -> Content = { EmptyView() },
         @ViewBuilder actions: () -> Actions = { EmptyView() }
     ) {
@@ -76,6 +81,7 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
         self.symbol = symbol
         self.title = title
         self.message = message
+        self.footnote = footnote
         self.content = content()
         self.actions = actions()
     }
@@ -128,6 +134,16 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
+
+            if let footnote {
+                Text(footnote)
+                    .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                    .foregroundStyle(Theme.secondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
+                    .accessibilityIdentifier("onboarding.footnote")
+            }
 
             content
 
