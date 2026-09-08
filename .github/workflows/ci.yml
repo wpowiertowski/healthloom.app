@@ -169,22 +169,19 @@ jobs:
           # direction is subtle -- whoever deletes the XCTSkip once a newer
           # beta lands would get a green CI that silently never ran the test.
           # One skip, in the test, where its reason already lives.
-          # Warnings-as-errors enforced globally (matches `make test`;
-          # per-target project.yml settings cover Xcode-GUI builds).
-          # `SWIFT_SUPPRESS_WARNINGS=NO` overrides the `-suppress-warnings`
-          # Xcode's SwiftPM integration injects into remote package targets
-          # -- without it the two options conflict and CI fails; with it,
-          # upstream code builds warning-free-or-fail like ours. (Introduced
-          # for a since-deferred Claude dependency; kept as the standing
-          # rule for the next remote package.)
+          # Owner directive: strict warnings-as-errors everywhere (mirrors
+          # `make test`). Per-target project.yml settings cover GUI builds;
+          # the command-line flags cover the xcodebuild graph including
+          # local packages. No remote package dependencies remain, so no
+          # third-party warnings can break this (WP-33's snapshot tests use
+          # a local helper for exactly this reason).
           xcodebuild build test \
             -project HealthLoom.xcodeproj \
             -scheme HealthLoom \
             -destination "$dest" \
             -resultBundlePath "$RUNNER_TEMP/HealthLoom.xcresult" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
-            SWIFT_SUPPRESS_WARNINGS=NO
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES
 
       # UI-test failures are near-impossible to diagnose from stdout alone
       # (element-not-found waits log no hierarchy; the accessibility

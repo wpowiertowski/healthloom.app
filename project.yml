@@ -19,14 +19,11 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-    # NOTE: warnings-as-errors is enforced twice -- per first-party
-    # target below (covers Xcode-GUI builds, which get no command line)
-    # AND on the `make test` / CI command line (covers everything the
-    # project builds, including local packages). Command-line scope also
-    # reaches SPM package targets, so `SWIFT_SUPPRESS_WARNINGS=NO` rides
-    # next to it there: it overrides the `-suppress-warnings` Xcode's
-    # SwiftPM integration injects into remote package targets, which
-    # otherwise conflicts with `-warnings-as-errors` and fails the build.
+    # NOTE (owner directive: strict warnings-as-errors everywhere, no
+    # carve-outs): `make test` passes the flags command-line-wide on top of
+    # these per-target settings, covering local-package iOS builds in the
+    # xcodebuild graph too. There are no remote package dependencies —
+    # adding one requires it to build warning-free under this SDK first.
     # Known gap: the five local packages get no warnings-as-errors in GUI
     # builds (only their `swift test` runs and CI enforce it) -- project
     # settings can't reach package targets, and command-line flags can't
@@ -48,6 +45,10 @@ packages:
     path: Packages/SyncKit
   CoachKit:
     path: Packages/CoachKit
+  # No remote packages: owner directive is strict warnings-as-errors
+  # everywhere, and the only candidate remote dep (swift-snapshot-testing)
+  # carries SDK deprecation warnings. Snapshot tests use the local
+  # HealthLoomTests/SnapshotAssert.swift helper instead.
 
 targets:
   HealthLoom:

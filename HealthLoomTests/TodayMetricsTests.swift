@@ -9,6 +9,7 @@
 // be resolved from this authoring environment).
 
 import Foundation
+import SwiftUI
 import Testing
 @testable import HealthLoom
 
@@ -29,19 +30,6 @@ struct TodayMetricPreferencesTests {
         #expect(preferences.hiddenKinds == [.weight, .distance, .activeEnergy])
     }
 
-    @Test func reorderPersistsAcrossInstances() throws {
-        let defaults = try makeDefaults()
-        let preferences = TodayMetricPreferences(defaults: defaults)
-
-        // Move "heart" (index 0) below "steps" -- List.onMove semantics.
-        preferences.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
-        #expect(preferences.visibleKinds == [.steps, .heart, .sleep, .bloodOxygen])
-
-        // A fresh instance reads the persisted order back (WP-33's
-        // "reorder persistence" requirement).
-        let reloaded = TodayMetricPreferences(defaults: defaults)
-        #expect(reloaded.visibleKinds == [.steps, .heart, .sleep, .bloodOxygen])
-    }
 
     @Test func hideAndShowPersistAndAppendAtTheEnd() throws {
         let defaults = try makeDefaults()
@@ -72,6 +60,50 @@ struct TodayMetricPreferencesTests {
     @Test func decodeDistinguishesAbsentKeyFromExplicitlyEmptyPanel() {
         #expect(TodayMetricPreferences.decode(nil) == TodayMetricKind.defaultVisible)
         #expect(TodayMetricPreferences.decode([]) == [])
+    }
+
+    @Test func reorderDifferenceBeforeAnchor() {
+        let visible: [TodayMetricKind] = [.heart, .steps, .sleep, .bloodOxygen]
+        let result = TodayMetricPreferences.applying(
+            sources: [.sleep], destination: .before(.heart), to: visible
+        )
+        #expect(result == [.sleep, .heart, .steps, .bloodOxygen])
+    }
+
+    @Test func reorderDifferenceEndAppends() {
+        let visible: [TodayMetricKind] = [.heart, .steps, .sleep, .bloodOxygen]
+        let result = TodayMetricPreferences.applying(
+            sources: [.heart], destination: .end, to: visible
+        )
+        #expect(result == [.steps, .sleep, .bloodOxygen, .heart])
+    }
+
+    @Test func reorderDifferenceKeepsMultiSourceOrder() {
+        let visible: [TodayMetricKind] = [.heart, .steps, .sleep, .bloodOxygen]
+        let result = TodayMetricPreferences.applying(
+            sources: [.bloodOxygen, .heart], destination: .before(.sleep), to: visible
+        )
+        // Moving items keep their current relative order at the anchor.
+        #expect(result == [.steps, .heart, .bloodOxygen, .sleep])
+    }
+
+    @Test func reorderDifferenceWithMovedAnchorFallsBackToEnd() {
+        let visible: [TodayMetricKind] = [.heart, .steps, .sleep]
+        let result = TodayMetricPreferences.applying(
+            sources: [.heart, .steps], destination: .before(.heart), to: visible
+        )
+        #expect(result == [.sleep, .heart, .steps])
+    }
+
+    @Test func reorderDifferencePersists() throws {
+        // WP-33's "reorder persistence" requirement, via the live path:
+        // a fresh instance reads the reordered order back.
+        let defaults = try makeDefaults()
+        let preferences = TodayMetricPreferences(defaults: defaults)
+        preferences.reorder(sources: [.bloodOxygen], destination: .before(.heart))
+        #expect(preferences.visibleKinds.first == .bloodOxygen)
+        let reloaded = TodayMetricPreferences(defaults: defaults)
+        #expect(reloaded.visibleKinds.first == .bloodOxygen)
     }
 }
 

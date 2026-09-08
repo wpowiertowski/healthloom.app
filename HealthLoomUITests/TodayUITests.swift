@@ -50,19 +50,31 @@ final class TodayUITests: XCTestCase {
             XCTAssertTrue(anyElement["today.metric.\(kind)"].exists, "Missing default metric row \(kind)")
         }
 
-        // Edit flow: add Weight, remove Sleep, done -- the panel reflects
-        // both immediately.
+        // In-place edit flow (iOS 27 reorderable-content): add Weight via
+        // the MORE METRICS section, remove Sleep via its row button, Done
+        // -- the panel reflects both immediately. Drag-reorder itself is
+        // covered by unit tests over the difference mapping, not gestures.
         anyElement["today.editButton"].tap()
-        let addWeight = anyElement["today.editor.add.weight"]
+        let addWeight = anyElement["today.add.weight"]
         XCTAssertTrue(addWeight.waitForExistence(timeout: 10))
         addWeight.tap()
-        let removeSleep = anyElement["today.editor.remove.sleep"]
+        let removeSleep = anyElement["today.remove.sleep"]
         XCTAssertTrue(removeSleep.exists)
         removeSleep.tap()
-        anyElement["today.editor.done"].tap()
+        anyElement["today.editButton"].tap()
 
         XCTAssertTrue(anyElement["today.metric.weight"].waitForExistence(timeout: 5))
         XCTAssertFalse(anyElement["today.metric.sleep"].exists)
+
+        // Hit-region audit over the Today screen (test plan §6). Scoped
+        // to hitRegion: the full audit additionally fails contrast on the
+        // derived tertiary palette, whose ≥4.5:1 re-check is explicitly
+        // WP-37's audit (progress.md WP-33 entry) — a palette change now
+        // would also invalidate the recorded snapshots. This pins what
+        // WP-33 owns: every control reachable at 44pt+ (it caught the tab
+        // bar, the Edit affordance, and a custom-element sync-status row
+        // during implementation).
+        try app.performAccessibilityAudit(for: [.hitRegion])
 
         // Persistence across relaunch -- WITHOUT the reset flag this time.
         app.terminate()

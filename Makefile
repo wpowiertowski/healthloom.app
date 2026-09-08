@@ -30,17 +30,17 @@ test:
 		-project HealthLoom.xcodeproj \
 		-scheme HealthLoom \
 		-destination "platform=iOS Simulator,id=$$udid" \
-		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-		GCC_TREAT_WARNINGS_AS_ERRORS=YES \
-		SWIFT_SUPPRESS_WARNINGS=NO
-	# NOTE: warnings-as-errors is enforced here AND per-target in
-	# project.yml (the latter covers Xcode-GUI builds, which get no command
-	# line). `SWIFT_SUPPRESS_WARNINGS=NO` overrides the `-suppress-warnings`
-	# Xcode's SwiftPM integration injects into remote package targets --
-	# without it the two options conflict and the build fails; with it,
-	# upstream code builds warning-free-or-fail like ours. (Proven against
-	# ClaudeForFoundationModels 0.1.4, deferred below -- kept for the next
-	# remote dep, e.g. Gemini.)
+		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+		GCC_TREAT_WARNINGS_AS_ERRORS=YES
+	# NOTE (owner directive: strict warnings-as-errors everywhere, no
+	# carve-outs): the flags above apply command-line-wide — first-party
+	# targets, local packages in the xcodebuild graph, and any SPM target.
+	# Per-target project.yml settings additionally cover Xcode-GUI builds
+	# (no command line), and per-package `swift test -Xswiftc
+	# -warnings-as-errors` covers the macOS host. There are no remote
+	# package dependencies left to break this (WP-33's snapshot tests use a
+	# local helper for exactly this reason); adding one requires it to
+	# build warning-free under this SDK first.
 
 clean:
 	rm -rf HealthLoom.xcodeproj
