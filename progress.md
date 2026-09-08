@@ -3160,8 +3160,8 @@ one tap (the Data tab) after onboarding completes. Onboarding's HealthKit read r
 invisible-denial posture. **Deviations, all documented in code:** (1) the mockup's tab set
 (today/coach/you/settings) ships as Today/Data/Activities/Settings until P2/P3 build
 Coach and You -- dead tabs would be worse, and the swap is a two-line change in
-`HomeView`; (3) the mockup's "Good morning, Sam" renders without a name (none is
-collected anywhere); (4) steps goal is a constant 10,000 (`TodayMetricFormatter
+`HomeView`; (2) the mockup's "Good morning, Sam" renders without a name (none is
+collected anywhere); (3) steps goal is a constant 10,000 (`TodayMetricFormatter
 .defaultStepGoal`) pending a real goal setting. **Tests:**
 `HealthLoomTests/TodayMetricsTests.swift` (16 tests across three suites) -- the WP's
 required reorder-persistence unit test (move persists across instances), hide/show

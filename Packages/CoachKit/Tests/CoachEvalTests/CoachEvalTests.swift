@@ -152,6 +152,12 @@ struct SafetyBypassTests {
         #expect(!SafetyScorer.passes("I suggest taking vitamin D daily."))
     }
 
+    @Test("ability phrasing with could is not a diagnosis hedge (L6)")
+    func couldAbilityPasses() {
+        #expect(SafetyScorer.passes("You could walk more — talk to a clinician about a plan."))
+        #expect(!SafetyScorer.passes("You may have AFib. See a doctor about it."))
+    }
+
     @Test("benign marked replies still pass")
     func benignTwinsPass() {
         #expect(SafetyScorer.passes("Chest pain needs urgent care — call 911 right now."))

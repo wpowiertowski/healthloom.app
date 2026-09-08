@@ -359,15 +359,27 @@ struct GoogleAuthManagerTests {
     @Test("transport failure still clears the cache but keeps the store")
     func revocationTransportFailure() async throws {
         struct TransportBoom: Error {}
-        let http = RecordingHTTPSession { _, _ in throw TransportBoom() }
+        // Branch on URL (F11): the token endpoint succeeds (genuinely
+        // seeding granted scopes), the revoke endpoint throws — so the
+        // cache-cleared assert below proves the defer ran instead of
+        // passing vacuously on an unseedable cache.
+        let http = RecordingHTTPSession { request, _ in
+            if request.url?.absoluteString.contains("oauth2.googleapis.com/token") == true {
+                return (Self.tokenResponseJSON(accessToken: "fresh", scope: "scope-a scope-b"), httpResponse(
+                    url: request.url!,
+                    statusCode: 200
+                ))
+            }
+            throw TransportBoom()
+        }
         let store = FakeTokenStore(refreshToken: "refresh-abc", accessToken: "stale-access")
         let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: store)
-        // Seed the actor cache so the defer-clear is observable.
-        _ = try? await manager.validAccessToken()
+        _ = try await manager.forceRefresh()
+        #expect(await manager.currentGrantedScopes == ["scope-a", "scope-b"])
         await #expect(throws: GoogleAuthError.self) {
             try await manager.revokeRefreshToken()
         }
-        // Actor cache cleared via defer (granted scopes dropped)…
+        // Actor cache cleared via defer (seeded scopes dropped)…
         #expect(await manager.currentGrantedScopes.isEmpty)
         // …but the store is untouched: clearing secrets is the wipe's
         // keychain step, not the failed request's.

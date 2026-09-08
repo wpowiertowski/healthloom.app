@@ -9,9 +9,13 @@
 //
 // Contract: deterministic inputs give deterministic bytes on the same
 // simulator runtime (explicit renderer scale, fixed subject width, no
-// live dates in subjects). Regenerate with `SNAPSHOT_RECORD=1` (writes
-// the reference and fails loudly so a record pass can never go green
-// unnoticed); commit the PNGs; CI compares bytes.
+// live dates in subjects). To regenerate: set `SNAPSHOT_RECORD=1` in the
+// test scheme's environment (Xcode: scheme → Test → Arguments →
+// Environment Variables — `xcodebuild test` CLI does NOT forward shell
+// env into the simulator test host, so a shell-prefixed run compares
+// instead of recording). Recording writes the reference and fails loudly
+// so a record pass can never go green unnoticed; commit the PNGs; CI
+// compares bytes.
 
 import SwiftUI
 import Testing
