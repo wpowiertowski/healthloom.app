@@ -230,6 +230,49 @@ public actor GoogleAuthManager {
         try? await tokenStore.setAccessToken(decoded.accessToken)
     }
 
+    /// Revokes the stored refresh token (WP-35 disconnect-and-wipe).
+    /// Sends the RFC 7009 revocation request, then clears local state
+    /// (actor cache + token store) in ALL cases -- a network failure still
+    /// leaves nothing locally, and the wipe's keychain step clears the
+    /// same keys again for defense in depth. Callers continue the wipe on
+    /// `.revocationFailed` (log only); the token is already unusable.
+    public func revokeRefreshToken() async throws(GoogleAuthError) -> RevocationOutcome {
+        let stored: String?
+        do {
+            stored = try await tokenStore.refreshToken()
+        } catch {
+            throw .tokenStorageFailure
+        }
+        guard let refreshToken = stored else { return .nothingStored }
+        defer {
+            cachedAccessToken = nil
+            cachedExpiry = nil
+            grantedScopes = []
+        }
+        let (_, response) = try await send(buildRevocationRequest(refreshToken))
+        do {
+            try await tokenStore.setRefreshToken(nil)
+            try await tokenStore.setAccessToken(nil)
+        } catch {
+            throw .tokenStorageFailure
+        }
+        guard response.statusCode == 200 else { throw .revocationFailed(status: response.statusCode) }
+        return .revoked
+    }
+
+    /// Builds the RFC 7009 revocation POST. `nonisolated` like
+    /// `buildTokenRequest` so the encoding golden test calls it directly.
+    /// Takes the token as a parameter (never read from the store here) so
+    /// the request carries exactly what the caller revoked -- and the token
+    /// itself never appears in logs (see `GoogleAuthError`'s header).
+    nonisolated func buildRevocationRequest(_ refreshToken: String) -> URLRequest {
+        var request = URLRequest(url: URL(string: config.revocationEndpoint)!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(Self.formURLEncode(["token": refreshToken]).utf8)
+        return request
+    }
+
     private func fetchUserInfo(accessToken: String) async throws(GoogleAuthError) -> UserInfoResponse {
         guard let url = URL(string: config.userInfoEndpoint) else { throw .invalidResponse }
         var request = URLRequest(url: url)

@@ -8,6 +8,14 @@
 
 import Foundation
 
+/// Outcome of `GoogleAuthManager.revokeRefreshToken` (WP-35).
+/// `.nothingStored` is success-with-nothing-to-do (never consented or
+/// already wiped) -- never an error, so the wipe never special-cases it.
+public enum RevocationOutcome: Equatable, Sendable {
+    case revoked
+    case nothingStored
+}
+
 /// `https://oauth2.googleapis.com/token` response body (standard OAuth 2.0
 /// token response, RFC 6749 §5.1).
 nonisolated struct TokenResponse: Decodable, Sendable {

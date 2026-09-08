@@ -23,6 +23,10 @@ nonisolated public enum GoogleAuthError: Error, Sendable, Equatable, CustomStrin
     /// Carries only the HTTP status.
     case tokenExchangeFailed(status: Int)
 
+    /// The revocation endpoint returned a non-200 (WP-35 disconnect).
+    /// Carries only the HTTP status — local state was still cleared.
+    case revocationFailed(status: Int)
+
     /// The userinfo endpoint returned something other than a decodable 200.
     case invalidResponse
 
@@ -49,6 +53,7 @@ nonisolated public enum GoogleAuthError: Error, Sendable, Equatable, CustomStrin
         case .workspaceAccountUnsupported: return "GoogleAuthError.workspaceAccountUnsupported"
         case .missingRefreshToken: return "GoogleAuthError.missingRefreshToken"
         case .tokenExchangeFailed(let status): return "GoogleAuthError.tokenExchangeFailed(status: \(status))"
+        case .revocationFailed(let status): return "GoogleAuthError.revocationFailed(status: \(status))"
         case .invalidResponse: return "GoogleAuthError.invalidResponse"
         case .invalidRedirect: return "GoogleAuthError.invalidRedirect"
         case .consentCancelled: return "GoogleAuthError.consentCancelled"
