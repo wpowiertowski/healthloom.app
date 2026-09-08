@@ -13,8 +13,6 @@
 import CoreModel
 import Foundation
 import Observation
-// SwiftUI (not Foundation) exports `MutableCollection.move(fromOffsets:
-// toOffset:)`, which `TodayMetricPreferences.move` forwards to.
 import SwiftUI
 
 /// The full metric list the user can add/remove from the Today panel
@@ -225,14 +223,13 @@ final class TodayMetricPreferences {
         Self.hidden(givenVisible: visibleKinds)
     }
 
-    func move(fromOffsets source: IndexSet, toOffset destination: Int) {
-        visibleKinds.move(fromOffsets: source, toOffset: destination)
-        persist()
-    }
-
     /// iOS 27 reorderable-content path (WP-33 step 2, as planned): applies
-    /// the container's difference to the stored order. The `IndexSet` move
-    /// above stays for the pure-logic unit tests; both persist identically.
+    /// the container's difference to the stored order. (An earlier
+    /// `IndexSet`-based `move` was deleted in review round 1 — no app
+    /// caller remained once the List sheet went away, and production code
+    /// justified only by its tests is the wrong way round. Its intent —
+    /// moved order persists across instances — lives on in
+    /// `reorderDifferencePersists`.)
     func reorder(_ difference: ReorderDifference<TodayMetricKind, ReorderableSingleCollectionIdentifier>) {
         reorder(sources: difference.sources, destination: difference.destination.position)
     }

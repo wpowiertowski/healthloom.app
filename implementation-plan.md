@@ -815,7 +815,11 @@ push → app pulls just the changed type. Separate repo/deliverable; not on the 
 **Steps:** full VoiceOver pass (every screen operable, tick scale gets `accessibilityValue`),
 Dynamic Type audit at largest sizes, Reduce Motion honored, unit localization
 (HKUnit user-locale rendering; km/mi, kg/lb), first-token latency (prewarm verified),
-sync memory profile on a 1-year backfill (Instruments — no unbounded page accumulation).
+sync memory profile on a 1-year backfill (Instruments — no unbounded page accumulation),
+color-contrast check for both palettes (D12's ≥4.5:1 re-check — WP-33's hitRegion
+UI-test audit deliberately scopes contrast out; the derived tertiary in both modes
+and the light row-sub text are the known inputs to verify, and the full-audit
+`performAccessibilityAudit()` failure on tertiary is the standing repro).
 
 ### WP-38 · Launch checklist (human + agent mix)
 - [ ] Google OAuth verification **approved** for Restricted scopes (started in P-1).

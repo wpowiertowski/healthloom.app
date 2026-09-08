@@ -50,7 +50,9 @@ struct TodayView: View {
                     .foregroundStyle(Theme.ink)
                 Text(Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
                     .font(Theme.font(12, .regular, relativeTo: .caption))
-                    .foregroundStyle(Theme.tertiary)
+                    // Secondary, not tertiary: the date is essential text
+                    // and tertiary is placeholders-only (L2).
+                    .foregroundStyle(Theme.secondary)
                     .padding(.top, 3)
 
                 Rectangle().fill(Theme.gray).frame(height: 1).padding(.top, 16)
@@ -130,7 +132,8 @@ struct TodayView: View {
                     // this line explains why.
                     Text("Your metrics fill in after the first sync.")
                         .font(Theme.font(11, .regular, relativeTo: .caption2))
-                        .foregroundStyle(Theme.tertiary)
+                        // Secondary: instructional text is essential (L2).
+                        .foregroundStyle(Theme.secondary)
                         .padding(.top, 8)
                         .accessibilityIdentifier("today.emptyHint")
                 }

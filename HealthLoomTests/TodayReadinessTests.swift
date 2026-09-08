@@ -94,12 +94,18 @@ struct ReadinessDisplayMappingTests {
         #expect(ReadinessInputsProvider.display(Readiness(score: 50, signalsUsed: 0)) == .pending)
     }
 
-    @Test func scoredMapsThroughWithNilDeltaAsZero() {
+    @Test func scoredPassesNilDeltaThrough() {
+        // H1: a missing delta stays nil so the hero renders the based-on-N
+        // caption — the old `?? 0` coercion rendered a "+0 vs 30-day
+        // average" against an average that didn't exist.
         #expect(ReadinessInputsProvider.display(Readiness(
             score: 82, deltaVsAverage: 6, signalsUsed: 4
         )) == .scored(score: 82, deltaVsBaseline: 6, signalsUsed: 4))
         #expect(ReadinessInputsProvider.display(Readiness(
+            score: 78, deltaVsAverage: nil, signalsUsed: 4
+        )) == .scored(score: 78, deltaVsBaseline: nil, signalsUsed: 4))
+        #expect(ReadinessInputsProvider.display(Readiness(
             score: 70, deltaVsAverage: nil, signalsUsed: 2
-        )) == .scored(score: 70, deltaVsBaseline: 0, signalsUsed: 2))
+        )) == .scored(score: 70, deltaVsBaseline: nil, signalsUsed: 2))
     }
 }

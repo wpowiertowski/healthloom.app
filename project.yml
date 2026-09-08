@@ -25,8 +25,10 @@ settings:
     # is deliberately NOT on the `make test` xcodebuild command line: that
     # scope reaches SPM package targets too, and remote deps carry their
     # own warnings (WP-33: swift-snapshot-testing's iOS-15-era
-    # deprecations). `SWIFT_SUPPRESS_WARNINGS=NO` still rides there so
-    # upstream warnings stay visible instead of silently suppressed.
+    # deprecations). Accepted residual: local packages' iOS builds lose
+    # the old command-line coverage (macOS `swift test` can't see
+    # iOS-only warnings). `SWIFT_SUPPRESS_WARNINGS=NO` still rides there
+    # so upstream warnings stay visible instead of silently suppressed.
     # Known gap: the five local packages get no warnings-as-errors in GUI
     # builds (only their `swift test` runs and CI enforce it) -- project
     # settings can't reach package targets, and command-line flags can't

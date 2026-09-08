@@ -39,7 +39,10 @@ struct TodayHeader: View {
                 // VoiceOver still announces one line via the label below.
                 Text(syncStatus.text)
                     .font(Theme.font(11.5, .regular, relativeTo: .caption))
-                    .foregroundStyle(syncStatus.freshness == .never ? Theme.tertiary : Theme.secondary)
+                    // Always secondary: even "Not synced yet" is a status
+                    // the user must read, and tertiary is placeholders-only
+                    // (L2).
+                    .foregroundStyle(Theme.secondary)
                     .accessibilityLabel("Sync status: \(syncStatus.text)")
                     .accessibilityIdentifier("today.syncStatus")
             }
@@ -53,9 +56,13 @@ struct TodayHeader: View {
 /// insufficient signals" family: no HealthKit data (or zero usable
 /// signals) renders the pending instrument, and sparse data renders the
 /// same shape with a "based on N of 4 signals" caption.
+/// `deltaVsBaseline` is nil until score history exists: a day-one user
+/// with full HealthKit baselines gets 4 real signals but no prior average
+/// to compare against, and the caption must say so (H1) instead of
+/// asserting a "+0 vs 30-day average" that was never computed.
 enum ReadinessDisplay: Equatable {
     case pending
-    case scored(score: Int, deltaVsBaseline: Int, signalsUsed: Int)
+    case scored(score: Int, deltaVsBaseline: Int?, signalsUsed: Int)
 }
 
 struct HeroInstrument: View {
@@ -120,17 +127,16 @@ struct HeroInstrument: View {
     @ViewBuilder private var captionText: some View {
         switch readiness {
         case .pending:
-            Text("Arrives with the coach \u{2014} keep syncing")
+            Text("Sync your health data to see readiness")
                 .font(Theme.font(12, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.trailing)
         case .scored(_, let delta, let signalsUsed):
-            if signalsUsed < 4 {
-                // WP-33 step 4's "readiness insufficient signals" caption.
-                Text("based on \(signalsUsed) of 4 signals")
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
-                    .foregroundStyle(Theme.secondary)
-            } else {
+            // WP-33 step 4's insufficient-signals caption, shared with the
+            // day-one full-signal case (H1): 4 signals and no history is
+            // still "based on 4 of 4 signals", not a comparison against
+            // an average that doesn't exist.
+            if let delta, signalsUsed >= 4 {
                 // iOS 26 deprecated `Text + Text`; interpolating pre-styled
                 // Text values preserves each run's own font/color.
                 let deltaText = Text(delta >= 0 ? "+\(delta)" : "\(delta)")
@@ -140,6 +146,10 @@ struct HeroInstrument: View {
                     .font(Theme.font(12, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                 Text("\(deltaText)\(averageText)")
+            } else {
+                Text("based on \(signalsUsed) of 4 signals")
+                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .foregroundStyle(Theme.secondary)
             }
         }
     }

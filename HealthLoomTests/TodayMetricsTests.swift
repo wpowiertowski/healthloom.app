@@ -30,19 +30,6 @@ struct TodayMetricPreferencesTests {
         #expect(preferences.hiddenKinds == [.weight, .distance, .activeEnergy])
     }
 
-    @Test func reorderPersistsAcrossInstances() throws {
-        let defaults = try makeDefaults()
-        let preferences = TodayMetricPreferences(defaults: defaults)
-
-        // Move "heart" (index 0) below "steps" -- List.onMove semantics.
-        preferences.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
-        #expect(preferences.visibleKinds == [.steps, .heart, .sleep, .bloodOxygen])
-
-        // A fresh instance reads the persisted order back (WP-33's
-        // "reorder persistence" requirement).
-        let reloaded = TodayMetricPreferences(defaults: defaults)
-        #expect(reloaded.visibleKinds == [.steps, .heart, .sleep, .bloodOxygen])
-    }
 
     @Test func hideAndShowPersistAndAppendAtTheEnd() throws {
         let defaults = try makeDefaults()
@@ -109,6 +96,8 @@ struct TodayMetricPreferencesTests {
     }
 
     @Test func reorderDifferencePersists() throws {
+        // WP-33's "reorder persistence" requirement, via the live path:
+        // a fresh instance reads the reordered order back.
         let defaults = try makeDefaults()
         let preferences = TodayMetricPreferences(defaults: defaults)
         preferences.reorder(sources: [.bloodOxygen], destination: .before(.heart))

@@ -25,6 +25,12 @@ private enum TodaySnapshotSubject {
         HeroInstrument(readiness: .pending)
     }
 
+    /// H1's day-one state: full signals, no history — the based-on-4
+    /// caption, never a delta line.
+    static var firstScoreHero: some View {
+        HeroInstrument(readiness: .scored(score: 78, deltaVsBaseline: nil, signalsUsed: 4))
+    }
+
     static var panel: some View {
         InstrumentPanel(metrics: [
             TodayMetricDisplay(kind: .heart, sub: "Resting · steady", value: "62", unit: "bpm", progress: nil),
@@ -51,6 +57,7 @@ struct TodaySnapshotTests {
     func panels() {
         let subjects: [(String, AnyView)] = [
             ("scoredHero", AnyView(TodaySnapshotSubject.scoredHero)),
+            ("firstScoreHero", AnyView(TodaySnapshotSubject.firstScoreHero)),
             ("pendingHero", AnyView(TodaySnapshotSubject.pendingHero)),
             ("panel", AnyView(TodaySnapshotSubject.panel)),
             ("coachInsight", AnyView(TodaySnapshotSubject.coachInsight)),

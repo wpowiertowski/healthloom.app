@@ -3133,29 +3133,31 @@ ago"), never-synced; metric rows <- HealthKit today-values via `TodayMetricsProv
 (cumulative sums since midnight for steps/distance/active energy -- source-merged, so
 D13.3's watch+Fitbit composition is honest -- latest-sample for HR/SpO2/weight,
 last-night asleep-stage sum for sleep; any per-kind read failure degrades to that row's
-"No data yet" state); readiness hero <- `ReadinessDisplay.pending` (the `.scored(score:
-delta:signalsUsed:)` case, including the "based on N of 4 signals" caption, is already
-plumbed so WP-23 binds without reshaping the view); coach panel <- placeholder copy
-(same rust-tint panel, no chevron) until WP-23/34 produce a `DailyInsight`.
-**Edit mode (step 2):** order + visibility live in `TodayMetricPreferences`
+"No data yet" state); readiness hero <- `ReadinessEngine` via `ReadinessInputsProvider`
+(HRV/RHR 30-day baselines with a 7-day recency bound, last-night sleep + efficiency
+with a noon window cap, 800-kcal-capped prior-day strain) + `ReadinessScoreHistory`
+(UserDefaults last-30 ring feeding the delta caption); zero signals renders `.pending`
+(never the engine's all-nil 50) and a missing delta renders "based on N of 4 signals"
+(never an uncomputed "+0 average" -- round-1 H1); coach panel <- placeholder copy
+(same rust-tint panel, no chevron) until WP-34 produces a `DailyInsight`.
+**Edit mode (step 2, as planned):** order + visibility live in `TodayMetricPreferences`
 (UserDefaults; one stored array of visible kinds in display order so order/visibility
 can't drift apart; absent key = the mockup's default four; unknown raw values dropped
-on load), edited via a themed sheet -- reorder through `List`/`.onMove` under an active
-`EditMode` (system drag handles), explicit minus/plus buttons for remove/add
-(deterministic for the UI test, single obvious VoiceOver affordance). The full metric
-list is the 7 kinds with a meaningful HealthKit "today" reading (heart, steps, sleep,
-blood oxygen, weight, distance, active energy); LocalSample-only types stay on the Data
-tab. **App shell:** new `HomeView` hosts the mockup's tab-bar component; `RootView`
+on load), edited in place -- the panel's `ForEach` is iOS 27 reorderable-content
+(`.reorderable()` + `reorderContainer`, gated on the Edit toggle; the difference
+struct has no accessible initializer, so the container maps onto a pure
+sources+position `applying` the tests pin), explicit minus/plus buttons for remove/add
+(deterministic for the UI test, single obvious VoiceOver affordance). The original
+`List`-sheet editor was deleted once the SDK proved buildable; the legacy
+`IndexSet` move path went with it (round-1 L6). The full metric list is the 7 kinds
+with a meaningful HealthKit "today" reading (heart, steps, sleep, blood oxygen,
+weight, distance, active energy); LocalSample-only types stay on the Data tab. **App shell:** new `HomeView` hosts the mockup's tab-bar component; `RootView`
 routes onboarded users to it (Today first), and the pre-existing `-UITestSeedData`
 route lands on the Data tab so every `DashboardUITests` assertion still finds
 `dashboard.syncNow` immediately -- zero churn there; `OnboardingUITests` gained exactly
 one tap (the Data tab) after onboarding completes. Onboarding's HealthKit read request
 (WP-12b's `requestRead`) widened to the Today metric kinds, same single sheet, same
-invisible-denial posture. **Deviations, all documented in code:** (1) the plan's
-"iOS 27 reorderable-content API" could not be verified in this environment (no SDK) --
-the sheet + `List`/`.onMove` path satisfies "no custom Edit-mode drag plumbing" and
-binds the same preferences store; swapping to in-place reorderable-content once
-buildable on the Mac is a contained view-only change; (2) the mockup's tab set
+invisible-denial posture. **Deviations, all documented in code:** (1) the mockup's tab set
 (today/coach/you/settings) ships as Today/Data/Activities/Settings until P2/P3 build
 Coach and You -- dead tabs would be worse, and the swap is a two-line change in
 `HomeView`; (3) the mockup's "Good morning, Sam" renders without a name (none is
@@ -3169,22 +3171,26 @@ distinction; formatter goldens (grouped counts under an injected en_US locale,
 empty-row accessibility text); sync-status states incl. the exact 24 h boundary and the
 terse relative ages, plus greeting hours. `HealthLoomUITests/TodayUITests.swift` -- the
 WP's required edit-mode UI test: seeded launch -> Today tab -> asserts header/hero/
-coach/default rows -> add Weight, remove Sleep via the editor -> panel reflects both ->
+coach/default rows -> add Weight, remove Sleep in place -> panel reflects both ->
+hit-region audit (test plan §6, scoped: the full audit fails contrast on the derived
+tertiary, whose re-check is WP-37's per the plan bullet added in round 1; the audit
+caught and fixed the tab bar, Edit/remove targets, and a custom-element sync row) ->
 relaunch (without the new `-UITestResetTodayMetrics` flag, which the first launch uses
-to stay idempotent across runs) -> persisted order verified. **Deliberately deferred:**
-snapshot tests (test-plan.md §4 -- light/dark x Dynamic Type XS/XL) require adding the
-swift-snapshot-testing package, which this environment cannot resolve or build; flagged
-as the first Mac-side follow-up for this WP, alongside re-running the WP-37 contrast
-audit on the derived dark palette; readiness/coach real bindings (WP-23/34); a real
-step-goal setting; metric-row add/remove *of LocalSample-only types* (they have no
-"today" reading to render). **VERIFICATION -- same caveat as WP-12b's entry, read
-before trusting:** authored in a Linux remote container with no Swift toolchain or
-Xcode -- nothing compiled or test-executed here. All API use mirrors patterns already
-proven in this repo (`@Query`, `@Observable`+`@State`, dynamic UIColor, HK statistics/
-sample queries bridged via continuations identical to `HealthKitStore`'s), but
-`make test` on a Mac with the Xcode 27 beta remains the authoritative gate and must run
-before merge; likeliest fixups are isolation annotations and any SwiftUI API
-availability drift.
+to stay idempotent across runs) -> persisted order verified. **Snapshots (landed,
+no longer deferred):** `TodaySnapshotTests` pins 6 panel subjects (scored/pending/
+first-score heroes, 4-row panel, coach insight + placeholder) x light/dark x XS/XL =
+24 PNGs via swift-snapshot-testing 1.19.4 (exact pin; the full `TodayView` stays out
+-- its greeting date line would fail the day after recording). The package's own
+iOS-15-era deprecation warnings forced the Makefile off global warnings-as-errors
+(per-target enforcement keeps first-party code strict; the local-package iOS-build
+residual is documented in both files). **Still deferred:** coach real binding (WP-34's
+`DailyInsight` source); contrast re-check (WP-37's audit, now with an explicit plan
+bullet and the tertiary failure as standing repro); a real step-goal setting;
+metric-row add/remove *of LocalSample-only types* (they have no "today" reading to
+render). **VERIFICATION:** the original entry's Linux-container caveat was closed by
+the 2026-08-27 note below; everything added since (readiness binding, reorderable
+swap, snapshots, audit) was authored and verified on the real beta toolchain with
+the full matrix green (round-1 checklist numbers in the review).
 
 ## Verification note — WP-12b / WP-33 confirmed on real Xcode 27 beta toolchain (2026-08-27)
 

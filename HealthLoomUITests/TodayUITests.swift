@@ -85,7 +85,4 @@ final class TodayUITests: XCTestCase {
         XCTAssertTrue(anyElement["today.metric.weight"].waitForExistence(timeout: 10))
         XCTAssertFalse(anyElement["today.metric.sleep"].exists)
     }
-
-
-
 }

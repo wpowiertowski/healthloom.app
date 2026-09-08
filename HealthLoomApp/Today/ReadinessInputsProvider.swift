@@ -73,12 +73,14 @@ final class ReadinessInputsProvider {
     }
 
     /// Maps an engine result onto the hero's display states. Pure: zero
-    /// usable signals is `.pending` (never the engine's all-nil 50).
+    /// usable signals is `.pending` (never the engine's all-nil 50), and
+    /// a missing delta passes through as nil (H1) — the hero renders
+    /// "based on N of 4 signals", never an uncomputed "+0 average".
     static func display(_ readiness: Readiness) -> ReadinessDisplay {
         guard readiness.signalsUsed > 0 else { return .pending }
         return .scored(
             score: readiness.score,
-            deltaVsBaseline: readiness.deltaVsAverage ?? 0,
+            deltaVsBaseline: readiness.deltaVsAverage,
             signalsUsed: readiness.signalsUsed
         )
     }
@@ -112,12 +114,18 @@ final class ReadinessInputsProvider {
 
     // MARK: - Query shapes (same bridging as TodayMetricsProvider)
 
+    /// Latest sample within the past 7 days (L3): a watch unworn for
+    /// months still holds ancient HRV/RHR samples, and scoring those as
+    /// current would render a stale-data score as fresh. Older than 7 days
+    /// reads as no data — the hero degrades to pending/insufficient.
     private func latestQuantity(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { return nil }
+        let cutoff = calendar.date(byAdding: .day, value: -7, to: Date())
+        let predicate = cutoff.map { HKQuery.predicateForSamples(withStart: $0, end: nil, options: []) }
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: type,
-                predicate: nil,
+                predicate: predicate,
                 limit: 1,
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
             ) { _, samples, _ in
@@ -156,7 +164,11 @@ final class ReadinessInputsProvider {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return nil }
         let startOfDay = calendar.startOfDay(for: now)
         let windowStart = startOfDay.addingTimeInterval(-6 * 3600)
-        let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: now, options: [])
+        // Window ends at noon (L3), not now: a 2pm nap is not "last
+        // night". Morning wake-ups still fall inside 6pm..noon, so only
+        // post-noon samples — naps — are excluded.
+        let noon = startOfDay.addingTimeInterval(12 * 3600)
+        let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: min(now, noon), options: [])
         let asleepValues: Set<Int> = [1, 3, 4, 5]
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
