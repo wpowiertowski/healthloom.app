@@ -70,7 +70,10 @@ struct HomeView: View {
             Group {
                 switch selection {
                 case .today:
-                    TodayView()
+                    // WP-34 F2: the coach panel's chevron opens the Coach
+                    // tab — selection lives here, so the closure bridges
+                    // the gap `TodayView` cannot cross alone.
+                    TodayView(onOpenCoach: { selection = .coach })
                 case .coach:
                     CoachChatView(viewModel: appEnvironment.coachChatViewModel)
                 case .you:

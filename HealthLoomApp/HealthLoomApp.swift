@@ -21,6 +21,7 @@ import SwiftUI
 @main
 struct HealthLoomApp: App {
     @State private var appEnvironment: AppEnvironment
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let environment = AppEnvironment()
@@ -79,6 +80,17 @@ struct HealthLoomApp: App {
             RootView(initialRoute: appEnvironment.launchConfiguration.initialRoute)
                 .environment(appEnvironment)
                 .modelContainer(appEnvironment.modelContainer)
+        }
+        // WP-34: foreground half of the morning-insight trigger. The
+        // runner's once-daily + after-5am + fresh-sync gates decide; the
+        // BG-sync completion path below calls the same entry, so a
+        // background run and a foreground activation can never
+        // double-generate.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task {
+                await InsightRunnerHost.runIfDue()
+            }
         }
     }
 }
@@ -309,6 +321,12 @@ private enum HealthLoomBackgroundSync {
             logger.log(
                 "Background sync finished: \(outcomes.count, privacy: .public) type(s) attempted, allSucceeded=\(allSucceeded, privacy: .public)"
             )
+            // WP-34: overnight half of the morning-insight trigger. Same
+            // shared entry as the foreground scene-phase hook — the
+            // runner's own gates (enabled, after-5am, once-daily, fresh
+            // sync, tier, authorization, signals) decide, so a failed or
+            // premature sync simply yields `.skipped`.
+            await InsightRunnerHost.runIfDue()
             taskBox.task.setTaskCompleted(success: allSucceeded)
         }
     }

@@ -7,6 +7,7 @@
 // `TodayMetricsProvider`); the simulator UI test covers the pending hero.
 
 import CoachKit
+import CoreModel
 import Foundation
 import Testing
 @testable import HealthLoom
@@ -107,5 +108,28 @@ struct ReadinessDisplayMappingTests {
         #expect(ReadinessInputsProvider.display(Readiness(
             score: 70, deltaVsAverage: nil, signalsUsed: 2
         )) == .scored(score: 70, deltaVsBaseline: nil, signalsUsed: 2))
+    }
+}
+
+@Suite("TodayView.isCurrentMorningInsight")
+struct CurrentMorningInsightTests {
+    @Test("only today's own insights count (F3)") func currentOnly() {
+        let now = Date()
+        let calendar = Calendar.current
+        let today = DerivedInsight(
+            text: "today",
+            createdAt: now,
+            sourceProvider: "morningInsight.onDevice"
+        )
+        #expect(TodayView.isCurrentMorningInsight(today, now: now, calendar: calendar))
+        let staleDate = calendar.date(byAdding: .day, value: -1, to: now) ?? now.addingTimeInterval(-86400)
+        let yesterday = DerivedInsight(
+            text: "stale",
+            createdAt: staleDate,
+            sourceProvider: "morningInsight.onDevice"
+        )
+        #expect(!TodayView.isCurrentMorningInsight(yesterday, now: now, calendar: calendar))
+        let foreign = DerivedInsight(text: "other", createdAt: now, sourceProvider: "onDevice")
+        #expect(!TodayView.isCurrentMorningInsight(foreign, now: now, calendar: calendar))
     }
 }

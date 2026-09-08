@@ -149,6 +149,17 @@ struct LaunchConfiguration: Sendable {
     /// past onboarding on the You tab, so the profile/correct/forget flows
     /// are deterministic without HealthKit data on a simulator.
     var seedYouTab: Bool
+    /// True under any `-UITest*` launch. Unattended work (WP-34's morning
+    /// runner) stays out of UI tests: generation does model + HealthKit
+    /// work on activation, which starves animation-driven assertions on
+    /// loaded CI machines (YouTab sheet timeout, PR #26).
+    var isUITest: Bool
+    /// WP-34: `-UITestStubNotifications` swaps the live notification center
+    /// for a stub (starts `.notDetermined`, grants on request) so the
+    /// insights permission flow is deterministic; `-UITestNotificationsDenied`
+    /// starts the stub `.denied` for the guidance path.
+    var stubNotifications: Bool
+    var denyNotifications: Bool
 
     static var current: LaunchConfiguration {
         Self.resolve(arguments: ProcessInfo.processInfo.arguments)
@@ -193,7 +204,10 @@ struct LaunchConfiguration: Sendable {
             initialRoute: initialRoute,
             coachSessionMode: Self.sessionMode(scriptedCoach: scriptedCoach, forced: forcedCoachAvailability),
             aiModelsScenario: aiModelsScenario,
-            seedYouTab: seedYouTab
+            seedYouTab: seedYouTab,
+            isUITest: arguments.contains(where: { $0.hasPrefix("-UITest") }),
+            stubNotifications: arguments.contains("-UITestStubNotifications"),
+            denyNotifications: arguments.contains("-UITestNotificationsDenied")
         )
     }
 
