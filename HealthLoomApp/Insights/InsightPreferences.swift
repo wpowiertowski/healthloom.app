@@ -57,6 +57,19 @@ final class InsightPreferences {
         defaults.set(lastRun?.timeIntervalSince1970 ?? 0, forKey: Self.lastRunKey)
     }
 
+    /// Re-reads every field from defaults. Called at the top of
+    /// `MorningInsightRunner.runIfDue` (F1): Settings owns a *different*
+    /// instance than the runner, and the runner's copy lives for days —
+    /// without this, an enable-toggle would read as `.disabled` until
+    /// force-quit. Defaults stay the single source; instances are views.
+    func reload() {
+        morningInsightsEnabled = defaults.bool(forKey: Self.enabledKey)
+        lockScreenDetails = defaults.bool(forKey: Self.detailsKey)
+        insightsViaCloud = defaults.bool(forKey: Self.viaCloudKey)
+        let interval = defaults.double(forKey: Self.lastRunKey)
+        lastRun = interval > 0 ? Date(timeIntervalSince1970: interval) : nil
+    }
+
     /// UI-test hook: the notification-flow flags start from a clean slate
     /// (see `AppEnvironment`).
     static func reset(in defaults: UserDefaults = .standard) {

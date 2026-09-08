@@ -48,6 +48,7 @@ struct SettingsView: View {
     // WP-34: morning-insight toggles + live notification posture.
     @State private var insightPrefs = InsightPreferences()
     @State private var insightAuthStatus: InsightAuthStatus = .notDetermined
+    @Environment(\.scenePhase) private var scenePhase
     private let consentPresenter = IncrementalConsentPresenter()
 
     @State private var pendingTypes: Set<GoogleDataType> = []
@@ -152,7 +153,15 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 10)
                 .task {
-                    insightAuthStatus = await appEnvironment.insightNotifier.authorizationStatus()
+                    await refreshInsightAuthStatus()
+                }
+                // N5: the denied hint goes stale if the user grants in
+                // Settings.app — re-read on every foreground return.
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active else { return }
+                    Task {
+                        await refreshInsightAuthStatus()
+                    }
                 }
 
             // WP-26 (implementation-plan.md): the coach prompt editor --
@@ -258,6 +267,10 @@ struct SettingsView: View {
                 .padding(.bottom, 12)
             }
         }
+    }
+
+    private func refreshInsightAuthStatus() async {
+        insightAuthStatus = await appEnvironment.insightNotifier.authorizationStatus()
     }
 
     /// Morning-insights toggle with the in-context permission request.

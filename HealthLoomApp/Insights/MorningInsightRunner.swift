@@ -20,15 +20,24 @@
 // the static BG context can't capture `AppEnvironment`) for overnights.
 // PCC generation inside a BG task is attempted like any other tier; a
 // time-box failure surfaces as `.failed` and the foreground retry covers
-// it, since nothing is recorded on failure.
+// it, since nothing is recorded on failure. Deliberately no on-device
+// fallback when the routed tier fails (F4): fail-closed — a PCC-preferring
+// user gets no insight rather than a wrong-tier one — and the `.failed`
+// log above makes that choice observable instead of silent.
 
 import CoachKit
 import CoreModel
 import Foundation
+import os
 import SwiftData
 
 @MainActor
 struct MorningInsightRunner {
+    // F4: failures are logged here (the only place outcomes are produced),
+    // so both discarding call sites (the host and the scene-phase hook)
+    // stay thin. The message is the failure case — static reasons, counts,
+    // typed model errors — never insight text or health values.
+    private static let logger = Logger(subsystem: "com.healthloom.app", category: "MorningInsight")
     /// `sourceProvider` stamped on persisted insights. A namespace, not a
     /// `ProviderID`: these rows are insight deliveries, and the tier that
     /// served is in the trace (WP-30 reads `ChatTurn`, not this).
@@ -54,25 +63,25 @@ struct MorningInsightRunner {
     }
 
     struct Dependencies {
-        var container: ModelContainer
-        var prefs: InsightPreferences
-        var notifier: any InsightNotifying
-        var factory: CoachSessionFactory
-        var assembler: ContextAssembler
-        var promptManager: PromptManager
-        var history: ReadinessScoreHistory
-        var availability: any CoachAvailabilityChecking
-        var catalog: ModelCatalog
+        let container: ModelContainer
+        let prefs: InsightPreferences
+        let notifier: any InsightNotifying
+        let factory: CoachSessionFactory
+        let assembler: ContextAssembler
+        let promptManager: PromptManager
+        let history: ReadinessScoreHistory
+        let availability: any CoachAvailabilityChecking
+        let catalog: ModelCatalog
         /// Fresh reads at call time (gates flip): evaluated at scheduling
         /// AND re-evaluated just before generation (TOCTOU). Async because
         /// on-device availability is a live async read, not a cached flag.
-        var routeTier: () async -> ModelTier?
+        let routeTier: () async -> ModelTier?
         /// HealthKit boundary seam: production reads the provider, tests
         /// inject inputs (simulator HealthKit is always empty, which
         /// would force `.noSignals` and make generation untestable).
-        var readInputs: () async -> ReadinessInputs
-        var now: () -> Date
-        var calendar: Calendar
+        let readInputs: () async -> ReadinessInputs
+        let now: () -> Date
+        let calendar: Calendar
     }
 
     private let deps: Dependencies
@@ -83,6 +92,20 @@ struct MorningInsightRunner {
 
     @discardableResult
     func runIfDue() async -> Outcome {
+        let outcome = await run()
+        // F4: a persistent failure (PCC pre-flip, assembler regression)
+        // would otherwise be invisible — daily, silent, unmeasured.
+        if case .failed(let message) = outcome {
+            Self.logger.error("morning insight failed: \(message, privacy: .public)")
+        }
+        return outcome
+    }
+
+    private func run() async -> Outcome {
+        // F1: the runner's prefs instance is not the one Settings writes
+        // (it lives for days) — reload from defaults first so a fresh
+        // toggle is visible without relaunch.
+        deps.prefs.reload()
         guard deps.prefs.morningInsightsEnabled else { return .skipped(.disabled) }
         let now = deps.now()
         guard InsightScheduler.shouldRun(lastRun: deps.prefs.lastRun, now: now, calendar: deps.calendar) else {
@@ -124,7 +147,7 @@ struct MorningInsightRunner {
             let insight = try await generator.insight(
                 forPrompt: DailyInsight.prompt(readiness: readiness, context: context.context)
             )
-            try Self.persist(insight, tier: tier, fields: context.context.fields, in: deps.container)
+            try Self.persist(insight, tier: tier, fields: context.context.fields, now: now, in: deps.container)
             let content = InsightNotificationContent.make(
                 headline: insight.headline,
                 suggestions: insight.suggestions,
@@ -160,12 +183,26 @@ struct MorningInsightRunner {
         _ insight: DailyInsight,
         tier: ModelTier,
         fields: [ProfileField],
+        now: Date,
         in container: ModelContainer
     ) throws {
         let context = ModelContext(container)
+        // F5 day-dedupe: notify can throw *after* this insert (revoked
+        // mid-flight), and `lastRun` is only recorded after notify — so a
+        // retry would persist a second identical row. Same-day rows are
+        // replaced, never duplicated; the plan's only-on-success rule
+        // still refers to `lastRun`, which stays unset on failure.
+        let calendar = Calendar.current
+        let stale = try context.fetch(FetchDescriptor<DerivedInsight>()).filter {
+            $0.sourceProvider.hasPrefix(insightSourceProvider)
+                && calendar.isDate($0.createdAt, inSameDayAs: now)
+        }
+        for row in stale {
+            context.delete(row)
+        }
         context.insert(DerivedInsight(
             text: ([insight.headline] + insight.suggestions).joined(separator: "\n"),
-            createdAt: Date(),
+            createdAt: now,
             sourceProvider: "\(insightSourceProvider).\(tier.rawValue)",
             sourceFields: fields.map(\.key)
         ))

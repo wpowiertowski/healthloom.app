@@ -266,8 +266,30 @@ struct InstrumentPanel: View {
 struct CoachPanel: View {
     /// `nil` = no insight yet (placeholder state).
     let insightText: String?
+    /// Opens the Coach tab (plan WP-33 step 1: tap → Coach). Nil while
+    /// there is nothing to discuss — a dead chevron navigates nowhere
+    /// (round-1 F2), so actionability rides with content, not layout.
+    var onOpenCoach: (() -> Void)?
 
     var body: some View {
+        Group {
+            if let onOpenCoach, insightText != nil {
+                panelContent
+                    .onTapGesture(perform: onOpenCoach)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint("Opens the Coach tab")
+            } else {
+                panelContent
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accentTint))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("today.coachPanel")
+    }
+
+    private var panelContent: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("COACH")
@@ -287,10 +309,5 @@ struct CoachPanel: View {
                     .accessibilityHidden(true)
             }
         }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accentTint))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("today.coachPanel")
     }
 }

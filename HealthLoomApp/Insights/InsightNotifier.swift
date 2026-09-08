@@ -15,13 +15,15 @@
 import Foundation
 import UserNotifications
 
-/// Authorization posture for morning insights.
+/// Authorization posture for morning insights. Only `.authorized`
+/// proceeds in the runner (F6) — provisional/ephemeral get their own case
+/// so the gate is exhaustive, but they skip like `.denied`: the app never
+/// requests provisional ([.alert, .sound] only), so treating them as
+/// authorized would promise delivery the app never arranged.
 enum InsightAuthStatus: Equatable {
     case authorized
     case denied
     case notDetermined
-    /// Restricted provisional/ephemeral states: treat like authorized for
-    /// delivery (the system will show them), the runner re-checks anyway.
     case provisional
 }
 
@@ -78,6 +80,11 @@ final class StubInsightNotifier: InsightNotifying, @unchecked Sendable {
     private var _status: InsightAuthStatus
     private var _requestCount = 0
     private var _scheduled: [(title: String, body: String)] = []
+    /// When set, `schedule` throws it (F5: the live center throws when
+    /// authorization is revoked mid-flight — the stub must be able to
+    /// fail the same way or the persist→schedule duplicate window is
+    /// untestable).
+    var scheduleError: (any Error)?
 
     init(status: InsightAuthStatus = .notDetermined) {
         self._status = status
@@ -105,6 +112,9 @@ final class StubInsightNotifier: InsightNotifying, @unchecked Sendable {
     }
 
     func schedule(title: String, body: String) async throws {
+        if let error = lock.withLock({ scheduleError }) {
+            throw error
+        }
         lock.withLock { _scheduled.append((title, body)) }
     }
 }

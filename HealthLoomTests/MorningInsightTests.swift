@@ -25,10 +25,17 @@ struct InsightSchedulerTests {
     }
 
     private func date(_ string: String) -> Date? {
+        dateFormatter().date(from: string)
+    }
+
+    /// Fixed-locale parsing (N2): month names and separators must not depend
+    /// on the test host's locale.
+    private func dateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         formatter.timeZone = calendar.timeZone
-        return formatter.date(from: string)
+        return formatter
     }
 
     @Test("first run after 5am fires, before does not") func firstRunWindow() throws {
@@ -125,7 +132,7 @@ struct InsightNotificationContentTests {
 
 /// `CoachSession` returning one fixed insight (generation path without a
 /// model). File scope: local types cannot carry protocol conformances.
-private final class ScriptedInsightSession: CoachSession, @unchecked Sendable {
+private final class ScriptedInsightSession: CoachSession, Sendable {
     let insight: DailyInsight
 
     init(_ insight: DailyInsight) {
@@ -145,7 +152,7 @@ private final class ScriptedInsightSession: CoachSession, @unchecked Sendable {
 }
 
 /// Always-throwing session for the runner's failure path.
-private final class ThrowingSession: CoachSession, @unchecked Sendable {
+private final class ThrowingSession: CoachSession, Sendable {
     struct Boom: Error {}
     var isResponding: Bool { false }
     func prewarm() {}
@@ -186,6 +193,7 @@ struct MorningInsightRunnerTests {
 
     static func at(_ string: String) -> Date? {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return formatter.date(from: string)
     }
@@ -214,18 +222,24 @@ struct MorningInsightRunnerTests {
         )
     }
 
+    private func makePrefs(in defaults: UserDefaults, enabled: Bool) -> InsightPreferences {
+        let prefs = InsightPreferences(defaults: defaults)
+        prefs.morningInsightsEnabled = enabled
+        return prefs
+    }
+
     private func makeRunner(
         container: ModelContainer,
         defaults: UserDefaults,
-        enabled: Bool,
+        prefs: InsightPreferences? = nil,
+        enabled: Bool = true,
         notifier: StubInsightNotifier,
         tier: TierScript? = nil,
         inputs: ReadinessInputs? = nil,
         factory: CoachSessionFactory? = nil,
         now: Date
     ) -> (MorningInsightRunner, InsightPreferences) {
-        let prefs = InsightPreferences(defaults: defaults)
-        prefs.morningInsightsEnabled = enabled
+        let prefs = prefs ?? makePrefs(in: defaults, enabled: enabled)
         let session = ScriptedInsightSession(Self.scriptedInsight())
         let runner = MorningInsightRunner(deps: MorningInsightRunner.Dependencies(
             container: container,
@@ -342,6 +356,27 @@ struct MorningInsightRunnerTests {
         #expect(await emptyRunner.runIfDue() == .skipped(.noSignals))
     }
 
+    @Test("runner sees Settings writes without relaunch (F1)") func seesFreshToggles() async throws {
+        // The app wiring holds TWO instances on one defaults domain
+        // (Settings' copy + the runner's); flipping through one must be
+        // visible to the other after the runner's reload.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
+        let defaults = try Self.makeDefaults()
+        let now = try #require(Self.at("2026-09-08 08:00"))
+        let settingsCopy = makePrefs(in: defaults, enabled: false)
+        let (runner, runnerCopy) = makeRunner(
+            container: container, defaults: defaults,
+            prefs: InsightPreferences(defaults: defaults),
+            notifier: StubInsightNotifier(status: .authorized),
+            inputs: Self.signalInputs(), now: now
+        )
+        #expect(runnerCopy.morningInsightsEnabled == false)
+        // The user enables in Settings (a different instance).
+        settingsCopy.morningInsightsEnabled = true
+        #expect(await runner.runIfDue() == .ran(tier: .onDevice))
+    }
+
     @Test("tier flip mid-flight aborts") func toctou() async throws {
         let container = try CoreModel.makeContainer(inMemory: true)
         try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
@@ -355,6 +390,33 @@ struct MorningInsightRunnerTests {
         )
         #expect(await runner.runIfDue() == .skipped(.tierChangedMidFlight))
         #expect(prefs.lastRun == nil)
+    }
+
+    @Test("notify failure keeps the row but unmarks the day (F5)") func notifyFailureDedupes() async throws {
+        struct NotifyBoom: Error {}
+        let container = try CoreModel.makeContainer(inMemory: true)
+        try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
+        let defaults = try Self.makeDefaults()
+        let now = try #require(Self.at("2026-09-08 08:00"))
+        let notifier = StubInsightNotifier(status: .authorized)
+        notifier.scheduleError = NotifyBoom()
+        let (runner, prefs) = makeRunner(
+            container: container, defaults: defaults, enabled: true,
+            notifier: notifier, inputs: Self.signalInputs(), now: now
+        )
+        // Persist happened, notify threw: failed, day unmarked.
+        let outcome = await runner.runIfDue()
+        guard case .failed = outcome else {
+            Issue.record("expected .failed, got \(outcome)")
+            return
+        }
+        #expect(prefs.lastRun == nil)
+        let context = ModelContext(container)
+        #expect(try context.fetch(FetchDescriptor<DerivedInsight>()).count == 1)
+        // Retry after the outage: succeeds, still exactly one row.
+        notifier.scheduleError = nil
+        #expect(await runner.runIfDue() == .ran(tier: .onDevice))
+        #expect(try context.fetch(FetchDescriptor<DerivedInsight>()).count == 1)
     }
 
     @Test("generation failure records nothing") func failure() async throws {

@@ -29,6 +29,10 @@ import SwiftData
 import SwiftUI
 
 struct TodayView: View {
+    /// Opens the Coach tab from the coach panel (plan WP-33 step 1).
+    /// Nil in previews and anywhere without tab control.
+    var onOpenCoach: (() -> Void)?
+
     @Query private var syncStates: [SyncState]
     @Query(sort: \LocalSample.end, order: .reverse) private var localSamples: [LocalSample]
     // WP-34: the coach panel binds the latest generated morning insight
@@ -38,7 +42,17 @@ struct TodayView: View {
     @Query(sort: \DerivedInsight.createdAt, order: .reverse) private var derivedInsights: [DerivedInsight]
 
     private var latestMorningInsight: DerivedInsight? {
-        derivedInsights.first { $0.sourceProvider.hasPrefix(MorningInsightRunner.insightSourceProvider) }
+        let today = Calendar.current
+        return derivedInsights.first { Self.isCurrentMorningInsight($0, now: Date(), calendar: today) }
+    }
+
+    /// A persisted insight counts for the panel only when it is both ours
+    /// and from today (F3): a days-old row renders dateless, so without
+    /// this a week-old insight would present as this morning's. Pure for
+    /// tests; the view supplies `now`.
+    static func isCurrentMorningInsight(_ insight: DerivedInsight, now: Date, calendar: Calendar) -> Bool {
+        insight.sourceProvider.hasPrefix(MorningInsightRunner.insightSourceProvider)
+            && calendar.isDate(insight.createdAt, inSameDayAs: now)
     }
     @State private var preferences = TodayMetricPreferences()
     @State private var readings: [TodayMetricKind: TodayMetricReading] = [:]
@@ -147,7 +161,7 @@ struct TodayView: View {
                         .accessibilityIdentifier("today.emptyHint")
                 }
 
-                CoachPanel(insightText: latestMorningInsight?.text)
+                CoachPanel(insightText: latestMorningInsight?.text, onOpenCoach: onOpenCoach)
                     .padding(.top, 14)
             }
             .padding(.horizontal, 22).padding(.bottom, 24)
