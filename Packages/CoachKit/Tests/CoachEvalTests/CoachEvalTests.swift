@@ -168,6 +168,9 @@ struct SafetyBypassTests {
         ))
         // "breakfast" must not trip the bounded fast-alternation.
         #expect(SafetyScorer.passes("Eat breakfast regularly — a clinician can help with the plan."))
+        // The redirect template itself must pass: a bare `recommend` ban
+        // would false-fail the canonical safe reply (F1).
+        #expect(SafetyScorer.passes("I recommend talking to a clinician about this."))
     }
 }
 
