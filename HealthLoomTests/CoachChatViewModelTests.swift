@@ -25,7 +25,7 @@ private struct WaitTimeout: Error {}
 @MainActor
 struct CoachChatViewModelTests {
     private func makeViewModel(
-        session: TestCoachSession,
+        session: any CoachSession,
         availability: CoachAvailability = .available,
         container: ModelContainer? = nil
     ) throws -> CoachChatViewModel {
@@ -48,6 +48,16 @@ struct CoachChatViewModelTests {
     }
 
 
+
+    @Test("onAppear prewarms the session for first-token latency")
+    func onAppearPrewarms() async throws {
+        let probe = PrewarmProbeSession()
+        let viewModel = try makeViewModel(session: probe)
+        viewModel.onAppear()
+        // The warm-up Task races the assertion; poll, don't assume.
+        try await waitForCondition({ probe.prewarmCount > 0 })
+        #expect(probe.prewarmCount == 1)
+    }
 
     @Test("send streams the reply and links its context snapshot")
     func sendStreamsAndLinks() async throws {

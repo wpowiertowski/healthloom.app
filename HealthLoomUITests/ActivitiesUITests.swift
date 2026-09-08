@@ -52,5 +52,7 @@ final class ActivitiesUITests: XCTestCase {
         XCTAssertTrue(detail.exists)
         XCTAssertTrue(detail.label.contains("Fitbit Air"))
         XCTAssertTrue(detail.label.contains("40 min"))
+        // WP-37: hit-region audit over the Activities screen (test plan §6).
+        try app.performAccessibilityAudit(for: [.hitRegion])
     }
 }

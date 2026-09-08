@@ -76,6 +76,9 @@ struct TodayMetricDisplay: Identifiable, Equatable {
     let value: String?
     let unit: String?
     let progress: Double?
+    /// Unit system the value/unit were formatted in (WP-37: spoken units
+    /// must match displayed units — "pounds" never describes kilograms).
+    let unitSystem: UnitSystem
 
     var id: TodayMetricKind { kind }
     var name: String { kind.displayName }
@@ -90,8 +93,8 @@ struct TodayMetricDisplay: Identifiable, Equatable {
         switch kind {
         case .heart: spokenUnit = "beats per minute"
         case .bloodOxygen: spokenUnit = "percent"
-        case .weight: spokenUnit = "kilograms"
-        case .distance: spokenUnit = "kilometers"
+        case .weight: spokenUnit = unitSystem == .metric ? "kilograms" : "pounds"
+        case .distance: spokenUnit = unitSystem == .metric ? "kilometers" : "miles"
         case .activeEnergy: spokenUnit = "kilocalories"
         case .steps, .sleep: spokenUnit = ""
         }
@@ -122,9 +125,20 @@ enum TodayMetricFormatter {
     }
 
     /// Build the display row for one kind from its (optional) raw reading.
-    static func display(kind: TodayMetricKind, reading: TodayMetricReading?, locale: Locale = .current) -> TodayMetricDisplay {
+    /// Canonical readings (kg, meters) render in the locale's unit system
+    /// (WP-37 / test plan §6: en_US → lb/mi, de_DE → kg/km) — HealthKit
+    /// keeps canonical units; only the display converts.
+    static func display(
+        kind: TodayMetricKind,
+        reading: TodayMetricReading?,
+        locale: Locale = .current,
+        unitSystem: UnitSystem
+    ) -> TodayMetricDisplay {
         guard let reading else {
-            return TodayMetricDisplay(kind: kind, sub: "No data yet", value: nil, unit: nil, progress: nil)
+            return TodayMetricDisplay(
+                kind: kind, sub: "No data yet", value: nil, unit: nil, progress: nil,
+                unitSystem: unitSystem
+            )
         }
         switch kind {
         case .heart:
@@ -133,7 +147,8 @@ enum TodayMetricFormatter {
                 sub: timestampSub(reading.date, prefix: "Latest"),
                 value: groupedCount(reading.value, locale: locale),
                 unit: "bpm",
-                progress: nil
+                progress: nil,
+                unitSystem: unitSystem
             )
         case .steps:
             let fraction = min(reading.value / defaultStepGoal, 1)
@@ -143,7 +158,8 @@ enum TodayMetricFormatter {
                 sub: "\(percent)% of \(groupedCount(defaultStepGoal, locale: locale)) goal",
                 value: groupedCount(reading.value, locale: locale),
                 unit: nil,
-                progress: fraction
+                progress: fraction,
+                unitSystem: unitSystem
             )
         case .sleep:
             return TodayMetricDisplay(
@@ -151,7 +167,8 @@ enum TodayMetricFormatter {
                 sub: "Last night",
                 value: duration(seconds: reading.value),
                 unit: nil,
-                progress: nil
+                progress: nil,
+                unitSystem: unitSystem
             )
         case .bloodOxygen:
             // Canonical reading is HealthKit's 0...1 fraction.
@@ -160,23 +177,32 @@ enum TodayMetricFormatter {
                 sub: timestampSub(reading.date, prefix: "Latest"),
                 value: "\(Int((reading.value * 100).rounded()))",
                 unit: "%",
-                progress: nil
+                progress: nil,
+                unitSystem: unitSystem
             )
         case .weight:
+            // Canonical reading is kilograms; imperial renders pounds.
+            let poundsPerKilogram = 2.20462
+            let isMetric = unitSystem == .metric
             return TodayMetricDisplay(
                 kind: kind,
                 sub: timestampSub(reading.date, prefix: "Latest"),
-                value: String(format: "%.1f", reading.value),
-                unit: "kg",
-                progress: nil
+                value: String(format: "%.1f", locale: locale, isMetric ? reading.value : reading.value * poundsPerKilogram),
+                unit: isMetric ? "kg" : "lb",
+                progress: nil,
+                unitSystem: unitSystem
             )
         case .distance:
+            // Canonical reading is meters; imperial renders miles.
+            let metersPerMile = 1609.34
+            let isMetric = unitSystem == .metric
             return TodayMetricDisplay(
                 kind: kind,
                 sub: "Since midnight",
-                value: String(format: "%.1f", reading.value / 1000),
-                unit: "km",
-                progress: nil
+                value: String(format: "%.1f", locale: locale, isMetric ? reading.value / 1000 : reading.value / metersPerMile),
+                unit: isMetric ? "km" : "mi",
+                progress: nil,
+                unitSystem: unitSystem
             )
         case .activeEnergy:
             return TodayMetricDisplay(
@@ -184,7 +210,8 @@ enum TodayMetricFormatter {
                 sub: "Since midnight",
                 value: groupedCount(reading.value, locale: locale),
                 unit: "kcal",
-                progress: nil
+                progress: nil,
+                unitSystem: unitSystem
             )
         }
     }

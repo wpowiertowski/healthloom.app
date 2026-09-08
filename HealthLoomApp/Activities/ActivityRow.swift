@@ -20,6 +20,9 @@ struct ActivityRow: View {
                 Image(systemName: iconName)
                     .font(.system(size: 14, weight: .light))
                     .foregroundStyle(Theme.accent)
+                    // Decorative: the title carries the meaning (same
+                    // treatment as the tab-bar icons).
+                    .accessibilityHidden(true)
                     .accessibilityIdentifier("activities.row.\(entry.id).icon")
                 Text(entry.title)
                     .font(Theme.font(14, .medium, relativeTo: .subheadline))

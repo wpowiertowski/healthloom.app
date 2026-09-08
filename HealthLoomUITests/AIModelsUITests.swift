@@ -226,5 +226,8 @@ final class AIModelsUITests: XCTestCase {
         XCTAssertTrue(slot.label.contains("Apple cloud (PCC)"))
         XCTAssertFalse(slot.label.contains("Claude"))
         XCTAssertFalse(slot.label.contains("Gemini"))
+        // WP-37: no hit-region audit here — returning to Settings
+        // lands on toggle rows whose native 28pt AX frames the beta
+        // audit flags immutably (see InsightUITests' note).
     }
 }

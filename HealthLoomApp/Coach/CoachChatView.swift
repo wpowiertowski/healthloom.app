@@ -57,6 +57,9 @@ struct CoachChatView: View {
                     Text(viewModel.enabledTierNames.isEmpty ? "Off" : viewModel.enabledTierNames)
                         .font(Theme.font(12, .medium, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
+                        // WP-37: 44pt target for the menu label (audit-small).
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 // Identifier on the Menu (not the label Text): labeling
                 // both reports the id twice and every lookup goes
@@ -106,6 +109,9 @@ struct CoachChatView: View {
             if viewModel.isResponding {
                 Button("Stop", action: { viewModel.stop() })
                     .accessibilityIdentifier("chat.stop")
+                    // WP-37: 44pt target for the text button (audit-small).
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             } else {
                 Button("Send") {
                     // `send` reports whether the turn was queued; a `false`
@@ -117,6 +123,9 @@ struct CoachChatView: View {
                 }
                 .disabled(!canSend || viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("chat.send")
+                // WP-37: 44pt target for the text button (audit-small).
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
             }
         }
         .padding(.vertical)

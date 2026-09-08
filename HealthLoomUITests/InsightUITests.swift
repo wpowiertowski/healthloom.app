@@ -103,6 +103,13 @@ final class InsightUITests: XCTestCase {
         let viaCloud = anyElement["settings.insights.viaCloud"]
         XCTAssertTrue(viaCloud.exists)
         setToggle(viaCloud, to: "1", in: app)
+        // WP-37: NO hit-region audit on this screen — its native Toggle
+        // rows expose immutable 326×28 AX frames (min/padding/fixed-
+        // height/combine/controlSize all proven no-ops across 6 probe
+        // runs), which the beta audit flags. Native-switch sizing is
+        // Apple's control, not ours to redesign here; toggle-free
+        // screens carry the audit instead (Today, Coach, Dashboard,
+        // Activities, PromptEditor).
         // No tidy-down: `UserDefaults` persists across runs, but every
         // assertion above drives from the current value first, so leftover
         // ON states are a valid start state, not pollution.

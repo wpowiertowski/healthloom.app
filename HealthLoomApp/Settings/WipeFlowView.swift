@@ -172,16 +172,17 @@ struct WipeFlowView: View {
     }
 
     private func stepIcon(_ step: WipeCoordinator.Step) -> some View {
+        // Decorative: the adjacent detail text carries the status.
         Group {
             switch coordinator?.states[step] {
             case .done:
-                Image(systemName: "checkmark.circle").foregroundStyle(Theme.accent)
+                Image(systemName: "checkmark.circle").foregroundStyle(Theme.accent).accessibilityHidden(true)
             case .failed:
-                Image(systemName: "exclamationmark.circle").foregroundStyle(Theme.accent)
+                Image(systemName: "exclamationmark.circle").foregroundStyle(Theme.accent).accessibilityHidden(true)
             case .running:
                 ProgressView().controlSize(.mini).tint(Theme.accent)
             default:
-                Image(systemName: "circle").foregroundStyle(Theme.tertiary)
+                Image(systemName: "circle").foregroundStyle(Theme.tertiary).accessibilityHidden(true)
             }
         }
         .font(.system(size: 16, weight: .light))

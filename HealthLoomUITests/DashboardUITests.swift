@@ -118,6 +118,8 @@ final class DashboardUITests: XCTestCase {
         scrollUntilExists(anyElement["dashboard.localRow.active_zone_minutes.name"], in: app)
         XCTAssertTrue(anyElement["dashboard.localRow.active_zone_minutes.name"].exists)
         XCTAssertEqual(anyElement["dashboard.localRow.active_zone_minutes.badge"].label, "Not in Apple Health")
+        // WP-37: hit-region audit over the Dashboard screen (test plan §6).
+        try app.performAccessibilityAudit(for: [.hitRegion])
         XCTAssertFalse(anyElement["dashboard.localRow.active_zone_minutes.clinicalBadge"].exists)
 
         // Active Minutes: not clinical -- same as Active Zone Minutes.

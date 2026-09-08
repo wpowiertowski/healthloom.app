@@ -66,14 +66,14 @@ final class TodayUITests: XCTestCase {
         XCTAssertTrue(anyElement["today.metric.weight"].waitForExistence(timeout: 5))
         XCTAssertFalse(anyElement["today.metric.sleep"].exists)
 
-        // Hit-region audit over the Today screen (test plan §6). Scoped
-        // to hitRegion: the full audit additionally fails contrast on the
-        // derived tertiary palette, whose ≥4.5:1 re-check is explicitly
-        // WP-37's audit (progress.md WP-33 entry) — a palette change now
-        // would also invalidate the recorded snapshots. This pins what
-        // WP-33 owns: every control reachable at 44pt+ (it caught the tab
-        // bar, the Edit affordance, and a custom-element sync-status row
-        // during implementation).
+        // Hit-region audit over the Today screen (test plan §6).
+        // Deliberately NOT the full audit (WP-37 outcome): some 30 probe
+        // runs show the beta's contrast verdict neither converges on
+        // identical trees (fail/near-pass flip-flops) nor localizes
+        // (fails with all content hidden) — see the WP-37 progress entry.
+        // Contrast is verified instead by computation (every text pair
+        // ≥4.5:1, Theme.swift documents the figures) plus snapshots
+        // pinning the rendering the figures describe.
         try app.performAccessibilityAudit(for: [.hitRegion])
 
         // Persistence across relaunch -- WITHOUT the reset flag this time.

@@ -324,7 +324,10 @@ struct ThemedIconButton: View {
                         .foregroundStyle(Theme.ink)
                 }
             }
-            .frame(width: 24, height: 24)
+            // WP-37: 44pt touch target for the 24pt glyph (shared fix —
+            // every themed icon button was audit-small).
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)

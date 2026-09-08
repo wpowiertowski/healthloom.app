@@ -31,6 +31,7 @@ final class WipeUITests: XCTestCase {
         app.launch()
         let anyElement = openSettings(app)
 
+        scrollToHittable(anyElement["settings.export.prepare"], in: app)
         anyElement["settings.export.prepare"].tap()
         XCTAssertTrue(anyElement["settings.export.share"].waitForExistence(timeout: 10))
         XCTAssertFalse(anyElement["settings.export.error"].exists)
@@ -43,18 +44,13 @@ final class WipeUITests: XCTestCase {
         app.launch()
         let anyElement = openSettings(app)
 
-        let wipeOpen = anyElement["settings.wipe.open"]
-        var swipes = 0
-        while !wipeOpen.isHittable, swipes < 12 {
-            if wipeOpen.frame.minY < 0 {
-                app.swipeDown()
-            } else {
-                app.swipeUp()
-            }
-            swipes += 1
-        }
-        XCTAssertTrue(wipeOpen.isHittable)
-        // Let scroll deceleration finish, then tap until the sheet
+        // Shared small-increment scroll (no fling overshoot like the
+        // ad-hoc swipe loop this replaces), then tap until navigation
+        // answers: a tap mid-scroll can land nowhere with no error, so a
+        // blind single tap is a flake. Re-query each attempt (never reuse
+        // a possibly stale element across scrolls).
+        scrollToHittable(anyElement["settings.wipe.open"], in: app)
+        // Let scroll deceleration finish, then tap until navigation
         // answers: a tap mid-scroll can land nowhere with no error, so a
         // blind single tap is a flake. Re-query each attempt (never reuse
         // a possibly stale element across scrolls).

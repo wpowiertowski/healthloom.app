@@ -71,5 +71,7 @@ final class PromptEditorUITests: XCTestCase {
         restoreButtons.element(boundBy: 1).tap()
         XCTAssertTrue(anyElement["prompt.notice"].waitForExistence(timeout: 10))
         XCTAssertTrue(preview.label.contains("UITest edit marker."))
+        // WP-37: hit-region audit over the prompt editor (test plan §6).
+        try app.performAccessibilityAudit(for: [.hitRegion])
     }
 }

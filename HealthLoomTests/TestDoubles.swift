@@ -74,3 +74,25 @@ final class TestCoachSession: CoachSession, @unchecked Sendable {
         }
     }
 }
+
+/// Records `prewarm()` calls (WP-37 first-token-latency pin: `onAppear`
+/// must warm the session so the first token doesn't pay cold-start).
+/// Chat-shaped, never throws; lock-guarded counter, immutable otherwise.
+final class PrewarmProbeSession: CoachSession, Sendable {
+    private let lock = NSLock()
+    private var _prewarmCount = 0
+
+    var prewarmCount: Int { lock.withLock { _prewarmCount } }
+
+    var isResponding: Bool { false }
+    func prewarm() {
+        lock.withLock { _prewarmCount += 1 }
+    }
+    func respond(to prompt: String) async throws -> String { "" }
+    func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
+        throw StreamBoom()
+    }
+    func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}

@@ -186,8 +186,11 @@ struct TodayView: View {
     }
 
     private var displayMetrics: [TodayMetricDisplay] {
-        preferences.visibleKinds.map { kind in
-            TodayMetricFormatter.display(kind: kind, reading: readings[kind])
+        // WP-37: display units follow the locale (single-sourced from
+        // CoachKit's mapping — HealthKit keeps canonical units).
+        let unitSystem = ContextAssembler.defaultUnitSystem(for: .current)
+        return preferences.visibleKinds.map { kind in
+            TodayMetricFormatter.display(kind: kind, reading: readings[kind], unitSystem: unitSystem)
         }
     }
 

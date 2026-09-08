@@ -25,16 +25,17 @@
 //      against the dark canvas (#201D1A, relative luminance ~0.012):
 //        ink       #A8CBD8  (~9.5:1  -- primary text, comfortably AA/AAA)
 //        secondary #7FA0AC  (~5.9:1)
-//        tertiary  #5E7680  (~3.4:1  -- placeholders only, matching the
-//                            light palette's own tertiary role: never used
-//                            for essential text)
+//        tertiary  #7A969D  (~4.8:1 surface / ~5.3:1 canvas — WP-37
+//                            darkened from #5E7680 (~3.4:1) to AA)
 //        accent    #C98A63  (~5.7:1  -- the rust hue kept, lightened; the
 //                            original #733E24 would sit near 2:1 on a
 //                            near-black canvas, failing D12's re-check)
 //        accentDeep #E3B999 (~8.4:1 -- labels on the dark accent tint)
-//      Contrast figures are hand-computed from sRGB luminance and must be
+//      Contrast figures are hand-computed from sRGB luminance and were
 //      re-verified in the WP-37 accessibility pass (test-plan.md §6's
-//      "color-contrast check for both palettes").
+//      "color-contrast check for both palettes"), which also darkened
+//      both tertiaries and light secondary to AA (see below) — full-audit
+//      green is the standing proof.
 
 import SwiftUI
 import UIKit
@@ -46,10 +47,16 @@ enum Theme {
 
     // ink (deep teal -- doubles as primary text color)
     static let ink = dynamic(light: 0x245F73, dark: 0xA8CBD8)
-    /// Muted teal-gray -- secondary text.
-    static let secondary = dynamic(light: 0x5C7C87, dark: 0x7FA0AC)
-    /// Light teal-gray -- placeholders.
-    static let tertiary = dynamic(light: 0x96AEB5, dark: 0x5E7680)
+    /// Muted teal-gray -- secondary text. Light value darkened WP-37
+    /// (#5C7C87 was 4.48/3.94 vs white/canvas): #527078 clears 5.32/4.68.
+    static let secondary = dynamic(light: 0x527078, dark: 0x7FA0AC)
+    /// Teal-gray -- placeholders, subs, and decorative glyphs. WP-37
+    /// darkened both modes to AA (light #96AEB5 was ~2.3:1, dark #5E7680
+    /// ~3.1:1): #54707B clears 5.28/4.64 (white/canvas), #7A969D clears
+    /// 4.77/5.33 (surface/canvas). Secondary and tertiary now differ in
+    /// intent (text-hierarchy role), not much in luminance — an honest
+    /// consequence of fitting three teals above 4.5:1 on warm canvas.
+    static let tertiary = dynamic(light: 0x54707B, dark: 0x7A969D)
 
     // structure
     /// Soft warm hairline.

@@ -33,11 +33,11 @@ private enum TodaySnapshotSubject {
 
     static var panel: some View {
         InstrumentPanel(metrics: [
-            TodayMetricDisplay(kind: .heart, sub: "Resting · steady", value: "62", unit: "bpm", progress: nil),
-            TodayMetricDisplay(kind: .steps, sub: "68% of 10,000 goal", value: "8,240", unit: nil, progress: 0.68),
-            TodayMetricDisplay(kind: .sleep, sub: "No data yet", value: nil, unit: nil, progress: nil),
+            TodayMetricDisplay(kind: .heart, sub: "Resting · steady", value: "62", unit: "bpm", progress: nil, unitSystem: .imperial),
+            TodayMetricDisplay(kind: .steps, sub: "68% of 10,000 goal", value: "8,240", unit: nil, progress: 0.68, unitSystem: .imperial),
+            TodayMetricDisplay(kind: .sleep, sub: "No data yet", value: nil, unit: nil, progress: nil, unitSystem: .imperial),
             TodayMetricDisplay(
-                kind: .bloodOxygen, sub: "Average overnight", value: "97", unit: "%", progress: nil
+                kind: .bloodOxygen, sub: "Average overnight", value: "97", unit: "%", progress: nil, unitSystem: .imperial
             ),
         ])
     }
@@ -63,11 +63,15 @@ struct TodaySnapshotTests {
             ("coachInsight", AnyView(TodaySnapshotSubject.coachInsight)),
             ("coachPlaceholder", AnyView(TodaySnapshotSubject.coachPlaceholder)),
         ]
+        // WP-37: largest-size configs (Dynamic Type audit at the top of
+        // the scale — layouts must not clip or overlap there).
         let configs: [(String, ColorScheme, ContentSizeCategory)] = [
             ("light-XS", .light, .extraSmall),
             ("light-XL", .light, .extraLarge),
+            ("light-AXXXL", .light, .accessibilityExtraExtraExtraLarge),
             ("dark-XS", .dark, .extraSmall),
             ("dark-XL", .dark, .extraLarge),
+            ("dark-AXXXL", .dark, .accessibilityExtraExtraExtraLarge),
         ]
         for (subjectName, subject) in subjects {
             for (configName, scheme, size) in configs {
