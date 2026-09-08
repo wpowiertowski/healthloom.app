@@ -57,16 +57,18 @@ final class WipeCoordinator {
     struct Dependencies {
         /// Google token revocation. Throws on transport/endpoint failure;
         /// `.nothingStored` is success (never consented / already wiped).
-        var revokeGoogle: () async throws -> RevocationOutcome
+        let revokeGoogle: () async throws -> RevocationOutcome
         /// Deletes every SecretKey (idempotent-when-absent per contract).
-        var deleteAllKeys: () async throws -> Void
+        let deleteAllKeys: () async throws -> Void
         /// App-written HealthKit deletion (live or stubbed deleter).
-        /// Skipped entirely when the user opts out.
-        var deleteHealthKit: () async -> [HKObjectType: Result<Int, Error>]
+        /// Skipped entirely when the user opts out. Throws when the wipe
+        /// set itself can't be derived (unknown mapping) — failing the
+        /// step loudly instead of wiping an unknown subset.
+        let deleteHealthKit: () async throws -> [HKObjectType: Result<Int, Error>]
         /// Removes the store files. Returns removed URLs for the ledger.
-        var deleteStore: () throws -> [URL]
+        let deleteStore: () throws -> [URL]
         /// Resets persisted preferences.
-        var resetDefaults: () -> Void
+        let resetDefaults: () -> Void
     }
 
     private(set) var states: [Step: StepState] = Dictionary(
@@ -116,11 +118,14 @@ final class WipeCoordinator {
         // 3. HealthKit (optional): app-written samples only.
         if includeHealthKit {
             await perform(.healthKit) {
-                let outcomes = await self.deps.deleteHealthKit()
+                let outcomes = try await self.deps.deleteHealthKit()
                 let deleted = outcomes.values.compactMap { try? $0.get() }.reduce(0, +)
-                let failures = outcomes.count - outcomes.values.filter { (try? $0.get()) != nil }.count
-                if failures > 0 {
-                    throw WipeError.healthKitPartial(deleted: deleted, failedTypes: failures)
+                let failedNames = outcomes.compactMap { type, result -> String? in
+                    guard (try? result.get()) == nil else { return nil }
+                    return HealthKitSourceDeleter.displayName(for: type)
+                }
+                if !failedNames.isEmpty {
+                    throw WipeError.healthKitPartial(deleted: deleted, failedTypeNames: failedNames)
                 }
                 return "\(deleted) sample(s) deleted"
             }
@@ -145,14 +150,27 @@ final class WipeCoordinator {
         states[step] = .running
         do {
             states[step] = .done(detail: try await work())
+        } catch let wipeError as WipeError {
+            // Human retry guidance, never enum-debug (F5).
+            states[step] = .failed(wipeError.stepDetail)
         } catch {
             states[step] = .failed(String(describing: error))
         }
     }
 }
 
-/// Wipe-local errors. Log-safe by construction (counts only, never
-/// payloads or tokens).
+/// Wipe-local errors. Log-safe by construction (counts and type display
+/// names only, never payloads or tokens). The partial case renders
+/// directly into the step row — human retry guidance, never enum-debug.
 enum WipeError: Error, Equatable {
-    case healthKitPartial(deleted: Int, failedTypes: Int)
+    case healthKitPartial(deleted: Int, failedTypeNames: [String])
+
+    var stepDetail: String {
+        switch self {
+        case .healthKitPartial(let deleted, let names):
+            let listed = names.prefix(3).joined(separator: ", ")
+            let more = names.count > 3 ? " and \(names.count - 3) more" : ""
+            return "Deleted \(deleted) sample(s); couldn't verify \(listed)\(more) — re-enable HealthKit access and run again."
+        }
+    }
 }

@@ -18,6 +18,7 @@
 
 import Foundation
 import HealthKit
+import SyncKit
 
 struct HealthKitSourceDeleter {
     /// All samples of one type, newest-first not required (deletion is a
@@ -102,22 +103,70 @@ struct HealthKitSourceDeleter {
 }
 
 extension HealthKitSourceDeleter {
-    /// Every HealthKit type this app can write (the sync writer's
-    /// destination set). One list, shared by the wipe — a newly writable
-    /// type added here is automatically covered by deletion.
-    static let appWritableTypes: [HKObjectType] = [
-        HKObjectType.quantityType(forIdentifier: .stepCount),
-        HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning),
-        HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
-        HKObjectType.quantityType(forIdentifier: .heartRate),
-        HKObjectType.quantityType(forIdentifier: .restingHeartRate),
-        HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN),
-        HKObjectType.quantityType(forIdentifier: .bodyMass),
-        HKObjectType.quantityType(forIdentifier: .oxygenSaturation),
-        HKObjectType.quantityType(forIdentifier: .respiratoryRate),
-        HKObjectType.categoryType(forIdentifier: .sleepAnalysis),
-        HKObjectType.workoutType(),
-    ].compactMap { $0 }
+    /// The wipe set, derived from exactly what onboarding authorizes
+    /// (F1/F2): the P0-mapped sample types in P0 order, then the writer's
+    /// workout-attachment set (workout, energy, ALL distance buckets) in
+    /// cleanup-table order. A type can only hold app-written samples if
+    /// share was requested for it — deriving (not hand-listing) means a
+    /// future P0 addition or distance bucket lands in both the share
+    /// sheet and the wipe, or neither. Deterministic order (never a Set
+    /// round-trip): progress rows and tests read this sequence.
+    static func wipeableTypes() throws -> [HKSampleType] {
+        let auth = HealthKitAuth()
+        var ordered: [HKSampleType] = []
+        var seen = Set<HKSampleType>()
+        func append(_ type: HKSampleType) {
+            if seen.insert(type).inserted {
+                ordered.append(type)
+            }
+        }
+        for dataType in AppEnvironment.p0Types {
+            append(try auth.resolveSampleType(for: dataType))
+        }
+        append(HKObjectType.workoutType())
+        if let energy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
+            append(energy)
+        }
+        for identifier in HealthKitWriter.distanceIdentifiersForCleanup {
+            if let distance = HKObjectType.quantityType(forIdentifier: identifier) {
+                append(distance)
+            }
+        }
+        return ordered
+    }
+}
+
+extension HealthKitSourceDeleter {
+    /// Human-readable type bucket for the wipe ledger (F5). Covers the
+    /// derived wipe set; anything else renders a fail-safe generic —
+    /// never an enum-debug string in user-facing copy.
+    static func displayName(for type: HKObjectType) -> String {
+        if type == HKObjectType.workoutType() { return "workouts" }
+        if type == HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { return "sleep" }
+        let quantities: [(HKQuantityTypeIdentifier, String)] = [
+            (.stepCount, "steps"),
+            (.distanceWalkingRunning, "walking and running distance"),
+            (.distanceCycling, "cycling distance"),
+            (.distanceSwimming, "swimming distance"),
+            (.distanceRowing, "rowing distance"),
+            (.distanceWheelchair, "wheelchair distance"),
+            (.distanceDownhillSnowSports, "downhill distance"),
+            (.distanceCrossCountrySkiing, "skiing distance"),
+            (.activeEnergyBurned, "active energy"),
+            (.heartRate, "heart rate"),
+            (.restingHeartRate, "resting heart rate"),
+            (.heartRateVariabilitySDNN, "heart rate variability"),
+            (.bodyMass, "weight"),
+            (.oxygenSaturation, "blood oxygen"),
+            (.respiratoryRate, "respiratory rate"),
+        ]
+        for (identifier, name) in quantities {
+            if type == HKObjectType.quantityType(forIdentifier: identifier) {
+                return name
+            }
+        }
+        return "health data"
+    }
 }
 
 enum HealthKitDeleteError: Error {

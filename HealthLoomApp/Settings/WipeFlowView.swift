@@ -34,18 +34,27 @@ struct WipeFlowView: View {
         case done
     }
 
+    /// True once the run finishes (success or partial): the store files
+    /// are gone, so leaving this screen risks `@Query` fetches against a
+    /// removed sqlite file plus stale in-memory singletons (gate caches,
+    /// tier mirrors, insight prefs). F4 contains the done phase instead:
+    /// no Back, no Close, no interactive dismiss — only relaunch exits.
+    private var isDone: Bool { phase == .done }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ThemedHeader(title: "Disconnect & wipe") {
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Close")
-                        .font(Theme.font(15, .medium, relativeTo: .callout))
-                        .foregroundStyle(Theme.accentDeep)
+                if !isDone {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text("Close")
+                            .font(Theme.font(15, .medium, relativeTo: .callout))
+                            .foregroundStyle(Theme.accentDeep)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("wipe.close")
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("wipe.close")
             }
             .padding(.horizontal, 22)
 
@@ -61,6 +70,8 @@ struct WipeFlowView: View {
             Spacer(minLength: 0)
         }
         .background(Theme.canvas.ignoresSafeArea())
+        .navigationBarBackButtonHidden(isDone)
+        .interactiveDismissDisabled(isDone)
     }
 
     // MARK: - Options
@@ -212,24 +223,38 @@ struct WipeFlowView: View {
             revokeGoogle: {
                 try await authManager.revokeRefreshToken()
             },
+            // F6: continue-all per key (the coordinator preaches it;
+            // the loop practices it). First failure rethrown after the
+            // loop so one transient can't strand the rest.
             deleteAllKeys: {
+                var firstError: (any Error)?
                 for key in SecretKey.allCases {
-                    try await keys.delete(key)
+                    do {
+                        try await keys.delete(key)
+                    } catch {
+                        if firstError == nil {
+                            firstError = error
+                        }
+                    }
+                }
+                if let firstError {
+                    throw firstError
                 }
             },
+            // N3: no copy loop — the deleter dict returns directly.
             deleteHealthKit: {
-                let deleter = HealthKitSourceDeleter.live()
-                var counts: [HKObjectType: Result<Int, Error>] = [:]
-                for (type, result) in await deleter.deleteAppWritten(
-                    types: HealthKitSourceDeleter.appWritableTypes,
+                let types = try HealthKitSourceDeleter.wipeableTypes().map { $0 as HKObjectType }
+                return await HealthKitSourceDeleter.live().deleteAppWritten(
+                    types: types,
                     ownBundleID: Bundle.main.bundleIdentifier ?? ""
-                ) {
-                    counts[type] = result
-                }
-                return counts
+                )
             },
             deleteStore: {
-                try StoreDeleter.deleteStoreFiles()
+                var removed = try StoreDeleter.deleteStoreFiles()
+                // F3: staged export files are health data too — sweep
+                // them with the store, and report the count.
+                removed += try StoreDeleter.deleteExportFiles()
+                return removed
             },
             resetDefaults: {
                 if let domain = Bundle.main.bundleIdentifier {

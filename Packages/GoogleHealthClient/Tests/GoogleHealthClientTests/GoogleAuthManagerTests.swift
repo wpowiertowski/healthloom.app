@@ -356,6 +356,24 @@ struct GoogleAuthManagerTests {
         #expect(try await store.accessToken() == nil)
     }
 
+    @Test("transport failure still clears the cache but keeps the store")
+    func revocationTransportFailure() async throws {
+        struct TransportBoom: Error {}
+        let http = RecordingHTTPSession { _, _ in throw TransportBoom() }
+        let store = FakeTokenStore(refreshToken: "refresh-abc", accessToken: "stale-access")
+        let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: store)
+        // Seed the actor cache so the defer-clear is observable.
+        _ = try? await manager.validAccessToken()
+        await #expect(throws: GoogleAuthError.self) {
+            try await manager.revokeRefreshToken()
+        }
+        // Actor cache cleared via defer (granted scopes dropped)…
+        #expect(await manager.currentGrantedScopes.isEmpty)
+        // …but the store is untouched: clearing secrets is the wipe's
+        // keychain step, not the failed request's.
+        #expect(try await store.refreshToken() == "refresh-abc")
+    }
+
     @Test("nothing stored is success without a request")
     func revocationNothingStored() async throws {
         let http = RecordingHTTPSession { _, _ in fatalError("no network expected") }

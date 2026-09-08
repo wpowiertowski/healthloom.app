@@ -346,7 +346,8 @@ struct SettingsView: View {
 
     /// WP-35 export: fetches every exportable row, encodes the versioned
     /// document, and stages a temp file for the `ShareLink` above. Errors
-    /// surface inline (never a silent no-op); a previous file is replaced.
+    /// surface inline (never a silent no-op). Previous staged files are
+    /// swept first (F3): exports must not accumulate health JSON in tmp.
     private func prepareExport() {
         isExporting = true
         exportError = nil
@@ -367,6 +368,8 @@ struct SettingsView: View {
                     now: Date()
                 )
                 let data = try ExportBuilder.encode(document)
+                // Sweep previous staged exports before writing (F3).
+                try StoreDeleter.deleteExportFiles()
                 let url = FileManager.default.temporaryDirectory.appending(
                     path: "healthloom-export-\(Int(Date().timeIntervalSince1970)).json",
                     directoryHint: .notDirectory

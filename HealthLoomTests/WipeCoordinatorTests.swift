@@ -14,6 +14,7 @@ import Foundation
 import HealthKit
 import Secrets
 import SwiftData
+import SyncKit
 import Testing
 @testable import HealthLoom
 
@@ -23,18 +24,28 @@ private enum StubSource {
     static let ownBundle = "com.healthloom.app.test"
     static let otherBundle = "com.watch.apple"
 
-    static func sample(bundle: String?, steps: Double = 100) -> HKQuantitySample {
+    static func sample(
+        bundle: String?,
+        steps: Double = 100,
+        type: HKQuantityType
+    ) -> HKQuantitySample {
         var metadata: [String: Any]? = nil
         if let bundle {
             metadata = ["stubSourceBundle": bundle]
         }
         return HKQuantitySample(
-            type: HKObjectType.quantityType(forIdentifier: .stepCount)!,
+            type: type,
             quantity: HKQuantity(unit: .count(), doubleValue: steps),
             start: Date(timeIntervalSince1970: 1_700_000_000),
             end: Date(timeIntervalSince1970: 1_700_003_600),
             metadata: metadata
         )
+    }
+
+    /// Steps quantity type or a recorded issue (N2: no force-unwrap —
+    /// the type object may be absent where HealthKit is unavailable).
+    static func stepsType() throws -> HKQuantityType {
+        try #require(HKObjectType.quantityType(forIdentifier: .stepCount))
     }
 }
 
@@ -42,10 +53,11 @@ private enum StubSource {
 struct HealthKitSourceDeleterTests {
     @Test("deletes only this app's samples and reports per-type counts")
     func onlyOursDeleted() async throws {
-        let oursA = StubSource.sample(bundle: StubSource.ownBundle, steps: 100)
-        let oursB = StubSource.sample(bundle: StubSource.ownBundle, steps: 200)
-        let theirs = StubSource.sample(bundle: StubSource.otherBundle, steps: 9999)
-        let unknown = StubSource.sample(bundle: nil)
+        let steps = try StubSource.stepsType()
+        let oursA = StubSource.sample(bundle: StubSource.ownBundle, steps: 100, type: steps)
+        let oursB = StubSource.sample(bundle: StubSource.ownBundle, steps: 200, type: steps)
+        let theirs = StubSource.sample(bundle: StubSource.otherBundle, steps: 9999, type: steps)
+        let unknown = StubSource.sample(bundle: nil, type: steps)
         let deleted = Locked<[HKObject]>([])
         var progress: [Int] = []
         let deleter = HealthKitSourceDeleter(
@@ -70,8 +82,8 @@ struct HealthKitSourceDeleterTests {
 
     @Test("one failing type neither throws nor strands the others")
     func perTypeIsolation() async throws {
-        let stepsType = HKObjectType.quantityType(forIdentifier: .stepCount)!
-        let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+        let stepsType = try StubSource.stepsType()
+        let sleepType = try #require(HKObjectType.categoryType(forIdentifier: .sleepAnalysis))
         let deleter = HealthKitSourceDeleter(
             fetchAll: { type in
                 if type == stepsType { throw WipeBoom() }
@@ -243,6 +255,31 @@ struct WipeCoordinatorTests {
     }
 }
 
+@Suite("WipeableTypes derivation")
+struct WipeableTypesTests {
+    @Test("wipe set equals exactly the authorized set (F1/F2)")
+    func matchesShareRequest() throws {
+        // The wipe must cover exactly what onboarding authorizes: the
+        // P0-mapped types plus the writer's workout-attachment set. A
+        // future addition on either side breaks this equality loudly
+        // instead of drifting one side into over- or under-deletion.
+        let wipeable = try HealthKitSourceDeleter.wipeableTypes()
+        let auth = HealthKitAuth()
+        var expected = Set<HKSampleType>()
+        for dataType in AppEnvironment.p0Types {
+            expected.insert(try auth.resolveSampleType(for: dataType))
+        }
+        expected.formUnion(HealthKitWriter.workoutShareTypes)
+        #expect(Set(wipeable) == expected)
+        // Every cleanup distance bucket rides along (F2: cycling /
+        // swimming / rowing distances must not survive).
+        for identifier in HealthKitWriter.distanceIdentifiersForCleanup {
+            let distance = try #require(HKObjectType.quantityType(forIdentifier: identifier))
+            #expect(wipeable.contains(distance))
+        }
+    }
+}
+
 // MARK: - Real HealthKit (integration, authorization-gated)
 
 nonisolated private func hasRealHealthKitStepWriteAuthorization() -> Bool {
@@ -262,7 +299,7 @@ struct HealthKitSourceDeleterIntegrationTests {
     )
     func realDeleteBySource() async throws {
         let store = HKHealthStore()
-        let stepsType = HKObjectType.quantityType(forIdentifier: .stepCount)!
+        let stepsType = try StubSource.stepsType()
         let ownBundle = Bundle.main.bundleIdentifier ?? "com.healthloom.app"
         let base = Date().addingTimeInterval(-3600)
         let samples = (0..<2).map { i in

@@ -23,7 +23,7 @@ enum StoreDeleter {
     }
 
     /// Removes existing store files. Returns the removed URLs (for the
-    /// progress row); throws on the first removal failure.
+    /// ledger); throws on the first removal failure.
     @discardableResult
     static func deleteStoreFiles(in directoryURLs: [URL]? = nil) throws -> [URL] {
         let urls = try directoryURLs ?? storeFileURLs()
@@ -35,5 +35,24 @@ enum StoreDeleter {
             }
         }
         return removed
+    }
+
+    /// Removes staged export files (`healthloom-export-*.json`, F3): a
+    /// complete health-data JSON must not survive a wipe in sandbox tmp,
+    /// and re-exports must not accumulate. Prefix-scoped so unrelated tmp
+    /// files are never touched.
+    @discardableResult
+    static func deleteExportFiles() throws -> [URL] {
+        let tmp = FileManager.default.temporaryDirectory
+        let staged = (try? FileManager.default.contentsOfDirectory(
+            at: tmp,
+            includingPropertiesForKeys: nil
+        ))?.filter {
+            $0.lastPathComponent.hasPrefix("healthloom-export-") && $0.pathExtension == "json"
+        } ?? []
+        for url in staged {
+            try FileManager.default.removeItem(at: url)
+        }
+        return staged
     }
 }
