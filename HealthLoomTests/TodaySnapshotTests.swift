@@ -16,6 +16,7 @@
 
 import SwiftUI
 import Testing
+import UIKit
 @testable import HealthLoom
 
 private enum TodaySnapshotSubject {
@@ -82,6 +83,78 @@ struct TodaySnapshotTests {
                     sizeCategory: size
                 )
             }
+        }
+    }
+}
+
+@Suite("SnapshotAssert.matchesPixelwise")
+struct PixelMatchTests {
+    /// Renders a solid square, optionally recoloring one pixel — a
+    /// deterministic stand-in for GPU shimmer (tiny delta) vs real change.
+    @MainActor
+    private static func png(color: UIColor, size: Int = 20, speck: (UIColor, Int, Int)? = nil) throws -> Data {
+        // Explicit scale 1: the default (screen scale) would make pixel
+        // counts device-dependent.
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format)
+        let image = renderer.image { context in
+            color.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+            if let (speckColor, x, y) = speck {
+                speckColor.setFill()
+                context.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }
+        }
+        return try #require(image.pngData())
+    }
+
+    @Test("identical inputs match")
+    func identical() throws {
+        let data = try Self.png(color: .red)
+        #expect(SnapshotAssert.matchesPixelwise(reference: data, candidate: data) == .match)
+    }
+
+    @Test("single-LSB shimmer passes")
+    func shimmer() throws {
+        // One pixel nudged barely (delta 5 < tolerance 16): Metal edge
+        // noise on an otherwise identical render.
+        let base = try Self.png(color: .red)
+        let nudged = try Self.png(
+            color: .red,
+            speck: (UIColor(red: 1.0, green: 5.0 / 255.0, blue: 0, alpha: 1), 3, 3)
+        )
+        #expect(SnapshotAssert.matchesPixelwise(reference: base, candidate: nudged) == .match)
+    }
+
+    @Test("wholesale change fails with counts")
+    func wholesale() throws {
+        let red = try Self.png(color: .red)
+        let blue = try Self.png(color: .blue)
+        let verdict = SnapshotAssert.matchesPixelwise(reference: red, candidate: blue)
+        guard case .pixelsDiffer(let count, let worst) = verdict else {
+            Issue.record("expected pixelsDiffer, got \(verdict)")
+            return
+        }
+        #expect(count == 400)
+        #expect(worst > SnapshotAssert.channelTolerance)
+    }
+
+    @Test("undecodable bytes fail loudly")
+    func undecodable() throws {
+        let good = try Self.png(color: .red)
+        #expect(SnapshotAssert.matchesPixelwise(reference: Data("nope".utf8), candidate: good)
+            == .decodeFailure(side: "reference"))
+    }
+
+    @Test("size change fails as layout regression")
+    func sizeChange() throws {
+        let small = try Self.png(color: .red, size: 20)
+        let big = try Self.png(color: .red, size: 21)
+        let verdict = SnapshotAssert.matchesPixelwise(reference: small, candidate: big)
+        guard case .sizeMismatch = verdict else {
+            Issue.record("expected sizeMismatch, got \(verdict)")
+            return
         }
     }
 }
