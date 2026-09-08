@@ -30,22 +30,17 @@ test:
 		-project HealthLoom.xcodeproj \
 		-scheme HealthLoom \
 		-destination "platform=iOS Simulator,id=$$udid" \
-		SWIFT_SUPPRESS_WARNINGS=NO
-	# NOTE: warnings-as-errors is enforced per-target in project.yml (which
-	# covers Xcode-GUI builds, which get no command line) and per-package
-	# via `swift test -Xswiftc -warnings-as-errors` above. It is deliberately
-	# NOT passed on this command line anymore: command-line scope reaches
-	# SPM package targets too, and swift-snapshot-testing 1.19.4 carries
-	# iOS-15-era deprecation warnings (WP-33) that would fail the build for
-	# third-party code we don't own. Accepted residual (round-1 L1): the old
-	# command line also covered the *local* packages' iOS builds in the
-	# xcodebuild graph, so an iOS-only warning in package code (e.g. an
-	# SDK-gated deprecation the macOS `swift test` run can't see) now fails
-	# nowhere — no per-package flag exists to restore it.
-	# `SWIFT_SUPPRESS_WARNINGS=NO` stays:
-	# it overrides the `-suppress-warnings` Xcode's SwiftPM integration
-	# injects into remote package targets, keeping upstream warnings
-	# visible in logs instead of silently suppressed.
+		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+		GCC_TREAT_WARNINGS_AS_ERRORS=YES
+	# NOTE (owner directive: strict warnings-as-errors everywhere, no
+	# carve-outs): the flags above apply command-line-wide — first-party
+	# targets, local packages in the xcodebuild graph, and any SPM target.
+	# Per-target project.yml settings additionally cover Xcode-GUI builds
+	# (no command line), and per-package `swift test -Xswiftc
+	# -warnings-as-errors` covers the macOS host. There are no remote
+	# package dependencies left to break this (WP-33's snapshot tests use a
+	# local helper for exactly this reason); adding one requires it to
+	# build warning-free under this SDK first.
 
 clean:
 	rm -rf HealthLoom.xcodeproj

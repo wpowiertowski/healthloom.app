@@ -19,16 +19,11 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-    # NOTE: warnings-as-errors is enforced per first-party target below
-    # (covers Xcode-GUI builds, which get no command line) and per-package
-    # via `make test`'s `swift test -Xswiftc -warnings-as-errors` lines. It
-    # is deliberately NOT on the `make test` xcodebuild command line: that
-    # scope reaches SPM package targets too, and remote deps carry their
-    # own warnings (WP-33: swift-snapshot-testing's iOS-15-era
-    # deprecations). Accepted residual: local packages' iOS builds lose
-    # the old command-line coverage (macOS `swift test` can't see
-    # iOS-only warnings). `SWIFT_SUPPRESS_WARNINGS=NO` still rides there
-    # so upstream warnings stay visible instead of silently suppressed.
+    # NOTE (owner directive: strict warnings-as-errors everywhere, no
+    # carve-outs): `make test` passes the flags command-line-wide on top of
+    # these per-target settings, covering local-package iOS builds in the
+    # xcodebuild graph too. There are no remote package dependencies —
+    # adding one requires it to build warning-free under this SDK first.
     # Known gap: the five local packages get no warnings-as-errors in GUI
     # builds (only their `swift test` runs and CI enforce it) -- project
     # settings can't reach package targets, and command-line flags can't
@@ -50,12 +45,10 @@ packages:
     path: Packages/SyncKit
   CoachKit:
     path: Packages/CoachKit
-  # WP-33: snapshot tests (light/dark x Dynamic Type XS/XL) via
-  # pointfreeco's snapshot testing. Pinned to the 1.19 line; the Makefile
-  # note about SWIFT_SUPPRESS_WARNINGS already covers remote deps.
-  SnapshotTesting:
-    url: https://github.com/pointfreeco/swift-snapshot-testing
-    version: "1.19.4"
+  # No remote packages: owner directive is strict warnings-as-errors
+  # everywhere, and the only candidate remote dep (swift-snapshot-testing)
+  # carries SDK deprecation warnings. Snapshot tests use the local
+  # HealthLoomTests/SnapshotAssert.swift helper instead.
 
 targets:
   HealthLoom:
@@ -159,9 +152,6 @@ targets:
     # CoachKit) come along with it, so no per-package entry is needed here.
     dependencies:
       - target: HealthLoom
-      # WP-33: snapshot strategies for the Today screen tests.
-      - package: SnapshotTesting
-        product: SnapshotTesting
 
   # WP-10: XCUITest target for the onboarding happy-path + dashboard
   # per-type-states tests (implementation-plan.md WP-10's "Tests" line).

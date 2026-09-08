@@ -3179,11 +3179,11 @@ relaunch (without the new `-UITestResetTodayMetrics` flag, which the first launc
 to stay idempotent across runs) -> persisted order verified. **Snapshots (landed,
 no longer deferred):** `TodaySnapshotTests` pins 6 panel subjects (scored/pending/
 first-score heroes, 4-row panel, coach insight + placeholder) x light/dark x XS/XL =
-24 PNGs via swift-snapshot-testing 1.19.4 (exact pin; the full `TodayView` stays out
--- its greeting date line would fail the day after recording). The package's own
-iOS-15-era deprecation warnings forced the Makefile off global warnings-as-errors
-(per-target enforcement keeps first-party code strict; the local-package iOS-build
-residual is documented in both files). **Still deferred:** coach real binding (WP-34's
+24 PNGs via the local `SnapshotAssert` helper (byte-compared `ImageRenderer`
+output -- the remote swift-snapshot-testing package was removed: its own
+iOS-15-era deprecation warnings broke strict warnings-as-errors, and the owner
+directive allows no carve-outs; the full `TodayView` stays out -- its greeting
+date line would fail the day after recording). **Still deferred:** coach real binding (WP-34's
 `DailyInsight` source); contrast re-check (WP-37's audit, now with an explicit plan
 bullet and the tertiary failure as standing repro); a real step-goal setting;
 metric-row add/remove *of LocalSample-only types* (they have no "today" reading to

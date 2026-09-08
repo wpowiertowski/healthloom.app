@@ -1,17 +1,19 @@
 // TodaySnapshotTests.swift
 //
 // WP-33 (implementation-plan.md) "Tests:" line's snapshot requirement
-// (light/dark x Dynamic Type XS/XL) via swift-snapshot-testing.
+// (light/dark x Dynamic Type XS/XL) via the local `SnapshotAssert` helper
+// (byte-compared `ImageRenderer` PNGs — no remote snapshot dependency, per
+// the strict warnings-as-errors directive).
 //
 // What is snapshotted: the Yacht-club panels with fixed inputs (scored +
-// pending hero, the four-row instrument panel incl. priority bar, progress
-// bar and an empty row, coach insight + placeholder) — NOT the full
-// `TodayView`, whose greeting date line renders the live date and would
-// fail the day after recording. Panel geometry, tokens, and Dynamic Type
-// scaling are exactly what these snapshots pin; the full screen stays
-// covered by `TodayUITests`' render assertions.
+// first-score + pending heroes, the four-row instrument panel incl.
+// priority bar, progress bar and an empty row, coach insight +
+// placeholder) — NOT the full `TodayView`, whose greeting date line
+// renders the live date and would fail the day after recording. Panel
+// geometry, tokens, and Dynamic Type scaling are exactly what these
+// snapshots pin; the full screen stays covered by `TodayUITests`' render
+// assertions.
 
-import SnapshotTesting
 import SwiftUI
 import Testing
 @testable import HealthLoom
@@ -21,14 +23,12 @@ private enum TodaySnapshotSubject {
         HeroInstrument(readiness: .scored(score: 82, deltaVsBaseline: 6, signalsUsed: 4))
     }
 
-    static var pendingHero: some View {
-        HeroInstrument(readiness: .pending)
-    }
-
-    /// H1's day-one state: full signals, no history — the based-on-4
-    /// caption, never a delta line.
     static var firstScoreHero: some View {
         HeroInstrument(readiness: .scored(score: 78, deltaVsBaseline: nil, signalsUsed: 4))
+    }
+
+    static var pendingHero: some View {
+        HeroInstrument(readiness: .pending)
     }
 
     static var panel: some View {
@@ -63,24 +63,19 @@ struct TodaySnapshotTests {
             ("coachInsight", AnyView(TodaySnapshotSubject.coachInsight)),
             ("coachPlaceholder", AnyView(TodaySnapshotSubject.coachPlaceholder)),
         ]
-        func traits(_ style: UIUserInterfaceStyle, _ size: UIContentSizeCategory) -> UITraitCollection {
-            UITraitCollection(mutations: { mutations in
-                mutations.userInterfaceStyle = style
-                mutations.preferredContentSizeCategory = size
-            })
-        }
-        let configs: [(String, UITraitCollection)] = [
-            ("light-XS", traits(.light, .extraSmall)),
-            ("light-XL", traits(.light, .extraLarge)),
-            ("dark-XS", traits(.dark, .extraSmall)),
-            ("dark-XL", traits(.dark, .extraLarge)),
+        let configs: [(String, ColorScheme, ContentSizeCategory)] = [
+            ("light-XS", .light, .extraSmall),
+            ("light-XL", .light, .extraLarge),
+            ("dark-XS", .dark, .extraSmall),
+            ("dark-XL", .dark, .extraLarge),
         ]
         for (subjectName, subject) in subjects {
-            for (configName, traits) in configs {
-                assertSnapshot(
-                    of: subject.padding().background(Theme.canvas),
-                    as: .image(precision: 0.99, layout: .fixed(width: 390, height: 300), traits: traits),
-                    named: "\(subjectName)-\(configName)"
+            for (configName, scheme, size) in configs {
+                SnapshotAssert.assert(
+                    subject.padding().background(Theme.canvas),
+                    named: "\(subjectName)-\(configName)",
+                    colorScheme: scheme,
+                    sizeCategory: size
                 )
             }
         }

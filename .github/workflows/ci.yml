@@ -169,24 +169,19 @@ jobs:
           # direction is subtle -- whoever deletes the XCTSkip once a newer
           # beta lands would get a green CI that silently never ran the test.
           # One skip, in the test, where its reason already lives.
-          # Warnings-as-errors is enforced per-target in project.yml (which
-          # also covers Xcode-GUI builds) and per-package via the `swift
-          # test -Xswiftc -warnings-as-errors` steps above — deliberately NOT
-          # on this command line (mirrors `make test`): that scope reaches
-          # SPM package targets too, and swift-snapshot-testing 1.19.4
-          # carries iOS-15-era deprecation warnings that fail the build for
-          # third-party code (CI red on PR #25). Accepted residual: local
-          # packages' iOS builds lose the old global coverage (see Makefile).
-          # `SWIFT_SUPPRESS_WARNINGS=NO` stays: it overrides the
-          # `-suppress-warnings` Xcode's SwiftPM integration injects into
-          # remote package targets, keeping upstream warnings visible in
-          # logs instead of silently suppressed.
+          # Owner directive: strict warnings-as-errors everywhere (mirrors
+          # `make test`). Per-target project.yml settings cover GUI builds;
+          # the command-line flags cover the xcodebuild graph including
+          # local packages. No remote package dependencies remain, so no
+          # third-party warnings can break this (WP-33's snapshot tests use
+          # a local helper for exactly this reason).
           xcodebuild build test \
             -project HealthLoom.xcodeproj \
             -scheme HealthLoom \
             -destination "$dest" \
             -resultBundlePath "$RUNNER_TEMP/HealthLoom.xcresult" \
-            SWIFT_SUPPRESS_WARNINGS=NO
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES
 
       # UI-test failures are near-impossible to diagnose from stdout alone
       # (element-not-found waits log no hierarchy; the accessibility
