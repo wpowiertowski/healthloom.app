@@ -81,25 +81,26 @@ struct HealthLoomApp: App {
                 .environment(appEnvironment)
                 .modelContainer(appEnvironment.modelContainer)
         }
-        // Two dispatchers, deliberately (round-2 item 13 overrode the
-        // round-1 merge): the WP-34 insight arm is TRANSITIONS-ONLY (no
-        // `initial:`) — its pre-merge semantics. Firing `runIfDue` on
-        // cold-launch attach would spend MainActor + HealthKit read time
-        // inside launch; background/foreground transitions are the
-        // trigger this arm was built for (the BG-sync completion path
-        // below shares the entry, so a double-generate is impossible).
-        // The tip listener + iCloud sync arm keeps `initial: true`
-        // (launch coverage; the tip `begin()` re-entry is a no-op and
-        // the sync arm stays UITest-gated — hermetic launches must never
-        // reach CloudKit).
-        .onChange(of: scenePhase) { _, phase in
+        // Single dispatcher, re-merged (round-3 item 15 overrode the
+        // round-2 split — and the split's justification does not hold,
+        // stated concretely: (1) an `onChange` WITHOUT `initial:` still
+        // fires at cold launch (inactive→active IS a transition, so the
+        // transitions-only arm never skipped launch at all); (2) every
+        // arm body is already `Task`-dispatched, so nothing here runs on
+        // the launch path either way; (3) the runner is nil-gated under
+        // UITest. The split bought two modifiers for zero behavioral
+        // difference. `initial: true` covers attach; the guard covers
+        // everything else. Arms: WP-34's morning-insight trigger (own
+        // once-daily gate; the BG path below shares the entry so a
+        // double-generate is impossible), the tip listener (no-op
+        // re-entry; idles without transactions, so no UITest gate), and
+        // iCloud sync (UITest-gated here — hermetic launches must never
+        // reach CloudKit; the engine degrades to silent local-only).
+        .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active else { return }
             Task {
                 await InsightRunnerHost.runIfDue()
             }
-        }
-        .onChange(of: scenePhase, initial: true) { _, phase in
-            guard phase == .active else { return }
             Task {
                 await appEnvironment.tipStore.begin()
             }

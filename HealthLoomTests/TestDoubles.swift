@@ -113,23 +113,24 @@ enum BannedHealthSymbols {
 /// (repo-relative, e.g. `"HealthLoomApp/iCloud"`). `//` line comments are
 /// skipped — prose documents the ban by naming it; code may not contain it.
 ///
-/// `file`/`sourceLocation` default to the CALLER's (Swift evaluates
-/// default arguments at the call site, and the repo root resolves
-/// identically for every caller in this directory) — a failure attributes
-/// to the test that caught the symbol, never to this file. The loop
-/// variable is deliberately NOT named `file` (it used to shadow the
-/// parameter; round-2 item 5).
-func assertNoHealthKitSymbols(
-    in directory: String,
-    file: StaticString = #filePath,
-    sourceLocation: SourceLocation = #_sourceLocation
-) throws {
-    let thisFile = URL(fileURLWithPath: String(describing: file))
-    let dir = thisFile
+/// File-scope anchor for repo-root derivation (round-3 item 13): `#filePath`
+/// evaluated HERE is always TestDoubles.swift, so no caller can misdirect
+/// the scan by passing `file:` — the parameter is gone; `sourceLocation`
+/// remains the caller's (default args evaluate at the call site), keeping
+/// failure attribution at the test that caught the symbol.
+private let testDoublesAnchor = #filePath
+
+/// Comment-stripped Swift sources under a repo-relative directory
+/// (round-3 item 9): the single walk/strip/root-derivation every
+/// source-scanning grep-test shares — `//` line comments are skipped so
+/// prose may name a ban the code may not contain. Returns
+/// (fileName, code) pairs; callers match their own symbols.
+func scanSources(in directory: String) throws -> [(file: String, code: String)] {
+    let dir = URL(fileURLWithPath: testDoublesAnchor)
         .deletingLastPathComponent() // HealthLoomTests
         .deletingLastPathComponent() // repo root
         .appendingPathComponent(directory)
-    var hits: [String] = []
+    var out: [(file: String, code: String)] = []
     for candidate in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
         guard candidate.pathExtension == "swift" else { continue }
         let source = try String(contentsOf: candidate, encoding: .utf8)
@@ -137,8 +138,19 @@ func assertNoHealthKitSymbols(
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
-        for symbol in BannedHealthSymbols.all where code.contains(symbol) {
-            hits.append("\(candidate.lastPathComponent): \(symbol)")
+        out.append((file: candidate.lastPathComponent, code: code))
+    }
+    return out
+}
+
+func assertNoHealthKitSymbols(
+    in directory: String,
+    sourceLocation: SourceLocation = #_sourceLocation
+) throws {
+    var hits: [String] = []
+    for source in try scanSources(in: directory) {
+        for symbol in BannedHealthSymbols.all where source.code.contains(symbol) {
+            hits.append("\(source.file): \(symbol)")
         }
     }
     #expect(hits.isEmpty, "HealthKit symbols in \(directory): \(hits)", sourceLocation: sourceLocation)

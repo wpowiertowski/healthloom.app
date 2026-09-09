@@ -21,44 +21,60 @@ import Testing
 
 private struct WaitTimeout: Error {}
 
-@Suite("CoachChatViewModel")
+/// Structural fixture (round-3 item 12): owns the view model
+/// AND its ephemeral suite. Call sites project `.viewModel` off a
+/// temporary — one token per site, bodies untouched, no defers.
 @MainActor
-struct CoachChatViewModelTests {
-    private func makeViewModel(
-        session: any CoachSession,
-        availability: CoachAvailability = .available,
-        container: ModelContainer? = nil
-    ) throws -> (CoachChatViewModel, EphemeralDefaults) {
-        let container = try container ?? CoreModel.makeContainer(inMemory: true)
-        // Round-2 item 14: `#function`-keyed bare suites leaked between
-        // runs AND never cleaned up. The holder escapes with the view
-        // model; callers bind it for the test (janitor-backed too).
-        let ephemeral = try EphemeralDefaults(prefix: "coachchat")
-        let store = KnowledgeStore(
-            modelContainer: container,
-            healthReadStore: EmptyReadStore(),
-            healthKitAuth: HealthKitAuth()
-        )
-        let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
-            container: container,
-            store: store,
-            prompts: PromptManager(modelContainer: container),
-            assembler: ContextAssembler(modelContainer: container),
-            factory: CoachSessionFactory(build: { _, _, _ in session }),
-            availability: FixedCoachAvailabilityChecker(availability: availability),
-            tierSettings: TierSettingsStore(defaults: ephemeral.defaults),
-            tierCatalog: ModelCatalog(onDeviceAvailable: { true })
-        ))
-        return (viewModel, ephemeral)
+final class CoachChatFixture {
+    let viewModel: CoachChatViewModel
+    private let ephemeral: EphemeralDefaults
+
+    init(viewModel: CoachChatViewModel, ephemeral: EphemeralDefaults) {
+        self.viewModel = viewModel
+        self.ephemeral = ephemeral
     }
+}
+
+@MainActor
+private func makeCoachViewModel(
+    session: any CoachSession,
+    availability: CoachAvailability = .available,
+    container: ModelContainer? = nil
+) throws -> CoachChatFixture {
+    let container = try container ?? CoreModel.makeContainer(inMemory: true)
+    // Round-3 item 12: the holder rides in the fixture (same
+    // treatment as TierSwitcherFixture). The view model holds its
+    // own defaults ref, so a fixture temporary at the call site is
+    // safe (init pre-clean + janitor backstop — see TierSwitcher).
+    let ephemeral = try EphemeralDefaults(prefix: "coachchat")
+    let store = KnowledgeStore(
+        modelContainer: container,
+        healthReadStore: EmptyReadStore(),
+        healthKitAuth: HealthKitAuth()
+    )
+    let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
+        container: container,
+        store: store,
+        prompts: PromptManager(modelContainer: container),
+        assembler: ContextAssembler(modelContainer: container),
+        factory: CoachSessionFactory(build: { _, _, _ in session }),
+        availability: FixedCoachAvailabilityChecker(availability: availability),
+        tierSettings: TierSettingsStore(defaults: ephemeral.defaults),
+        tierCatalog: ModelCatalog(onDeviceAvailable: { true })
+    ))
+    return CoachChatFixture(viewModel: viewModel, ephemeral: ephemeral)
+}
+@MainActor
+@Suite("CoachChatViewModel")
+struct CoachChatViewModelTests {
+
 
 
 
     @Test("onAppear prewarms the session for first-token latency")
     func onAppearPrewarms() async throws {
         let probe = PrewarmProbeSession()
-        let (viewModel, ephemeral) = try makeViewModel(session: probe)
-        defer { withExtendedLifetime(ephemeral) {} }
+        let viewModel = try makeCoachViewModel(session: probe).viewModel
         viewModel.onAppear()
         // The warm-up Task races the assertion; poll, don't assume.
         try await waitForCondition({ probe.prewarmCount > 0 })
@@ -67,8 +83,7 @@ struct CoachChatViewModelTests {
 
     @Test("send streams the reply and links its context snapshot")
     func sendStreamsAndLinks() async throws {
-        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession())
-        defer { withExtendedLifetime(ephemeral) {} }
+        let viewModel = try makeCoachViewModel(session: TestCoachSession()).viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.turns.count == 2)
@@ -93,11 +108,10 @@ struct CoachChatViewModelTests {
             ))
         }
         try context.save()
-        let (viewModel, ephemeral) = try makeViewModel(
+        let viewModel = try makeCoachViewModel(
             session: TestCoachSession(),
             container: container
-        )
-        defer { withExtendedLifetime(ephemeral) {} }
+        ).viewModel
         viewModel.onAppear()
         #expect(viewModel.turns.count == CoachChatViewModel.maxLoadedTurns)
         #expect(viewModel.turns.first?.content == "turn 5")
@@ -106,8 +120,7 @@ struct CoachChatViewModelTests {
 
     @Test("stopping before the first token persists no empty turn")
     func stopBeforeFirstToken() async throws {
-        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(suspendForever: true))
-        defer { withExtendedLifetime(ephemeral) {} }
+        let viewModel = try makeCoachViewModel(session: TestCoachSession(suspendForever: true)).viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ viewModel.isResponding })
         viewModel.stop()
@@ -119,11 +132,10 @@ struct CoachChatViewModelTests {
 
     @Test("mid-stream error persists the visible partial and reports")
     func midStreamError() async throws {
-        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(
+        let viewModel = try makeCoachViewModel(session: TestCoachSession(
             chunks: ["part ", "rest."],
             failAfterChunks: 1
-        ))
-        defer { withExtendedLifetime(ephemeral) {} }
+        )).viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.turns.count == 2)
@@ -133,11 +145,10 @@ struct CoachChatViewModelTests {
 
     @Test("stop truncates the stream to a non-empty partial")
     func stopTruncates() async throws {
-        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(
+        let viewModel = try makeCoachViewModel(session: TestCoachSession(
             chunks: ["one ", "two ", "three ", "four."],
             chunkDelay: .milliseconds(200)
-        ))
-        defer { withExtendedLifetime(ephemeral) {} }
+        )).viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.draft.isEmpty })
         viewModel.stop()
@@ -154,8 +165,7 @@ struct CoachChatViewModelTests {
         // Third-party F15: the .modelNotReady leg lived here AND in the
         // gate loop below — it belongs to the loop (allCases covers it),
         // so this test keeps only the blank-input case it owns.
-        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession())
-        defer { withExtendedLifetime(ephemeral) {} }
+        let viewModel = try makeCoachViewModel(session: TestCoachSession()).viewModel
         #expect(viewModel.send("   ") == false)
         #expect(viewModel.turns.isEmpty)
     }
@@ -169,9 +179,8 @@ struct CoachChatViewModelTests {
     @Test("coach leg: every non-available gate blocks sends with no turns")
     func unavailableGatesBlockCoachSends() async throws {
         for availability in CoachAvailability.allCases.filter({ $0 != .available }) {
-            let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(), availability: availability)
-            defer { withExtendedLifetime(ephemeral) {} }
-            viewModel.onAppear()
+            let viewModel = try makeCoachViewModel(session: TestCoachSession(), availability: availability).viewModel
+                viewModel.onAppear()
             try await waitForCondition({ viewModel.availability != .available }, timeout: 2)
             #expect(viewModel.send("hi") == false, "gate \(availability) let a send through")
             #expect(viewModel.turns.isEmpty)
@@ -184,27 +193,12 @@ struct CoachChatViewModelTests {
 struct CoachRoundTwoTests {
     @Test("tab switch mid-stream does not truncate the reply")
     func tabSwitchDoesNotTruncate() async throws {
-        let container = try CoreModel.makeContainer(inMemory: true)
-        let store = KnowledgeStore(
-            modelContainer: container,
-            healthReadStore: EmptyReadStore(),
-            healthKitAuth: HealthKitAuth()
-        )
-        let ephemeralInline = try EphemeralDefaults(prefix: "coachchat")
-        defer { withExtendedLifetime(ephemeralInline) {} }
-        let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
-            container: container,
-            store: store,
-            prompts: PromptManager(modelContainer: container),
-            assembler: ContextAssembler(modelContainer: container),
-            factory: CoachSessionFactory(build: { _, _, _ in TestCoachSession(
-                chunks: ["one ", "two ", "three."],
-                chunkDelay: .milliseconds(200)
-            ) }),
-            availability: FixedCoachAvailabilityChecker(availability: .available),
-            tierSettings: TierSettingsStore(defaults: ephemeralInline.defaults),
-            tierCatalog: ModelCatalog(onDeviceAvailable: { true })
-        ))
+        // Round-3 item 12: routed through the helper (constant session
+        // per build ≡ the old constant factory) — the inline
+        // construction and its holder are gone.
+        let viewModel = try makeCoachViewModel(
+            session: TestCoachSession(chunks: ["one ", "two ", "three."], chunkDelay: .milliseconds(200))
+        ).viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ viewModel.isResponding })
         // The view unmounts and remounts; the view model (and its stream)
@@ -221,24 +215,13 @@ struct CoachRoundTwoTests {
     func staleCacheAborts() async throws {
         // No onAppear: the cached value is still the optimistic `.available`
         // while the live gate reports `.modelNotReady`.
+        // Round-3 item 12: routed through the helper — see above.
         let container = try CoreModel.makeContainer(inMemory: true)
-        let store = KnowledgeStore(
-            modelContainer: container,
-            healthReadStore: EmptyReadStore(),
-            healthKitAuth: HealthKitAuth()
-        )
-        let ephemeralInline = try EphemeralDefaults(prefix: "coachchat")
-        defer { withExtendedLifetime(ephemeralInline) {} }
-        let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
-            container: container,
-            store: store,
-            prompts: PromptManager(modelContainer: container),
-            assembler: ContextAssembler(modelContainer: container),
-            factory: CoachSessionFactory(build: { _, _, _ in TestCoachSession() }),
-            availability: FixedCoachAvailabilityChecker(availability: .modelNotReady),
-            tierSettings: TierSettingsStore(defaults: ephemeralInline.defaults),
-            tierCatalog: ModelCatalog(onDeviceAvailable: { true })
-        ))
+        let viewModel = try makeCoachViewModel(
+            session: TestCoachSession(),
+            availability: .modelNotReady,
+            container: container
+        ).viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.errorMessage?.contains("isn't available") == true)
@@ -306,6 +289,22 @@ struct CoachRoundTwoTests {
         #expect(config.denyNotifications == false)
         config = LaunchConfiguration.resolve(arguments: ["-UITestNotificationsDenied"])
         #expect(config.denyNotifications == true)
+
+        // Round-3 items 3+4+5: the tips-stub parser matrix — absent (no
+        // stub, out of the container disjunction), bare `=` (legacy
+        // single-empty), bare flag (mirrors aiModelsScenario), unknown
+        // token (safe fallback), FIFO order, and the container rule.
+        config = LaunchConfiguration.resolve(arguments: [])
+        #expect(config.tipsStub == [])
+        config = LaunchConfiguration.resolve(arguments: ["-UITestTipsStub="])
+        #expect(config.tipsStub == [.emptyProducts])
+        config = LaunchConfiguration.resolve(arguments: ["-UITestTipsStub"])
+        #expect(config.tipsStub == [.emptyProducts])
+        config = LaunchConfiguration.resolve(arguments: ["-UITestTipsStub=bogus"])
+        #expect(config.tipsStub == [.emptyProducts])
+        config = LaunchConfiguration.resolve(arguments: ["-UITestTipsStub=failed,empty"])
+        #expect(config.tipsStub == [.failed, .emptyProducts])
+        #expect(config.useInMemoryContainer == true)
     }
 }
 

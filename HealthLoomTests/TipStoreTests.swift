@@ -14,13 +14,15 @@
 // - cancel/pending result mapping (constructible without a transaction);
 // - the counting gate through `tipCount` (admits once; dupes, foreign
 //   IDs, and revocations never count);
-// - the banner decision (foreign IDs raise nothing);
-// - the cancellation arm with a cancelled task driving the LIVE-shaped
-//   error (URLError, never CancellationError — round-2 item 1), and the
-//   same shape without a cancel settling as a real failure;
-// - the load-state machine (idle → loading → loaded/failed/idle) and
-//   load coalescing under a cancelled loader (round-2 item 4);
-// - tip-count persistence round-trip; initial state;
+// - the banner decision (foreign IDs raise nothing) and the full
+//   verified-action table (foreign revoked ⇒ ignore — round-3 item 2);
+// - cancellation: callers cancelled before starting issue nothing
+//   (round-3 item 8); callers cancelled mid-flight settle advisory
+//   without corruption; the live-shaped URLError settles `.failed`;
+// - the load-state machine (idle → loading → loaded/failed, refetch
+//   from settled, recovery) and single-flight coalescing (round-3
+//   items 6+7);
+// - tip-count persistence round-trip; initial state; sticky stubs;
 // - lifetimeTerminates + entitlementsEmpty smokes (trivially true without
 //   transactions — kept for shape, grow real arms with F1);
 // - noRestoreSymbols grep-test (no restore API in code — the header's
@@ -132,7 +134,6 @@ struct TipStoreTests {
     @Test("initial state is unpurchased and idle")
     func initialState() throws {
         let fixture = try TipStoreFixture()
-        defer { withExtendedLifetime(fixture) {} }
         #expect(fixture.store.tipCount == 0)
         #expect(fixture.store.products.isEmpty)
         #expect(fixture.store.loadState == .idle)
@@ -146,7 +147,6 @@ struct TipStoreTests {
     @Test("begin and unfinished-completion terminate with nothing pending")
     func lifetimeTerminates() async throws {
         let fixture = try TipStoreFixture()
-        defer { withExtendedLifetime(fixture) {} }
         await fixture.store.begin()
         await fixture.store.finishUnfinished()
         var unfinished = 0
@@ -165,7 +165,6 @@ struct TipStoreTests {
     @Test("counting gate admits once, rejects dupes/unknowns/revoked")
     func countingGate() throws {
         let fixture = try TipStoreFixture()
-        defer { withExtendedLifetime(fixture) {} }
         let store = fixture.store
         // Tested through `tipCount` (round-2 item 8), not the Bool: the
         // observable state is what ships.
@@ -182,7 +181,6 @@ struct TipStoreTests {
     @Test("foreign product IDs raise no banner and count nothing")
     func foreignIDsTouchNothing() throws {
         let fixture = try TipStoreFixture()
-        defer { withExtendedLifetime(fixture) {} }
         let store = fixture.store
         // The banner decision is pure (round-2 item 3): known products
         // raise success, foreign IDs raise nothing — so `handle(_:)`
@@ -195,24 +193,56 @@ struct TipStoreTests {
         #expect(store.lastResult == nil)
     }
 
-    @Test("cancelled fetch settles nothing and wipes nothing")
-    func cancelledFetchKeepsState() async throws {
-        // A cancelled task driving the LIVE-shaped error (round-2 item
-        // 1): a cancelled StoreKit fetch surfaces as URLError (or
-        // StoreKitError.networkError) — never CancellationError — so the
-        // seam converts sleep-cancellation into URLError before throwing.
-        // The store must read OUR task state, not the error type.
+    @Test("verified-action table gates foreign and revoked transactions")
+    func verifiedActionTable() {
+        // Round-3 item 2: the FULL `handle(_:)` decision table, driven
+        // without a live transaction. The last row is the regression —
+        // a foreign REVOKED transaction must not clear our banner.
+        #expect(TipStore.actionForVerified(productID: TipProductID.small.rawValue, revocationDate: nil) == .countAndSucceed)
+        #expect(TipStore.actionForVerified(productID: TipProductID.small.rawValue, revocationDate: Date()) == .clearBanner)
+        #expect(TipStore.actionForVerified(productID: "com.example.other", revocationDate: nil) == .ignore)
+        #expect(TipStore.actionForVerified(productID: "com.example.other", revocationDate: Date()) == .ignore)
+    }
+
+    @Test("cancelled caller issues no fetch and touches nothing")
+    func cancelledCallerIssuesNoFetch() async throws {
+        // Round-3 item 8: cancel lands BEFORE the task first runs (same
+        // MainActor turn — serial execution makes this deterministic),
+        // so the guard fires: no fetch issues, shared state untouched.
+        final class Script {
+            var calls = 0
+        }
+        let script = Script()
         let fixture = try TipStoreFixture(fetchProducts: { _ in
-            do {
-                try await Task.sleep(for: .seconds(30))
-            } catch {
-                throw URLError(.cancelled)
-            }
+            script.calls += 1
             return []
         })
-        defer { withExtendedLifetime(fixture) {} }
         let store = fixture.store
         let task = Task { await store.loadProducts() }
+        task.cancel()
+        await task.value
+        #expect(script.calls == 0)
+        #expect(store.loadState == .idle)
+    }
+
+    @Test("cancelled loader still settles without corruption")
+    func cancelledLoaderStillSettles() async throws {
+        // Round-3 item 7: joining is advisory (proven: value-await does
+        // not unwind on cancel), so a loader cancelled mid-flight
+        // lingers — but the DETACHED flight still settles and the state
+        // stays consistent. Cancel here corrupts nothing and strands
+        // nothing; it merely stops mattering.
+        final class Script {
+            var calls = 0
+        }
+        let script = Script()
+        let fixture = try TipStoreFixture(fetchProducts: { _ in
+            script.calls += 1
+            try await Task.sleep(for: .milliseconds(300))
+            return []
+        })
+        let store = fixture.store
+        let first = Task { await store.loadProducts() }
         let start = Date.now
         while store.loadState != .loading {
             try await Task.sleep(for: .milliseconds(20))
@@ -221,42 +251,45 @@ struct TipStoreTests {
                 break
             }
         }
-        task.cancel()
-        await task.value
-        #expect(store.loadState == .idle)
-        #expect(store.products.isEmpty)
+        first.cancel()
+        await first.value
+        #expect(store.loadState == .loaded)
+        #expect(script.calls == 1)
     }
 
     @Test("cancelled-shaped error without a cancel is a real failure")
     func uncancelledLiveShapedErrorFails() async throws {
-        // Companion to the cancel test: the SAME URLError shape arriving
-        // on a live task is a genuine failure (offline, not a cancel) —
-        // `.failed` with products preserved, retryable from the UI.
+        // The URLError shape on a live task is a genuine failure
+        // (offline, not a cancel) — `.failed`, retryable from the UI.
+        // (Round-3 item 6: no `products.isEmpty` assert — an empty
+        // catalogue is the only shape tests can construct, so asserting
+        // it proves nothing about preservation.)
         let fixture = try TipStoreFixture(fetchProducts: { _ in throw URLError(.notConnectedToInternet) })
-        defer { withExtendedLifetime(fixture) {} }
         let store = fixture.store
         await store.loadProducts()
         #expect(store.loadState == .failed)
-        #expect(store.products.isEmpty)
     }
 
     @Test("load moves idle to loading to loaded, failure to failed")
     func loadStates() async throws {
+        // Round-3 items 6+7: cancel settles advisory (loaded, not idle);
+        // a settled store REFETCHES on demand (refresh), so failure and
+        // recovery after `.loaded` are real, observable paths.
         final class Script {
             var calls = 0
-            var finishNow = false
+            var fail = false
         }
         let script = Script()
         let fixture = try TipStoreFixture(fetchProducts: { _ in
             script.calls += 1
-            if script.finishNow { return [] }
-            try await Task.sleep(for: .seconds(30))
+            if script.fail { throw URLError(.notConnectedToInternet) }
+            try await Task.sleep(for: .milliseconds(200))
             return []
         })
-        defer { withExtendedLifetime(fixture) {} }
         let store = fixture.store
         #expect(store.loadState == .idle)
-        // Suspend, observe loading, cancel back to idle.
+        // Suspend, observe loading, cancel — advisory settlement still
+        // lands `.loaded`.
         let stalled = Task { await store.loadProducts() }
         let start = Date.now
         while store.loadState != .loading {
@@ -269,42 +302,35 @@ struct TipStoreTests {
         #expect(store.loadState == .loading)
         stalled.cancel()
         await stalled.value
-        #expect(store.loadState == .idle)
+        #expect(store.loadState == .loaded)
         #expect(script.calls == 1)
-        // Settle loaded with an instant fetch.
-        script.finishNow = true
+        // Failure AFTER loaded refetches and lands `.failed` (products
+        // preserved structurally — assignment happens only on success).
+        script.fail = true
+        await store.loadProducts()
+        #expect(store.loadState == .failed)
+        #expect(script.calls == 2)
+        // Recovery refetches again.
+        script.fail = false
         await store.loadProducts()
         #expect(store.loadState == .loaded)
-        #expect(script.calls == 2)
-        // A settled store does not refetch.
-        await store.loadProducts()
-        #expect(script.calls == 2)
-        // Genuine failure lands in `.failed` (fresh store — a loaded one
-        // would short-circuit).
-        let failing = try TipStoreFixture(fetchProducts: { _ in throw URLError(.notConnectedToInternet) })
-        defer { withExtendedLifetime(failing) {} }
-        await failing.store.loadProducts()
-        #expect(failing.store.loadState == .failed)
+        #expect(script.calls == 3)
     }
 
-    @Test("concurrent loads coalesce; a cancelled loader hands off")
+    @Test("concurrent loads share one flight; post-settle loads refresh")
     func loadCoalescing() async throws {
-        // Round-2 item 4: the old `guard !isLoading else return` dropped
-        // the second caller; a cancelled first caller then meant spinner
-        // forever. Now waiters join the in-flight fetch, and whoever
-        // remains refetches if the load died underneath them.
+        // Round-3 item 7: the second call made mid-flight joins the
+        // detached flight instead of duplicating it (one fetch, both
+        // adopt); a later call refreshes (round-3 item 6).
         final class Script {
             var calls = 0
         }
         let script = Script()
         let fixture = try TipStoreFixture(fetchProducts: { _ in
             script.calls += 1
-            if script.calls == 1 {
-                try await Task.sleep(for: .seconds(30))
-            }
+            try await Task.sleep(for: .milliseconds(300))
             return []
         })
-        defer { withExtendedLifetime(fixture) {} }
         let store = fixture.store
         let first = Task { await store.loadProducts() }
         let start = Date.now
@@ -315,16 +341,40 @@ struct TipStoreTests {
                 break
             }
         }
+        // `.loading` is assigned synchronously before the flight parks,
+        // so observing it guarantees `inFlight` is set: `second`
+        // deterministically joins (never races its own flight).
         let second = Task { await store.loadProducts() }
-        await Task.yield()
-        first.cancel()
         await first.value
         await second.value
-        // Deterministic under every interleaving: if `second` attached as
-        // a waiter it refetched after the handoff; if it started late it
-        // fetched its own. Either way two fetches, one settled store.
-        #expect(script.calls == 2)
+        #expect(script.calls == 1)
         #expect(store.loadState == .loaded)
+        await store.loadProducts()
+        #expect(script.calls == 2)
+    }
+
+    @Test("stub session never falls through to the live fetch")
+    func stubStaysStubbed() async throws {
+        // Round-3 item 1: a single-token stub replays after the queue
+        // drains. A live fetch here would increment the counter — zero
+        // proves the session stays stubbed across Retry/second loads.
+        final class Script {
+            var calls = 0
+        }
+        let script = Script()
+        let fixture = try TipStoreFixture(
+            fetchProducts: { _ in
+                script.calls += 1
+                throw URLError(.cannotFindHost)
+            },
+            uiTestStubs: [.failed]
+        )
+        let store = fixture.store
+        await store.loadProducts()
+        #expect(store.loadState == .failed)
+        await store.loadProducts()
+        #expect(store.loadState == .failed)
+        #expect(script.calls == 0)
     }
 
     @Test("stub sequence settles retry without the network")
@@ -333,7 +383,6 @@ struct TipStoreTests {
         // retry that settles it both resolve inside the sequence, so the
         // UI retry flow is hermetic end to end.
         let fixture = try TipStoreFixture(uiTestStubs: [.failed, .emptyProducts])
-        defer { withExtendedLifetime(fixture) {} }
         let store = fixture.store
         await store.loadProducts()
         #expect(store.loadState == .failed)
@@ -345,7 +394,6 @@ struct TipStoreTests {
     @Test("tip count persists across instances")
     func tipCountPersists() throws {
         let fixture = try TipStoreFixture()
-        defer { withExtendedLifetime(fixture) {} }
         let first = TipStore(defaults: fixture.defaults)
         first.recordTip()
         first.recordTip()
@@ -371,24 +419,13 @@ struct TipStoreTests {
     func noRestoreSymbols() throws {
         // The header promises no restore path: any restore API
         // (AppStore.sync, restoreCompletedTransactions, a custom
-        // `restore()` on the store) fails here. Comment-stripped like
-        // the privacy grep — prose may discuss restore, code may not.
-        let thisFile = URL(fileURLWithPath: #filePath)
-        let tipsDir = thisFile
-            .deletingLastPathComponent() // HealthLoomTests
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("HealthLoomApp/Tips")
+        // `restore()` on the store) fails here. Shares the walk/strip
+        // with the privacy grep (round-3 item 9) — prose may discuss
+        // restore, code may not.
         var hits: [String] = []
-        for file in try FileManager.default.contentsOfDirectory(at: tipsDir, includingPropertiesForKeys: nil) {
-            guard file.pathExtension == "swift" else { continue }
-            let source = try String(contentsOf: file, encoding: .utf8)
-            let code = source
-                .components(separatedBy: "\n")
-                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-                .joined(separator: "\n")
-                .lowercased()
-            if code.contains("restor") {
-                hits.append(file.lastPathComponent)
+        for source in try scanSources(in: "HealthLoomApp/Tips") {
+            if source.code.lowercased().contains("restor") {
+                hits.append(source.file)
             }
         }
         #expect(hits.isEmpty, "restore symbols in tip sources: \(hits)")

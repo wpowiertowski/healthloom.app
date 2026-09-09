@@ -148,6 +148,11 @@ struct WipeCoordinatorTests {
         let storeFile = dir.appending(path: "CoreModel.store")
         try Data("x".utf8).write(to: storeFile)
         let ephemeralWipe = try EphemeralDefaults(prefix: "wipecoordinator")
+        // Round-3 item 11: the one KEPT explicit lifetime — this holder
+        // is bound-but-otherwise-unused after the projections below
+        // (only `defaults`/`suiteName` escape), so without the defer the
+        // suite could drop before the domain-contents assertion reads it.
+        defer { withExtendedLifetime(ephemeralWipe) {} }
         let defaults = ephemeralWipe.defaults
         let suiteName = ephemeralWipe.suiteName
         defaults.set(true, forKey: "someKey")

@@ -198,13 +198,20 @@ struct LaunchConfiguration: Sendable {
         } else {
             initialRoute = .default
         }
+        // Round-3 item 3: decoded once, used twice (container rule +
+        // member) so the two can never drift apart.
+        let tipsStub = Self.tipsStub(from: arguments)
         return LaunchConfiguration(
             stubGoogle: stubGoogle,
             seedDashboardData: seedDashboardData,
             // Scripted wins over forced unconditionally (round-2 #7): the
             // on-disk guarantee `-UITestScriptedCoach` documents holds even
             // when both flags are passed together.
-            useInMemoryContainer: (stubGoogle || seedDashboardData || forcedCoachAvailability != nil || aiModelsScenario != nil || seedYouTab) && !scriptedCoach,
+            // Round-3 item 3: a tips stub is a UI-test catalogue layer
+            // like every other `-UITest*` mode — the file's own header
+            // rule (every `-UITest*` mode except scripted-coach is
+            // in-memory) applies to it, so it joins the disjunction.
+            useInMemoryContainer: (stubGoogle || seedDashboardData || forcedCoachAvailability != nil || aiModelsScenario != nil || seedYouTab || !tipsStub.isEmpty) && !scriptedCoach,
             resetTodayMetrics: arguments.contains("-UITestResetTodayMetrics"),
             scriptedCoach: scriptedCoach,
             scrubChat: scrubChat,
@@ -216,7 +223,7 @@ struct LaunchConfiguration: Sendable {
             isUITest: arguments.contains(where: { $0.hasPrefix("-UITest") }),
             stubNotifications: arguments.contains("-UITestStubNotifications"),
             denyNotifications: arguments.contains("-UITestNotificationsDenied"),
-            tipsStub: Self.tipsStub(from: arguments)
+            tipsStub: tipsStub
         )
     }
 
@@ -224,11 +231,15 @@ struct LaunchConfiguration: Sendable {
     /// F1). Absent = no stub (real fetch); unknown token =
     /// `.emptyProducts`; bare `=` keeps the old single-empty behavior.
     static func tipsStub(from arguments: [String]) -> [TipUITestStub] {
+        // Round-3 item 4: the bare form (no `=`) mirrors
+        // `aiModelsScenario(from:)` — bare means the default stub, so a
+        // typo'd-or-bare flag still exercises a deterministic path
+        // instead of stranding the section on a permanent spinner.
         let prefix = "-UITestTipsStub"
-        guard let flag = arguments.first(where: { $0.hasPrefix(prefix + "=") }) else {
+        guard let flag = arguments.first(where: { $0 == prefix || $0.hasPrefix(prefix + "=") }) else {
             return []
         }
-        let raw = String(flag.dropFirst(prefix.count + 1))
+        let raw = flag == prefix ? "empty" : String(flag.dropFirst(prefix.count + 1))
         if raw.isEmpty { return [.emptyProducts] }
         return raw.split(separator: ",").map { $0 == "failed" ? .failed : .emptyProducts }
     }
