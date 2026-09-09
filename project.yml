@@ -144,6 +144,14 @@ targets:
     deploymentTarget: "27.0"
     sources:
       - path: HealthLoomTests
+    # Tip jar test lane: asks for the committed StoreKit config in the
+    # test bundle (single canonical file, referenced not copied).
+    # NOTE: xcodegen 2.46.0 routes this file to the app target instead
+    # (it lives under HealthLoomApp/), so the contract test falls back
+    # to the host app bundle — see TipStoreTests.configURL. Kept for the
+    # day the generator honors it.
+    resources:
+      - path: HealthLoomApp/Tips/Tips.storekit
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

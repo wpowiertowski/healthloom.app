@@ -22,5 +22,9 @@ final class SettingsUITests: XCTestCase {
         let status = app.staticTexts["settings.icloud.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["settings.icloud.syncNow"].exists)
+
+        // Tip jar renders its coming-soon state (products don't exist in
+        // App Store Connect yet, so no tier buttons are expected).
+        XCTAssertTrue(app.staticTexts["settings.tips.status"].waitForExistence(timeout: 10))
     }
 }
