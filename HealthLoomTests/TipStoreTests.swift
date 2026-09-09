@@ -54,10 +54,9 @@ import Testing
 
 /// Structural store fixture (round-2 item 10): owns the store AND its
 /// ephemeral suite together — no tuple to destructure, no holder to
-/// remember. Tests bind `let fixture` plus a uniform
-/// `defer { withExtendedLifetime(fixture) {} }` (the binding's whole job
-/// is lifetime: an explicit use the optimizer cannot elide) and drive
-/// `fixture.store`.
+/// remember. Tests bind `let fixture` and drive `fixture.store` (no
+/// lifetime ceremony: the store holds its own defaults ref, and the
+/// janitor backstops the leak — round-3 item 11).
 @MainActor
 final class TipStoreFixture {
     let store: TipStore
