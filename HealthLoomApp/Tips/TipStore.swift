@@ -90,7 +90,7 @@ enum TipLoadState: Equatable, Sendable {
 /// Tier buttons need real `Product` instances, which only a StoreKit
 /// session can mint (see the F1 TODO in TipStoreTests); they stay
 /// manual-QA until then.
-enum TipUITestStub: Sendable {
+enum TipUITestStub: Sendable, Equatable {
     case emptyProducts
     case failed
 }
@@ -121,8 +121,13 @@ final class TipStore {
     /// cancellation and offline arms deterministically.
     let fetchProducts: ([String]) async throws -> [Product]
     /// UI-test stub queue (round-2 item 7 + fix-round F1); empty in
-    /// production.
+    /// production. STICKY (round-3 item 1): a session constructed WITH
+    /// stubs never falls through to the live fetch — once the queue
+    /// drains, the last value replays. Without stickiness a stubbed
+    /// Retry (or a second `.task` fire) would hit `Product.products`.
     private var uiTestStubs: [TipUITestStub]
+    private let stubbedSession: Bool
+    private var lastStub: TipUITestStub?
 
     init(
         defaults: UserDefaults = .standard,
@@ -132,6 +137,7 @@ final class TipStore {
         self.defaults = defaults
         self.fetchProducts = fetchProducts ?? { ids in try await Product.products(for: ids) }
         self.uiTestStubs = uiTestStubs
+        self.stubbedSession = !uiTestStubs.isEmpty
         self.tipCount = defaults.integer(forKey: Self.tipCountKey)
     }
 
@@ -147,43 +153,60 @@ final class TipStore {
         await finishUnfinished()
     }
 
-    /// Coalescing loader (round-2 item 4): concurrent callers JOIN the
-    /// in-flight fetch instead of being dropped by an `isLoading` guard
-    /// (the old shape stranded waiters: cancelled loader + dropped
-    /// waiter = spinner forever). A caller cancelled while waiting
-    /// unwinds without touching state; whoever remains refetches if the
-    /// load died underneath them.
-    func loadProducts() async {
-        while loadState == .loading {
-            await waitForSettle()
-            // Cancelled while waiting: unwind (never start a fetch for
-            // a dead caller); the remaining callers own the outcome.
-            guard !Task.isCancelled else { return }
-        }
-        guard loadState != .loaded else { return }
-        await performLoad()
-    }
+    /// In-flight flight handle (round-3 item 7 + fix-round N1): the TRUE
+    /// invariants, stated exactly —
+    /// - SINGLE-LAUNCHER: only the `inFlight == nil` branch creates a
+    ///   flight, and the check-and-set is suspension-free on the
+    ///   MainActor, so at most one flight exists. Ever.
+    /// - ALWAYS-CLEARED: the launcher awaits the flight, then nils the
+    ///   slot; the flight body (performLoad) has no non-terminating
+    ///   path — every arm assigns a terminal state.
+    /// - UNSTRUCTURED-BUT-OUTCOME-EQUIVALENT: `Task {}` propagates no
+    ///   cancellation, which is precisely why settlement always arrives
+    ///   (empirically proven: `cancelledLoaderStillSettles` pins a
+    ///   cancelled loader still settling, and the probe pins
+    ///   awaiting another task's value as non-unwinding) — and no
+    ///   caller consumes a return value, so shared settlement is
+    ///   behaviorally identical to blocking.
+    /// Concurrent callers join (`await inFlight?.value`) instead of
+    /// duplicating the fetch or spinning on the MainActor (the 50Hz
+    /// `waitForSettle` poll is deleted). A cancelled joiner lingers
+    /// until settlement, then adopts it like everyone else: no spinner
+    /// strands, ever.
+    private var inFlight: Task<Void, Never>?
 
-    /// Cancellable settle-wait: the loader owns the outcome; waiters
-    /// only stop waiting when the state moves — or when THEY are
-    /// cancelled, in which case they unwind silently.
-    private func waitForSettle() async {
-        while loadState == .loading {
-            do {
-                try await Task.sleep(for: .milliseconds(20))
-            } catch {
-                return
-            }
+    /// Coalescing loader, final form (round-3 items 7+8+14): straight
+    /// line, no loops. A second call made mid-flight joins the flight
+    /// and adopts its outcome (no caller consumes a return value, so
+    /// joining by shared settlement is behaviorally identical to
+    /// blocking). A caller cancelled BEFORE starting issues nothing
+    /// (guard); a caller cancelled MID-flight lingers harmlessly and
+    /// adopts the settlement like everyone else.
+    func loadProducts() async {
+        if let running = inFlight {
+            await running.value
+            return
         }
+        // Round-3 item 8: a cancelled caller never issues a fetch and
+        // never flips shared state.
+        guard !Task.isCancelled else { return }
+        loadState = .loading
+        inFlight = Task {
+            await self.performLoad()
+        }
+        await inFlight?.value
+        inFlight = nil
     }
 
     private func performLoad() async {
-        // UI-test stub queue (round-2 item 7 + fix-round F1): apply the
-        // head, consume it, return — never touching the network. Retry
-        // consumes the NEXT value, so stubbed UI flows settle entirely
-        // inside the stub sequence.
+        // UI-test stub queue (round-2 item 7 + fix-round F1 + round-3
+        // item 1 sticky): apply the head, else replay the last value
+        // for stubbed sessions — never touching the network.
         if !uiTestStubs.isEmpty {
-            switch uiTestStubs.removeFirst() {
+            lastStub = uiTestStubs.removeFirst()
+        }
+        if let stub = lastStub, stubbedSession {
+            switch stub {
             case .emptyProducts:
                 products = []
                 loadState = .loaded
@@ -197,19 +220,17 @@ final class TipStore {
             products = try await fetchProducts(TipProductID.allCases.map(\.rawValue))
             loadState = .loaded
         } catch {
-            // Round-2 item 1: `Product.products` never throws
-            // CancellationError — a cancelled live fetch surfaces
-            // StoreKitError.networkError or URLError(.cancelled). The
-            // error TYPE therefore cannot identify a cancel; only our
-            // own task state can.
-            if Task.isCancelled {
-                loadState = .idle // pretend it never happened; retryable
-            } else {
-                // Genuine failure: previously loaded products stay (an
-                // offline retry still shows tiers); the `.failed` arm
-                // offers the retry affordance.
-                loadState = .failed
-            }
+            // Round-3 items 7+8 SUPERSEDE the round-2 cancel→idle arm
+            // (deleted): the flight is unstructured, so caller
+            // cancellation never reaches it — there is no cancel state
+            // left to read, and a cancelled live fetch surfaces as URLError /
+            // StoreKitError.networkError, indistinguishable from
+            // offline. EVERY error therefore settles `.failed` with
+            // previously loaded products preserved (assignment happens
+            // only on success — structural, see item 6); Retry heals
+            // all. Cancel-before-start (guard above) is the only path
+            // that preserves `.idle`.
+            loadState = .failed
         }
     }
 
@@ -304,12 +325,30 @@ final class TipStore {
 
     /// Banner decision for a verified, non-revoked transaction
     /// (round-2 item 3): known products raise success; FOREIGN IDs raise
-    /// nothing (a foreign verified transaction still finishes — nothing
-    /// lingers — but touches no counting and clears no banner). Pure so
-    /// tests pin it without a live transaction.
+    /// nothing. Pure so tests pin it without a live transaction.
     nonisolated static func banner(for productID: String) -> TipResult? {
         guard TipProductID(rawValue: productID) != nil else { return nil }
         return .succeeded(productID: productID)
+    }
+
+    /// Resolved handling for one VERIFIED transaction (round-3 item 2):
+    /// the FULL decision table — including the revocation arm — as pure
+    /// data, so tests drive `handle(_:)`'s logic without a live
+    /// transaction (a `VerificationResult<Transaction>` is
+    /// unconstructible pre-SKTestSession). `handle(_:)` itself is a thin
+    /// interpreter: finish, then apply the action.
+    enum VerifiedTipAction: Equatable, Sendable {
+        case countAndSucceed // own, non-revoked: count via gate + banner
+        case clearBanner // own, revoked: sticky UI clears, nothing counts
+        case ignore // foreign (any revocation state): finished, untouched
+    }
+
+    nonisolated static func actionForVerified(productID: String, revocationDate: Date?) -> VerifiedTipAction {
+        // Foreign FIRST (round-3 item 2): a foreign REVOKED transaction
+        // must not clear our banner — the old code gated only the
+        // non-revoked arm, contradicting `banner(for:)`'s invariant.
+        guard TipProductID(rawValue: productID) != nil else { return .ignore }
+        return revocationDate != nil ? .clearBanner : .countAndSucceed
     }
 
     /// Late-arriving updates (renewals don't exist for consumables;
@@ -324,17 +363,20 @@ final class TipStore {
         switch update {
         case .verified(let transaction):
             await transaction.finish()
-            if transaction.revocationDate != nil {
+            switch Self.actionForVerified(productID: transaction.productID, revocationDate: transaction.revocationDate) {
+            case .ignore:
+                break // foreign: finished above, state untouched.
+            case .clearBanner:
                 lastResult = nil
-            } else if let banner = Self.banner(for: transaction.productID) {
-                // Known product only (round-2 item 3): foreign IDs fall
-                // through with state untouched (finished above).
+            case .countAndSucceed:
                 countTipIfNew(
                     transactionID: transaction.id,
                     productID: transaction.productID,
                     revocationDate: transaction.revocationDate
                 )
-                lastResult = banner
+                if let banner = Self.banner(for: transaction.productID) {
+                    lastResult = banner
+                }
             }
         case .unverified:
             break
