@@ -179,8 +179,15 @@ jobs:
       # Xcode Cloud ship warnings the local build rejects.
       - name: Assert committed project carries warnings-as-errors
         run: |
+          # Both halves (third-party N1): Swift without GCC still ships
+          # C/ObjC warnings, and vice versa.
           if ! grep -q -- 'SWIFT_TREAT_WARNINGS_AS_ERRORS = YES' HealthLoom.xcodeproj/project.pbxproj; then
             echo "::error::Committed project.pbxproj is missing SWIFT_TREAT_WARNINGS_AS_ERRORS."
+            echo "Run 'xcodegen generate' and commit the result."
+            exit 1
+          fi
+          if ! grep -q -- 'GCC_TREAT_WARNINGS_AS_ERRORS = YES' HealthLoom.xcodeproj/project.pbxproj; then
+            echo "::error::Committed project.pbxproj is missing GCC_TREAT_WARNINGS_AS_ERRORS."
             echo "Run 'xcodegen generate' and commit the result."
             exit 1
           fi

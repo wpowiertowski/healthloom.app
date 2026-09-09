@@ -1,6 +1,17 @@
 .PHONY: xcode test clean prune-branches
 
+# Pinned generator (third-party F1): a bare `xcodegen generate` resolves
+# whatever is on PATH (2.45.4 via brew), but the committed project and
+# CI's drift job are pinned to XCODEGEN_VERSION — a version skew here
+# produces bytes the drift gate rejects. Source of truth stays the ci.yml
+# env block (single pin, no duplication).
 xcode:
+	@pinned=$$(grep '^  XCODEGEN_VERSION:' .github/workflows/ci.yml | awk -F'"' '{print $$2}'); \
+	actual=$$(xcodegen --version | awk '{print $$NF}'); \
+	if [ "$$actual" != "$$pinned" ]; then \
+		echo "error: xcodegen $$actual on PATH, pinned is $$pinned — install it (see ci.yml project-drift job)." >&2; \
+		exit 1; \
+	fi
 	xcodegen generate
 	open HealthLoom.xcodeproj
 
