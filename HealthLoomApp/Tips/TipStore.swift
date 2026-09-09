@@ -162,11 +162,12 @@ final class TipStore {
     ///   slot; the flight body (performLoad) has no non-terminating
     ///   path — every arm assigns a terminal state.
     /// - UNSTRUCTURED-BUT-OUTCOME-EQUIVALENT: `Task {}` propagates no
-    ///   cancellation (empirically proven both ways: the detached
-    ///   capture compiles, and awaiting another task's value does NOT
-    ///   unwind a cancelled waiter), which is precisely why settlement
-    ///   always arrives — and no caller consumes a return value, so
-    ///   shared settlement is behaviorally identical to blocking.
+    ///   cancellation, which is precisely why settlement always arrives
+    ///   (empirically proven: `cancelledLoaderStillSettles` pins a
+    ///   cancelled loader still settling, and the probe pins
+    ///   awaiting another task's value as non-unwinding) — and no
+    ///   caller consumes a return value, so shared settlement is
+    ///   behaviorally identical to blocking.
     /// Concurrent callers join (`await inFlight?.value`) instead of
     /// duplicating the fetch or spinning on the MainActor (the 50Hz
     /// `waitForSettle` poll is deleted). A cancelled joiner lingers
