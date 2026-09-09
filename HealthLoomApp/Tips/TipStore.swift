@@ -335,8 +335,14 @@ final class TipStore {
     /// counter is needed (a stale publisher cannot exist: the flight
     /// always settles itself, and the orphaned fetch publishes
     /// nothing). First finisher resumes the continuation via the
-    /// one-shot settler; the loser is cancelled best-effort and drops
-    /// its result. Cost per wedge: one leaked task, bounded by the
+    /// one-shot settler; the loser is ABANDONED, not cancelled — no
+    /// cancel call exists on either arm, both run to their own
+    /// completion, and the late result is dropped at the settler
+    /// (fix-round N1: the old 'cancelled best-effort' wording was
+    /// false). Cost scope, stated exactly (fix-round N2): EVERY load
+    /// parks a ≤ `loadTimeout` sleeper — the timeout arm always runs
+    /// to completion even when the fetch wins in milliseconds. The
+    /// per-wedge EXTRA cost is one orphaned fetch, bounded by the
     /// request's own lifetime; the STORE heals in ≤ `loadTimeout`.
     private func fetchWithTimeout(_ ids: [String]) async throws -> [Product] {
         try await withCheckedThrowingContinuation { continuation in
