@@ -34,8 +34,18 @@ final class InsightPreferences {
     private let defaults: UserDefaults
 
     // Stored (not computed): `@Observable` publishes stored-property
-    // mutation, so taps re-render; `didSet` mirrors to defaults. Property
-    // observers do not fire during `init`, so loading here never writes.
+    // mutation, so taps re-render; `didSet` mirrors to defaults.
+    //
+    // Init suppression (found via iCloud-sync testing): `didSet` DOES
+    // fire during `init` on this toolchain despite the language rule
+    // saying otherwise (the `@Observable` expansion routes init
+    // assignments through the observing setter). Without the guard,
+    // assigning `morningInsightsEnabled` persisted the still-default
+    // `lockScreenDetails`/`insightsViaCloud`/`lastRun` OVER the stored
+    // values before they were loaded — every launch silently reset all
+    // three whenever insights were enabled. Proven: direct
+    // `defaults.bool` true vs init-read false on the same object.
+    private var suppressPersist = true
     var morningInsightsEnabled = false { didSet { persist() } }
     var lockScreenDetails = false { didSet { persist() } }
     var insightsViaCloud = false { didSet { persist() } }
@@ -48,9 +58,11 @@ final class InsightPreferences {
         self.insightsViaCloud = defaults.bool(forKey: Self.viaCloudKey)
         let interval = defaults.double(forKey: Self.lastRunKey)
         self.lastRun = interval > 0 ? Date(timeIntervalSince1970: interval) : nil
+        suppressPersist = false
     }
 
     private func persist() {
+        guard !suppressPersist else { return }
         defaults.set(morningInsightsEnabled, forKey: Self.enabledKey)
         defaults.set(lockScreenDetails, forKey: Self.detailsKey)
         defaults.set(insightsViaCloud, forKey: Self.viaCloudKey)

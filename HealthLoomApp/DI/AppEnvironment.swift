@@ -75,6 +75,7 @@ final class AppEnvironment {
     static let backfillTypes: [GoogleDataType] = GoogleDataType.allCases.filter { $0.writability != .skip }
 
     let modelContainer: ModelContainer
+    let cloudSync: CloudSyncEngine
     let healthKitAuth: HealthKitAuth
     let googleAuthManager: GoogleAuthManager
     let syncEngine: SyncEngine
@@ -185,6 +186,11 @@ final class AppEnvironment {
                 ?? { fatalError("CoreModel.makeContainer failed even in-memory: \(error)") }()
         }
         self.modelContainer = container
+        // iCloud sync (private DB: settings, insight prefs, coach turns).
+        // Live CloudKit adapter; hermetic stub injected in tests. Launch
+        // auto-sync is gated on `!isUITest` at the call site
+        // (HealthLoomApp root `.task`) so UI tests never touch CloudKit.
+        self.cloudSync = CloudSyncEngine(container: container, database: LiveCloudDatabase())
         self.healthKitAuth = HealthKitAuth()
 
         let authConfig = GoogleAuthConfig(

@@ -16,6 +16,30 @@ import Testing
 
 // MARK: - Scheduling (pure)
 
+@Suite("InsightPreferences init")
+struct InsightPreferencesInitTests {
+    // Regression (found via iCloud-sync testing): `@Observable` `didSet`
+    // fires during `init` on this toolchain, so assigning
+    // `morningInsightsEnabled` persisted the still-default later fields
+    // OVER their stored values — every launch reset lockDetails/viaCloud/
+    // lastRun whenever insights were enabled. Init must be read-only.
+    @Test("init from populated defaults preserves every field")
+    func initPreservesAllFields() throws {
+        let defaults = try #require(UserDefaults(suiteName: "prefs-init-\(UUID().uuidString)"))
+        let stamp = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = InsightPreferences(defaults: defaults)
+        first.morningInsightsEnabled = true
+        first.lockScreenDetails = true
+        first.insightsViaCloud = true
+        first.lastRun = stamp
+        let second = InsightPreferences(defaults: defaults)
+        #expect(second.morningInsightsEnabled)
+        #expect(second.lockScreenDetails)
+        #expect(second.insightsViaCloud)
+        #expect(second.lastRun == stamp)
+    }
+}
+
 @Suite("InsightScheduler")
 struct InsightSchedulerTests {
     private var calendar: Calendar {
