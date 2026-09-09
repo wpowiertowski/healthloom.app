@@ -15,28 +15,35 @@
 // (refunded) finishes with no state change — a consumable grants no
 // entitlement, so there is nothing to take back.
 //
-// Ordering invariant (no double-count): finish FIRST, then count. A crash
-// between charge and finish recounts exactly once on relaunch; a crash
-// after finish+count recounts never.
+// Ordering invariant (no double-count): finish FIRST, then count through
+// `shouldCountTip` (ID gate shared by listener, sweep, and purchase
+// path). A crash between charge and finish recounts exactly once on
+// relaunch; a crash after finish+count recounts never.
 //
 // Deliberately absent, by design:
 // - NO server validation: tips unlock nothing server-side (there is no
 //   server). On-device `.verified` checking is the whole story.
 // - NO restore path: consumables never appear in
 //   `Transaction.currentEntitlements`, so there is nothing to restore.
-//   Pinned by test (`tipsLeaveNoEntitlements`).
+//   Pinned by `entitlementsEmpty` + `noRestoreSymbols`.
+//
+// Manual QA (StoreKit config attached — see TipProductID):
+// - success / cancel / Ask-to-Buy approve / failure / refund per tier;
+// - Ask-to-Buy DECLINE: no transaction exists, so nothing resolves —
+//   `pendingApproval` sticks until the next attempt overwrites it (or
+//   relaunch clears it; the state is in-memory only). Verified benign:
+//   no charge, no count, self-heals. Confirm the sticky pending clears
+//   on the next attempt.
 
 import Foundation
 import Observation
 import StoreKit
 
 /// Product IDs for the three tip tiers. The human creates these exact IDs
-/// in App Store Connect; `Tips.storekit` mirrors them for dev/sandbox.
-///
-/// Dev/sandbox attachment (manual — Xcode has no CLI for this): Product →
-/// Scheme → Edit Scheme → Run → StoreKit Configuration → Tips.storekit.
-/// The committed file is also the test bundle's contract source (see
-/// TipStoreTests' config-contract test).
+/// in App Store Connect; `HealthLoomTests/Fixtures/Tips.storekit`
+/// mirrors them for dev/sandbox (wired into the scheme's run action via
+/// project.yml — no manual attach step; the file deliberately lives
+/// outside HealthLoomApp/ so it never ships in the app bundle).
 enum TipProductID: String, CaseIterable, Sendable {
     case small = "app.healthloom.tip.small"
     case medium = "app.healthloom.tip.medium"
@@ -69,11 +76,20 @@ final class TipStore {
     private let defaults: UserDefaults
     private var listener: Task<Void, Never>?
 
-    var products: [Product] = []
-    var productsUnavailable = false
-    var isPurchasing = false
-    var lastResult: TipResult?
+    // Single source of load truth (third-party 3+13): `products` holds
+    // content, `isLoading`/`hasAttemptedLoad` hold fetch posture — no
+    // parallel `productsUnavailable` bool. UI: spinner while
+    // `!hasAttemptedLoad || isLoading`, coming-soon when settled-empty.
+    private(set) var products: [Product] = []
+    private(set) var isLoading = false
+    private(set) var hasAttemptedLoad = false
+    private(set) var isPurchasing = false
+    private(set) var lastResult: TipResult?
     private(set) var tipCount: Int
+    /// Transaction IDs already counted this run (item 1 gate — see
+    /// `shouldCountTip`). In-memory is enough: finished transactions
+    /// never re-present, so no run can see another run's counts.
+    private var countedTransactionIDs = Set<UInt64>()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -92,13 +108,30 @@ final class TipStore {
         await finishUnfinished()
     }
 
+    /// Fetch seam for the cancellation test ONLY (third-party item 2
+    /// demands a cancelled-task test, which needs a suspension the test
+    /// controls — `Product.products` ignores cancellation). Live value is
+    /// the real fetch. This is NOT the purchase-path seam (fast-follow
+    /// F1): purchases stay seam-free.
+    var fetchProducts: ([String]) async throws -> [Product] = { ids in
+        try await Product.products(for: ids)
+    }
+
     func loadProducts() async {
+        // Settings `.task` cancels on dismissal: a cancelled fetch must
+        // NEVER wipe loaded products (third-party item 2) — only a real
+        // failure resets to empty.
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
         do {
-            products = try await Product.products(for: TipProductID.allCases.map(\.rawValue))
-            productsUnavailable = products.isEmpty
+            products = try await fetchProducts(TipProductID.allCases.map(\.rawValue))
+            hasAttemptedLoad = true
+        } catch is CancellationError {
+            return // keep existing state (defer still clears isLoading)
         } catch {
             products = []
-            productsUnavailable = true
+            hasAttemptedLoad = true
         }
     }
 
@@ -114,7 +147,15 @@ final class TipStore {
                 switch verification {
                 case .verified(let transaction):
                     await transaction.finish()
-                    recordTip()
+                    // Gated (item 1): the lifetime listener may have seen
+                    // this transaction first — count exactly once.
+                    if shouldCountTip(
+                        transactionID: transaction.id,
+                        productID: transaction.productID,
+                        revocationDate: transaction.revocationDate
+                    ) {
+                        recordTip()
+                    }
                     lastResult = .succeeded(productID: product.id)
                 case .unverified:
                     lastResult = .failed(message: "Purchase could not be verified.")
@@ -154,16 +195,51 @@ final class TipStore {
 
     // MARK: - Private
 
+    /// Counting gate shared by the listener, the launch sweep, and the
+    /// purchase path (third-party item 1): a tip transaction counts
+    /// exactly once per run. All three paths run on the MainActor (this
+    /// class is `@MainActor`), so check-and-insert is atomic:
+    /// - the listener counts a completion as it arrives;
+    /// - the sweep only ever sees transactions the listener did NOT
+    ///   finish (finished ones never re-present);
+    /// - the overlap (a transaction completing mid-sweep) resolves by
+    ///   the gate: whoever inserts the ID first counts, the other skips.
+    /// No double-count AND no loss. Revoked (refunded) transactions never
+    /// count: the user was un-charged, and there is no entitlement to
+    /// remove — finishing is the whole handling.
+    func shouldCountTip(transactionID: UInt64, productID: String, revocationDate: Date?) -> Bool {
+        guard revocationDate == nil,
+              TipProductID(rawValue: productID) != nil,
+              !countedTransactionIDs.contains(transactionID)
+        else {
+            return false
+        }
+        countedTransactionIDs.insert(transactionID)
+        return true
+    }
+
     /// Late-arriving updates (renewals don't exist for consumables;
-    /// refunds do): finish so nothing lingers, change no state.
-    /// Unverified updates are deliberately left unfinished (third-party
-    /// N2): finishing would acknowledge a possibly-tampered transaction
-    /// and destroy the evidence; leaving it re-presents a value this
-    /// handler ignores — no state change, no UI, no grant, forever.
+    /// refunds do): finish so nothing lingers. Verified tips count
+    /// through the gate (Ask-to-Buy approvals and re-deliveries land
+    /// here, not in `purchase()`); verified refunds clear sticky UI;
+    /// unverified stays unfinished (N2 posture: never acknowledge).
+    /// Setting `lastResult` here clears the sticky pending state (item 8).
     private func handle(_ update: VerificationResult<Transaction>) async {
         switch update {
         case .verified(let transaction):
             await transaction.finish()
+            if transaction.revocationDate != nil {
+                lastResult = nil
+            } else {
+                if shouldCountTip(
+                    transactionID: transaction.id,
+                    productID: transaction.productID,
+                    revocationDate: transaction.revocationDate
+                ) {
+                    recordTip()
+                }
+                lastResult = .succeeded(productID: transaction.productID)
+            }
         case .unverified:
             break
         }
@@ -176,9 +252,11 @@ final class TipStore {
             switch result {
             case .verified(let transaction):
                 await transaction.finish()
-                // Count only tip products — unfinished transactions from
-                // any other (future) product must not inflate the tally.
-                if TipProductID(rawValue: transaction.productID) != nil {
+                if shouldCountTip(
+                    transactionID: transaction.id,
+                    productID: transaction.productID,
+                    revocationDate: transaction.revocationDate
+                ) {
                     recordTip()
                 }
             case .unverified:

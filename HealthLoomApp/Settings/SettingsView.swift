@@ -228,7 +228,16 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.tips.thanks")
                     ThemedRowDivider()
                 }
-                if appEnvironment.tipStore.products.isEmpty {
+                // Three fetch states (third-party item 3): spinner until
+                // the first fetch settles (idle AND loading — an empty
+                // list pre-fetch is not yet "coming soon"), tiers when
+                // loaded, coming-soon when settled-empty.
+                if !appEnvironment.tipStore.hasAttemptedLoad || appEnvironment.tipStore.isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .accessibilityIdentifier("settings.tips.loading")
+                } else if appEnvironment.tipStore.products.isEmpty {
                     Text("Tips are coming soon — in-app purchase products are being set up.")
                         .font(Theme.font(13, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
@@ -292,8 +301,13 @@ struct SettingsView: View {
                 }
             }
             .padding(.top, 20)
+            // Hermetic UI tests never fetch products (third-party item 7
+            // — same policy as the CloudKit gate): the section settles
+            // into coming-soon deterministically.
             .task {
-                await appEnvironment.tipStore.loadProducts()
+                if !appEnvironment.launchConfiguration.isUITest {
+                    await appEnvironment.tipStore.loadProducts()
+                }
             }
 
             // WP-35 (implementation-plan.md): export (JSON dump + share

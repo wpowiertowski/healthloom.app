@@ -76,14 +76,18 @@ actor StubCloudDatabase: CloudDatabase {
 @MainActor
 struct CloudSyncHarness {
     let container: ModelContainer
-    let defaults: UserDefaults
     let db: StubCloudDatabase
     var now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    // The ephemeral holder rides in the harness (struct field keeps it
+    // alive for the test's duration; deinit removes the domain after).
+    let ephemeral: EphemeralDefaults
+    var defaults: UserDefaults { ephemeral.defaults }
+
     static func make() throws -> CloudSyncHarness {
         let container = try CoreModel.makeContainer(inMemory: true)
-        let defaults = try #require(UserDefaults(suiteName: "cloudsync-\(UUID().uuidString)"))
-        return CloudSyncHarness(container: container, defaults: defaults, db: StubCloudDatabase())
+        let ephemeral = try EphemeralDefaults(prefix: "cloudsync")
+        return CloudSyncHarness(container: container, db: StubCloudDatabase(), ephemeral: ephemeral)
     }
 
     func engine() -> CloudSyncEngine {
@@ -432,31 +436,7 @@ struct CloudSyncTests {
 
     @Test("no HealthKit symbol exists in the sync directory (grep-test)")
     func noHealthKitSymbolsInSyncSources() throws {
-        let thisFile = URL(fileURLWithPath: #filePath)
-        let syncDir = thisFile
-            .deletingLastPathComponent() // HealthLoomTests
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("HealthLoomApp/iCloud")
-        let banned = [
-            "HealthKit", "HKQuantity", "HKSample", "HKObject", "HKHealthStore",
-            "HKWorkout", "LocalSample", "GoogleDataPoint", "HKUnit", "HKStatistics",
-        ]
-        var hits: [String] = []
-        for file in try FileManager.default.contentsOfDirectory(at: syncDir, includingPropertiesForKeys: nil) {
-            guard file.pathExtension == "swift" else { continue }
-            let source = try String(contentsOf: file, encoding: .utf8)
-            // Code only: `//` comments document the ban by naming it,
-            // which is good prose and must not trip the test. (This
-            // directory uses line comments exclusively.)
-            let code = source
-                .components(separatedBy: "\n")
-                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-                .joined(separator: "\n")
-            for symbol in banned where code.contains(symbol) {
-                hits.append("\(file.lastPathComponent): \(symbol)")
-            }
-        }
-        #expect(hits.isEmpty, "HealthKit symbols in iCloud sync sources: \(hits)")
+        try assertNoHealthKitSymbols(in: "HealthLoomApp/iCloud")
     }
 
 

@@ -23,8 +23,9 @@ final class SettingsUITests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["settings.icloud.syncNow"].exists)
 
-        // Tip jar renders its coming-soon state (products don't exist in
-        // App Store Connect yet, so no tier buttons are expected).
-        XCTAssertTrue(app.staticTexts["settings.tips.status"].waitForExistence(timeout: 10))
+        // Tip jar never fetches in UI tests (hermetic gate), so it
+        // renders its pre-fetch loading state deterministically — never
+        // tier buttons, never coming-soon.
+        XCTAssertTrue(app.activityIndicators["settings.tips.loading"].waitForExistence(timeout: 10))
     }
 }

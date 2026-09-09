@@ -96,3 +96,69 @@ final class PrewarmProbeSession: CoachSession, Sendable {
         AsyncThrowingStream { $0.finish() }
     }
 }
+
+/// Shared HealthKit-symbol ban (third-party item 9): the iCloud sync and
+/// tip-jar directories must contain no HealthKit-sourced types or values
+/// — structural proof that health data cannot cross into CloudKit records
+/// or purchase code. One constant + one assertion; both privacy suites
+/// call it instead of carrying verbatim copies (literal drift).
+enum BannedHealthSymbols {
+    static let all = [
+        "HealthKit", "HKQuantity", "HKSample", "HKObject", "HKHealthStore",
+        "HKWorkout", "LocalSample", "GoogleDataPoint", "HKUnit", "HKStatistics",
+    ]
+}
+
+/// Asserts no banned symbol appears in the Swift SOURCES under `directory`
+/// (repo-relative, e.g. `"HealthLoomApp/iCloud"`). `//` line comments are
+/// skipped — prose documents the ban by naming it; code may not contain it.
+func assertNoHealthKitSymbols(in directory: String, file: StaticString = #filePath) throws {
+    let thisFile = URL(fileURLWithPath: String(describing: file))
+    // `#filePath` here is TestDoubles.swift (this file) — same directory
+    // as every caller, so the repo root resolves identically.
+    let dir = thisFile
+        .deletingLastPathComponent() // HealthLoomTests
+        .deletingLastPathComponent() // repo root
+        .appendingPathComponent(directory)
+    var hits: [String] = []
+    for file in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+        guard file.pathExtension == "swift" else { continue }
+        let source = try String(contentsOf: file, encoding: .utf8)
+        let code = source
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        for symbol in BannedHealthSymbols.all where code.contains(symbol) {
+            hits.append("\(file.lastPathComponent): \(symbol)")
+        }
+    }
+    #expect(hits.isEmpty, "HealthKit symbols in \(directory): \(hits)")
+}
+
+/// Ephemeral `UserDefaults` suite that cleans up after itself
+/// (third-party item 12): bare `UserDefaults(suiteName:)` suites leave a
+/// plist per run. Dropped at the end of the owning test (deinit removes
+/// the persistent domain) — hold one per test, never share.
+final class EphemeralDefaults {
+    let defaults: UserDefaults
+    private let name: String
+
+    init(prefix: String) throws {
+        self.name = "\(prefix)-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: name) else {
+            throw EphemeralDefaultsError.noSuite
+        }
+        self.defaults = defaults
+    }
+
+    deinit {
+        // Via a fresh instance: `deinit` is nonisolated and `defaults`
+        // is non-Sendable. Domain-keyed, so this removes the same
+        // persisted plist the held instance wrote.
+        UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+    }
+}
+
+enum EphemeralDefaultsError: Error {
+    case noSuite
+}
