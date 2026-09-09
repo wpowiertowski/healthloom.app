@@ -114,6 +114,7 @@ struct CloudSyncTests {
     @Test("first sync pushes settings and prefs")
     func firstSyncPushesSingletons() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         let prefs = SyncPreferences(defaults: harness.defaults)
         prefs.setEnabled(false, for: .steps)
         await harness.engine().syncNow()
@@ -127,6 +128,7 @@ struct CloudSyncTests {
     @Test("clean syncs save nothing new (3-sync stability)")
     func cleanSyncsSaveNothingNew() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         try harness.seedTurn(content: "hello", at: harness.now)
         let engine = harness.engine()
         await engine.syncNow()
@@ -147,6 +149,7 @@ struct CloudSyncTests {
     @Test("equal server content skips the write")
     func equalContentSkipsSave() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         let prefs = SyncPreferences(defaults: harness.defaults)
         prefs.setEnabled(false, for: .steps)
         let server = SyncSettingsSnapshot(
@@ -162,6 +165,7 @@ struct CloudSyncTests {
     @Test("local-newer settings overwrite the server")
     func localNewerPushes() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         // Prime the seen-watermark with an old server state, then edit
         // locally: the server is NOT newer than last seen, so we push.
         let old = SyncSettingsSnapshot(
@@ -184,6 +188,7 @@ struct CloudSyncTests {
     @Test("server-newer settings apply locally (documented tradeoff)")
     func serverNewerApplies() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.engine().syncNow() // primes watermarks on empty server
         // Another device writes newer state behind our back.
         let server = SyncSettingsSnapshot(
@@ -204,6 +209,7 @@ struct CloudSyncTests {
     @Test("newer-schema records are skipped, local untouched")
     func newerSchemaSkipped() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         let prefs = SyncPreferences(defaults: harness.defaults)
         prefs.setEnabled(false, for: .steps)
         let record = CKRecord(
@@ -223,6 +229,7 @@ struct CloudSyncTests {
     @Test("server-newer prefs apply; equal prefs skip the write")
     func prefsNewerApplies() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.engine().syncNow()
         let server = InsightPrefsSnapshot(
             morningInsightsEnabled: true,
@@ -246,6 +253,7 @@ struct CloudSyncTests {
     @Test("new turns push once and advance the watermark")
     func newTurnsPush() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         try harness.seedTurn(content: "hello", at: harness.now)
         await harness.engine().syncNow()
         let saves = await harness.db.saved(ofType: CloudRecordType.coachTurn)
@@ -261,6 +269,7 @@ struct CloudSyncTests {
     @Test("existing server turns are never rewritten")
     func existingTurnsSkipped() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         try harness.seedTurn(content: "hello", at: harness.now)
         let existing = CoachTurnSnapshot(
             turnID: "\(harness.now.timeIntervalSince1970)-user",
@@ -276,6 +285,7 @@ struct CloudSyncTests {
     @Test("pull inserts missing turns and skips present ones")
     func pullTurns() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         try harness.seedTurn(content: "local", at: harness.now)
         let remote = CoachTurnSnapshot(
             turnID: "remote-1",
@@ -295,6 +305,7 @@ struct CloudSyncTests {
     @Test("no account means silent local-only with queued intent")
     func noAccountIsSilentLocalOnly() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.db.setAccount(.noAccount)
         let engine = harness.engine()
         await engine.syncNow()
@@ -307,6 +318,7 @@ struct CloudSyncTests {
     @Test("undetermined account queues without error UI")
     func undeterminedQueues() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.db.setAccount(.undetermined)
         let engine = harness.engine()
         await engine.syncNow()
@@ -320,6 +332,7 @@ struct CloudSyncTests {
     @Test("retryable failure queues and says it will retry")
     func retryableQueues() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.db.setSaveError(.retryable("offline"))
         let engine = harness.engine()
         await engine.syncNow()
@@ -343,6 +356,7 @@ struct CloudSyncTests {
     @Test("structural failure surfaces without queueing")
     func structuralFailureSurfaces() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.db.setFetchError(for: CloudRecordType.settingsRecordName, error: .failed("quota"))
         let engine = harness.engine()
         await engine.syncNow()
@@ -358,6 +372,7 @@ struct CloudSyncTests {
     @Test("outage then recovery flushes the outbox")
     func outageRecoveryFlushes() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.db.setAccount(.noAccount)
         let engine = harness.engine()
         await engine.syncNow()
@@ -375,6 +390,7 @@ struct CloudSyncTests {
     @Test("a pull posts the apply notification")
     func applyPostsNotification() async throws {
         let harness = try CloudSyncHarness.make()
+        defer { withExtendedLifetime(harness) {} }
         await harness.engine().syncNow()
         let server = InsightPrefsSnapshot(
             morningInsightsEnabled: true,

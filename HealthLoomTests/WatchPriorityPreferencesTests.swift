@@ -5,8 +5,8 @@
 // set, round-trips through `UserDefaults`, and stays in lockstep with the
 // SyncKit-side reader (`UserDefaultsWatchPriorityPreference`) the sync
 // pipelines' resolver consults, since both sides use the same key by
-// construction. Throwaway `UserDefaults(suiteName:)` per test, mirroring
-// `SyncPreferencesTests`' own convention -- never touches `.standard`.
+// construction. Bound `EphemeralDefaults` holder per test (round-2 item
+// 14, uniform with every other suite site) -- never touches `.standard`.
 
 import Foundation
 import SyncKit
@@ -15,22 +15,21 @@ import Testing
 
 @Suite("WatchPriorityPreferences")
 struct WatchPriorityPreferencesTests {
-    private func makeDefaults() throws -> UserDefaults {
-        let suiteName = "WatchPriorityPreferencesTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        return defaults
+    private func makeDefaults() throws -> EphemeralDefaults {
+        try EphemeralDefaults(prefix: "watchpriority")
     }
 
     @Test func defaultsToOnWhenNeverSet() async throws {
-        let defaults = try makeDefaults()
+        let ephemeral1 = try makeDefaults()
+        let defaults = ephemeral1.defaults
 
         #expect(WatchPriorityPreferences(defaults: defaults).isEnabled)
         #expect(UserDefaultsWatchPriorityPreference(defaults: defaults).isWatchPriorityEnabled())
     }
 
     @Test func turningOffPersistsAndIsSeenByTheSyncKitReader() async throws {
-        let defaults = try makeDefaults()
+        let ephemeral2 = try makeDefaults()
+        let defaults = ephemeral2.defaults
         let preferences = WatchPriorityPreferences(defaults: defaults)
 
         preferences.setEnabled(false)
@@ -44,7 +43,8 @@ struct WatchPriorityPreferencesTests {
     }
 
     @Test func turningBackOnPersists() async throws {
-        let defaults = try makeDefaults()
+        let ephemeral3 = try makeDefaults()
+        let defaults = ephemeral3.defaults
         let preferences = WatchPriorityPreferences(defaults: defaults)
 
         preferences.setEnabled(false)

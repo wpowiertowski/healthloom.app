@@ -16,8 +16,12 @@ import Testing
 
 @MainActor
 struct AIModelsViewModelTests {
-    private func makeSuite() -> UserDefaults {
-        UserDefaults(suiteName: "test.\(UUID().uuidString)")!
+    // Round-2 item 14: the holder, not a bare suite — call sites bind
+    // it for the whole test (janitor-backed regardless). `try!` is
+    // deliberate: suite creation cannot fail on this platform, and every
+    // caller is a non-throwing test.
+    private func makeSuite() -> EphemeralDefaults {
+        try! EphemeralDefaults(prefix: "aimodels")
     }
 
     /// Catalog with scripted gate inputs; consent/key read the test's
@@ -53,7 +57,8 @@ struct AIModelsViewModelTests {
 
     @Test("PCC enable without consent presents the sheet and stays off")
     func pccBlockedWithoutConsent() async {
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite())
+        let ephemeral1 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral1.defaults)
         await viewModel.refresh()
         viewModel.setTurnedOn(true, for: .privateCloudCompute)
         #expect(viewModel.sheet == .consent(.privateCloudCompute))
@@ -63,7 +68,8 @@ struct AIModelsViewModelTests {
 
     @Test("declining consent leaves the tier off with nothing recorded")
     func dismissConsentStaysOff() async {
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite())
+        let ephemeral2 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral2.defaults)
         await viewModel.refresh()
         viewModel.setTurnedOn(true, for: .privateCloudCompute)
         viewModel.dismissSheet()
@@ -74,7 +80,8 @@ struct AIModelsViewModelTests {
 
     @Test("accepting consent records a timestamp and flips PCC on (no key needed)")
     func acceptConsentEnablesPCC() async {
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite())
+        let ephemeral3 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral3.defaults)
         await viewModel.refresh()
         viewModel.setTurnedOn(true, for: .privateCloudCompute)
         viewModel.acceptConsent()
@@ -88,7 +95,8 @@ struct AIModelsViewModelTests {
     @Test("Claude enable walks consent then key entry, storing only after validation")
     func claudeConsentThenKeyFlow() async throws {
         let keys = InMemoryCloudKeyStore()
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite(), keys: keys)
+        let ephemeral4 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral4.defaults, keys: keys)
         await viewModel.refresh()
         viewModel.setTurnedOn(true, for: .claude)
         #expect(viewModel.sheet == .consent(.claude))
@@ -108,8 +116,9 @@ struct AIModelsViewModelTests {
     @Test("a rejected key is never stored and the tier stays off")
     func invalidKeyStoresNothing() async throws {
         let keys = InMemoryCloudKeyStore()
+        let ephemeral5 = makeSuite()
         let (viewModel, _, _) = makeViewModel(
-            suite: makeSuite(), keys: keys, validatorResult: .invalidKey)
+            suite: ephemeral5.defaults, keys: keys, validatorResult: .invalidKey)
         await viewModel.refresh()
         viewModel.setTurnedOn(true, for: .claude)
         viewModel.acceptConsent()
@@ -124,8 +133,9 @@ struct AIModelsViewModelTests {
     @Test("a transport failure is not reported as an invalid key and stores nothing")
     func transportErrorStoresNothing() async throws {
         let keys = InMemoryCloudKeyStore()
+        let ephemeral6 = makeSuite()
         let (viewModel, _, _) = makeViewModel(
-            suite: makeSuite(), keys: keys,
+            suite: ephemeral6.defaults, keys: keys,
             validatorResult: .transportError("offline"))
         await viewModel.refresh()
         viewModel.setTurnedOn(true, for: .claude)
@@ -140,7 +150,8 @@ struct AIModelsViewModelTests {
     @Test("key deletion drops the effective state but keeps toggle + consent")
     func keyDeleteDisablesTier() async throws {
         let keys = InMemoryCloudKeyStore(values: [.claudeAPIKey: "sk-ant-test"])
-        let (viewModel, settings, gates) = makeViewModel(suite: makeSuite(), keys: keys)
+        let ephemeral7 = makeSuite()
+        let (viewModel, settings, gates) = makeViewModel(suite: ephemeral7.defaults, keys: keys)
         settings.recordConsent(for: .claude)
         settings.setTurnedOn(true, for: .claude)
         await viewModel.refresh()
@@ -159,7 +170,8 @@ struct AIModelsViewModelTests {
 
     @Test("withdrawing consent drops the effective state")
     func withdrawConsentDisables() async {
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite())
+        let ephemeral8 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral8.defaults)
         settings.recordConsent(for: .privateCloudCompute)
         settings.setTurnedOn(true, for: .privateCloudCompute)
         await viewModel.refresh()
@@ -173,7 +185,8 @@ struct AIModelsViewModelTests {
     @Test("toggle-off keeps consent and key; re-enable skips both sheets")
     func toggleOffKeepsCredentials() async throws {
         let keys = InMemoryCloudKeyStore(values: [.claudeAPIKey: "sk-ant-test"])
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite(), keys: keys)
+        let ephemeral9 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral9.defaults, keys: keys)
         settings.recordConsent(for: .claude)
         settings.setTurnedOn(true, for: .claude)
         await viewModel.refresh()
@@ -190,7 +203,8 @@ struct AIModelsViewModelTests {
 
     @Test("model override round-trips; non-keyed tiers have no options")
     func modelPicker() async {
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite())
+        let ephemeral10 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral10.defaults)
         await viewModel.refresh()
         let claude = viewModel.rows().first(where: { $0.tier == .claude })!
         #expect(claude.modelID == CloudModelOptions.claudeDefault)
@@ -210,7 +224,8 @@ struct AIModelsViewModelTests {
 
     @Test("a non-live tier cannot start the enable flow (F3 decision a)")
     func nonLiveTierStaysOff() async {
-        let (viewModel, settings, _) = makeViewModel(suite: makeSuite(), liveTiers: [.onDevice])
+        let ephemeral11 = makeSuite()
+        let (viewModel, settings, _) = makeViewModel(suite: ephemeral11.defaults, liveTiers: [.onDevice])
         await viewModel.refresh()
         let row = viewModel.rows().first(where: { $0.tier == .claude })!
         #expect(!row.isLive)
@@ -239,7 +254,8 @@ struct AIModelsViewModelTests {
 
     @Test("store defaults, record/withdraw, and resetAll")
     func settingsStore() {
-        let suite = makeSuite()
+        let ephemeral12 = makeSuite()
+        let suite = ephemeral12.defaults
         let settings = TierSettingsStore(defaults: suite)
         #expect(settings.isTurnedOn(.onDevice))
         #expect(!settings.isTurnedOn(.privateCloudCompute))

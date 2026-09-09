@@ -16,7 +16,7 @@
 // entitlement, so there is nothing to take back.
 //
 // Ordering invariant (no double-count): finish FIRST, then count through
-// `shouldCountTip` (ID gate shared by listener, sweep, and purchase
+// `countTipIfNew` (ID gate shared by listener, sweep, and purchase
 // path). A crash between charge and finish recounts exactly once on
 // relaunch; a crash after finish+count recounts never.
 //
@@ -68,6 +68,33 @@ enum TipResult: Equatable, Sendable {
     case failed(message: String)
 }
 
+/// Catalogue load posture (third-party round-2 item 12): one enum, not
+/// an `isLoading`/`hasAttemptedLoad` bool pair — the pair's cross
+/// product admitted unreachable states, and an offline failure read as
+/// "coming soon" with no way back. `.failed` keeps previously loaded
+/// products and offers a retry; `.idle` is the cancellable nothing-yet.
+/// UI maps: idle/loading → spinner, loaded → tiers or coming-soon,
+/// failed → error + retry.
+enum TipLoadState: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded
+    case failed
+}
+
+/// UI-test catalogue stub (round-2 item 7): launch-arg-driven, consumed
+/// FIFO — `-UITestTipsStub=failed,empty` fails the first load and settles
+/// the retry, so multi-arm UI flows stay hermetic end to end (fix-round
+/// F1: Retry must never touch the live fetch). Covers the settled UI
+/// states that need no StoreKit session — coming-soon and failed+retry.
+/// Tier buttons need real `Product` instances, which only a StoreKit
+/// session can mint (see the F1 TODO in TipStoreTests); they stay
+/// manual-QA until then.
+enum TipUITestStub: Sendable {
+    case emptyProducts
+    case failed
+}
+
 @MainActor
 @Observable
 final class TipStore {
@@ -76,23 +103,35 @@ final class TipStore {
     private let defaults: UserDefaults
     private var listener: Task<Void, Never>?
 
-    // Single source of load truth (third-party 3+13): `products` holds
-    // content, `isLoading`/`hasAttemptedLoad` hold fetch posture — no
-    // parallel `productsUnavailable` bool. UI: spinner while
-    // `!hasAttemptedLoad || isLoading`, coming-soon when settled-empty.
+    // Single source of load truth: `products` holds content, `loadState`
+    // holds fetch posture (round-2 item 12 enum — the bool pair is gone).
     private(set) var products: [Product] = []
-    private(set) var isLoading = false
-    private(set) var hasAttemptedLoad = false
+    private(set) var loadState: TipLoadState = .idle
     private(set) var isPurchasing = false
     private(set) var lastResult: TipResult?
     private(set) var tipCount: Int
-    /// Transaction IDs already counted this run (item 1 gate — see
-    /// `shouldCountTip`). In-memory is enough: finished transactions
-    /// never re-present, so no run can see another run's counts.
+    /// Transaction IDs already counted this run (see `countTipIfNew`).
+    /// In-memory is enough: finished transactions never re-present, so
+    /// no run can see another run's counts.
     private var countedTransactionIDs = Set<UInt64>()
 
-    init(defaults: UserDefaults = .standard) {
+    /// Fetch seam (round-2 item 11: `let`, injected — the only seam; the
+    /// purchase path stays seam-free pending F1). The live value is the
+    /// real catalogue fetch. Tests inject suspenders/failures to pin the
+    /// cancellation and offline arms deterministically.
+    let fetchProducts: ([String]) async throws -> [Product]
+    /// UI-test stub queue (round-2 item 7 + fix-round F1); empty in
+    /// production.
+    private var uiTestStubs: [TipUITestStub]
+
+    init(
+        defaults: UserDefaults = .standard,
+        fetchProducts: (([String]) async throws -> [Product])? = nil,
+        uiTestStubs: [TipUITestStub] = []
+    ) {
         self.defaults = defaults
+        self.fetchProducts = fetchProducts ?? { ids in try await Product.products(for: ids) }
+        self.uiTestStubs = uiTestStubs
         self.tipCount = defaults.integer(forKey: Self.tipCountKey)
     }
 
@@ -108,30 +147,69 @@ final class TipStore {
         await finishUnfinished()
     }
 
-    /// Fetch seam for the cancellation test ONLY (third-party item 2
-    /// demands a cancelled-task test, which needs a suspension the test
-    /// controls — `Product.products` ignores cancellation). Live value is
-    /// the real fetch. This is NOT the purchase-path seam (fast-follow
-    /// F1): purchases stay seam-free.
-    var fetchProducts: ([String]) async throws -> [Product] = { ids in
-        try await Product.products(for: ids)
+    /// Coalescing loader (round-2 item 4): concurrent callers JOIN the
+    /// in-flight fetch instead of being dropped by an `isLoading` guard
+    /// (the old shape stranded waiters: cancelled loader + dropped
+    /// waiter = spinner forever). A caller cancelled while waiting
+    /// unwinds without touching state; whoever remains refetches if the
+    /// load died underneath them.
+    func loadProducts() async {
+        while loadState == .loading {
+            await waitForSettle()
+            // Cancelled while waiting: unwind (never start a fetch for
+            // a dead caller); the remaining callers own the outcome.
+            guard !Task.isCancelled else { return }
+        }
+        guard loadState != .loaded else { return }
+        await performLoad()
     }
 
-    func loadProducts() async {
-        // Settings `.task` cancels on dismissal: a cancelled fetch must
-        // NEVER wipe loaded products (third-party item 2) — only a real
-        // failure resets to empty.
-        guard !isLoading else { return }
-        isLoading = true
-        defer { isLoading = false }
+    /// Cancellable settle-wait: the loader owns the outcome; waiters
+    /// only stop waiting when the state moves — or when THEY are
+    /// cancelled, in which case they unwind silently.
+    private func waitForSettle() async {
+        while loadState == .loading {
+            do {
+                try await Task.sleep(for: .milliseconds(20))
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func performLoad() async {
+        // UI-test stub queue (round-2 item 7 + fix-round F1): apply the
+        // head, consume it, return — never touching the network. Retry
+        // consumes the NEXT value, so stubbed UI flows settle entirely
+        // inside the stub sequence.
+        if !uiTestStubs.isEmpty {
+            switch uiTestStubs.removeFirst() {
+            case .emptyProducts:
+                products = []
+                loadState = .loaded
+            case .failed:
+                loadState = .failed
+            }
+            return
+        }
+        loadState = .loading
         do {
             products = try await fetchProducts(TipProductID.allCases.map(\.rawValue))
-            hasAttemptedLoad = true
-        } catch is CancellationError {
-            return // keep existing state (defer still clears isLoading)
+            loadState = .loaded
         } catch {
-            products = []
-            hasAttemptedLoad = true
+            // Round-2 item 1: `Product.products` never throws
+            // CancellationError — a cancelled live fetch surfaces
+            // StoreKitError.networkError or URLError(.cancelled). The
+            // error TYPE therefore cannot identify a cancel; only our
+            // own task state can.
+            if Task.isCancelled {
+                loadState = .idle // pretend it never happened; retryable
+            } else {
+                // Genuine failure: previously loaded products stay (an
+                // offline retry still shows tiers); the `.failed` arm
+                // offers the retry affordance.
+                loadState = .failed
+            }
         }
     }
 
@@ -147,15 +225,14 @@ final class TipStore {
                 switch verification {
                 case .verified(let transaction):
                     await transaction.finish()
-                    // Gated (item 1): the lifetime listener may have seen
-                    // this transaction first — count exactly once.
-                    if shouldCountTip(
+                    // Gated: the lifetime listener may have seen this
+                    // transaction first — count exactly once. The product
+                    // comes from our own catalogue, so its ID is known.
+                    countTipIfNew(
                         transactionID: transaction.id,
                         productID: transaction.productID,
                         revocationDate: transaction.revocationDate
-                    ) {
-                        recordTip()
-                    }
+                    )
                     lastResult = .succeeded(productID: product.id)
                 case .unverified:
                     lastResult = .failed(message: "Purchase could not be verified.")
@@ -195,19 +272,25 @@ final class TipStore {
 
     // MARK: - Private
 
-    /// Counting gate shared by the listener, the launch sweep, and the
-    /// purchase path (third-party item 1): a tip transaction counts
-    /// exactly once per run. All three paths run on the MainActor (this
-    /// class is `@MainActor`), so check-and-insert is atomic:
-    /// - the listener counts a completion as it arrives;
-    /// - the sweep only ever sees transactions the listener did NOT
-    ///   finish (finished ones never re-present);
-    /// - the overlap (a transaction completing mid-sweep) resolves by
-    ///   the gate: whoever inserts the ID first counts, the other skips.
-    /// No double-count AND no loss. Revoked (refunded) transactions never
-    /// count: the user was un-charged, and there is no entitlement to
-    /// remove — finishing is the whole handling.
-    func shouldCountTip(transactionID: UInt64, productID: String, revocationDate: Date?) -> Bool {
+    /// Claims one counted tip for a verified, non-revoked tip
+    /// transaction (round-2 item 8: a COMMAND name — the old `should…`
+    /// name mutated under a query). Shared by the listener, the launch
+    /// sweep, and the purchase path: a tip counts exactly once per run.
+    /// All three paths run on the MainActor (this class is `@MainActor`),
+    /// so check-and-insert is atomic: the listener counts a completion
+    /// as it arrives; the sweep only ever sees transactions the listener
+    /// did NOT finish (finished ones never re-present); the overlap (a
+    /// transaction completing mid-sweep) resolves by the gate — whoever
+    /// inserts the ID first counts, the other skips. No double-count AND
+    /// no loss. Revoked (refunded) transactions never count: the user was
+    /// un-charged, and there is no entitlement to remove — finishing is
+    /// the whole handling.
+    ///
+    /// Internal (not private) so tests drive it through `tipCount`
+    /// without a live transaction (pre-F1); production calls it only
+    /// after `finish()` (see ordering invariant).
+    @discardableResult
+    func countTipIfNew(transactionID: UInt64, productID: String, revocationDate: Date?) -> Bool {
         guard revocationDate == nil,
               TipProductID(rawValue: productID) != nil,
               !countedTransactionIDs.contains(transactionID)
@@ -215,7 +298,18 @@ final class TipStore {
             return false
         }
         countedTransactionIDs.insert(transactionID)
+        recordTip()
         return true
+    }
+
+    /// Banner decision for a verified, non-revoked transaction
+    /// (round-2 item 3): known products raise success; FOREIGN IDs raise
+    /// nothing (a foreign verified transaction still finishes — nothing
+    /// lingers — but touches no counting and clears no banner). Pure so
+    /// tests pin it without a live transaction.
+    nonisolated static func banner(for productID: String) -> TipResult? {
+        guard TipProductID(rawValue: productID) != nil else { return nil }
+        return .succeeded(productID: productID)
     }
 
     /// Late-arriving updates (renewals don't exist for consumables;
@@ -223,22 +317,24 @@ final class TipStore {
     /// through the gate (Ask-to-Buy approvals and re-deliveries land
     /// here, not in `purchase()`); verified refunds clear sticky UI;
     /// unverified stays unfinished (N2 posture: never acknowledge).
-    /// Setting `lastResult` here clears the sticky pending state (item 8).
+    /// Setting `lastResult` here clears the sticky pending state
+    /// (round-1 item 8 — the sticky-`lastResult` fix; NOT round-2 item 8,
+    /// which renamed the counting gate).
     private func handle(_ update: VerificationResult<Transaction>) async {
         switch update {
         case .verified(let transaction):
             await transaction.finish()
             if transaction.revocationDate != nil {
                 lastResult = nil
-            } else {
-                if shouldCountTip(
+            } else if let banner = Self.banner(for: transaction.productID) {
+                // Known product only (round-2 item 3): foreign IDs fall
+                // through with state untouched (finished above).
+                countTipIfNew(
                     transactionID: transaction.id,
                     productID: transaction.productID,
                     revocationDate: transaction.revocationDate
-                ) {
-                    recordTip()
-                }
-                lastResult = .succeeded(productID: transaction.productID)
+                )
+                lastResult = banner
             }
         case .unverified:
             break
@@ -252,13 +348,11 @@ final class TipStore {
             switch result {
             case .verified(let transaction):
                 await transaction.finish()
-                if shouldCountTip(
+                countTipIfNew(
                     transactionID: transaction.id,
                     productID: transaction.productID,
                     revocationDate: transaction.revocationDate
-                ) {
-                    recordTip()
-                }
+                )
             case .unverified:
                 break // same N2 posture as `handle(_:)`: never acknowledge.
             }
@@ -266,9 +360,10 @@ final class TipStore {
     }
 
     /// Records one completed tip. Internal (not private) so tests pin
-    /// persistence without a purchase; production calls it only after
-    /// `finish()` (see ordering invariant). Grows the PurchaseDriver seam
-    /// (fast-follow F1) instead if that lands.
+    /// persistence without a purchase; production reaches it ONLY
+    /// through `countTipIfNew` (which runs after `finish()` — see
+    /// ordering invariant), never directly. Grows the PurchaseDriver
+    /// seam (fast-follow F1) instead if that lands.
     func recordTip() {
         tipCount += 1
         defaults.set(tipCount, forKey: Self.tipCountKey)

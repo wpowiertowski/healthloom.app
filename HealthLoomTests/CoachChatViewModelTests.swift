@@ -28,23 +28,28 @@ struct CoachChatViewModelTests {
         session: any CoachSession,
         availability: CoachAvailability = .available,
         container: ModelContainer? = nil
-    ) throws -> CoachChatViewModel {
+    ) throws -> (CoachChatViewModel, EphemeralDefaults) {
         let container = try container ?? CoreModel.makeContainer(inMemory: true)
+        // Round-2 item 14: `#function`-keyed bare suites leaked between
+        // runs AND never cleaned up. The holder escapes with the view
+        // model; callers bind it for the test (janitor-backed too).
+        let ephemeral = try EphemeralDefaults(prefix: "coachchat")
         let store = KnowledgeStore(
             modelContainer: container,
             healthReadStore: EmptyReadStore(),
             healthKitAuth: HealthKitAuth()
         )
-        return CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
+        let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
             container: container,
             store: store,
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
             factory: CoachSessionFactory(build: { _, _, _ in session }),
             availability: FixedCoachAvailabilityChecker(availability: availability),
-            tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
+            tierSettings: TierSettingsStore(defaults: ephemeral.defaults),
             tierCatalog: ModelCatalog(onDeviceAvailable: { true })
         ))
+        return (viewModel, ephemeral)
     }
 
 
@@ -52,7 +57,8 @@ struct CoachChatViewModelTests {
     @Test("onAppear prewarms the session for first-token latency")
     func onAppearPrewarms() async throws {
         let probe = PrewarmProbeSession()
-        let viewModel = try makeViewModel(session: probe)
+        let (viewModel, ephemeral) = try makeViewModel(session: probe)
+        defer { withExtendedLifetime(ephemeral) {} }
         viewModel.onAppear()
         // The warm-up Task races the assertion; poll, don't assume.
         try await waitForCondition({ probe.prewarmCount > 0 })
@@ -61,7 +67,8 @@ struct CoachChatViewModelTests {
 
     @Test("send streams the reply and links its context snapshot")
     func sendStreamsAndLinks() async throws {
-        let viewModel = try makeViewModel(session: TestCoachSession())
+        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession())
+        defer { withExtendedLifetime(ephemeral) {} }
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.turns.count == 2)
@@ -86,10 +93,11 @@ struct CoachChatViewModelTests {
             ))
         }
         try context.save()
-        let viewModel = try makeViewModel(
+        let (viewModel, ephemeral) = try makeViewModel(
             session: TestCoachSession(),
             container: container
         )
+        defer { withExtendedLifetime(ephemeral) {} }
         viewModel.onAppear()
         #expect(viewModel.turns.count == CoachChatViewModel.maxLoadedTurns)
         #expect(viewModel.turns.first?.content == "turn 5")
@@ -98,7 +106,8 @@ struct CoachChatViewModelTests {
 
     @Test("stopping before the first token persists no empty turn")
     func stopBeforeFirstToken() async throws {
-        let viewModel = try makeViewModel(session: TestCoachSession(suspendForever: true))
+        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(suspendForever: true))
+        defer { withExtendedLifetime(ephemeral) {} }
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ viewModel.isResponding })
         viewModel.stop()
@@ -110,10 +119,11 @@ struct CoachChatViewModelTests {
 
     @Test("mid-stream error persists the visible partial and reports")
     func midStreamError() async throws {
-        let viewModel = try makeViewModel(session: TestCoachSession(
+        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(
             chunks: ["part ", "rest."],
             failAfterChunks: 1
         ))
+        defer { withExtendedLifetime(ephemeral) {} }
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.turns.count == 2)
@@ -123,10 +133,11 @@ struct CoachChatViewModelTests {
 
     @Test("stop truncates the stream to a non-empty partial")
     func stopTruncates() async throws {
-        let viewModel = try makeViewModel(session: TestCoachSession(
+        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(
             chunks: ["one ", "two ", "three ", "four."],
             chunkDelay: .milliseconds(200)
         ))
+        defer { withExtendedLifetime(ephemeral) {} }
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.draft.isEmpty })
         viewModel.stop()
@@ -143,7 +154,8 @@ struct CoachChatViewModelTests {
         // Third-party F15: the .modelNotReady leg lived here AND in the
         // gate loop below — it belongs to the loop (allCases covers it),
         // so this test keeps only the blank-input case it owns.
-        let viewModel = try makeViewModel(session: TestCoachSession())
+        let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession())
+        defer { withExtendedLifetime(ephemeral) {} }
         #expect(viewModel.send("   ") == false)
         #expect(viewModel.turns.isEmpty)
     }
@@ -157,7 +169,8 @@ struct CoachChatViewModelTests {
     @Test("coach leg: every non-available gate blocks sends with no turns")
     func unavailableGatesBlockCoachSends() async throws {
         for availability in CoachAvailability.allCases.filter({ $0 != .available }) {
-            let viewModel = try makeViewModel(session: TestCoachSession(), availability: availability)
+            let (viewModel, ephemeral) = try makeViewModel(session: TestCoachSession(), availability: availability)
+            defer { withExtendedLifetime(ephemeral) {} }
             viewModel.onAppear()
             try await waitForCondition({ viewModel.availability != .available }, timeout: 2)
             #expect(viewModel.send("hi") == false, "gate \(availability) let a send through")
@@ -177,6 +190,8 @@ struct CoachRoundTwoTests {
             healthReadStore: EmptyReadStore(),
             healthKitAuth: HealthKitAuth()
         )
+        let ephemeralInline = try EphemeralDefaults(prefix: "coachchat")
+        defer { withExtendedLifetime(ephemeralInline) {} }
         let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
             container: container,
             store: store,
@@ -187,7 +202,7 @@ struct CoachRoundTwoTests {
                 chunkDelay: .milliseconds(200)
             ) }),
             availability: FixedCoachAvailabilityChecker(availability: .available),
-            tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
+            tierSettings: TierSettingsStore(defaults: ephemeralInline.defaults),
             tierCatalog: ModelCatalog(onDeviceAvailable: { true })
         ))
         #expect(viewModel.send("hi") == true)
@@ -212,6 +227,8 @@ struct CoachRoundTwoTests {
             healthReadStore: EmptyReadStore(),
             healthKitAuth: HealthKitAuth()
         )
+        let ephemeralInline = try EphemeralDefaults(prefix: "coachchat")
+        defer { withExtendedLifetime(ephemeralInline) {} }
         let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
             container: container,
             store: store,
@@ -219,7 +236,7 @@ struct CoachRoundTwoTests {
             assembler: ContextAssembler(modelContainer: container),
             factory: CoachSessionFactory(build: { _, _, _ in TestCoachSession() }),
             availability: FixedCoachAvailabilityChecker(availability: .modelNotReady),
-            tierSettings: TierSettingsStore(defaults: UserDefaults(suiteName: #function)!),
+            tierSettings: TierSettingsStore(defaults: ephemeralInline.defaults),
             tierCatalog: ModelCatalog(onDeviceAvailable: { true })
         ))
         #expect(viewModel.send("hi") == true)

@@ -144,11 +144,6 @@ targets:
     deploymentTarget: "27.0"
     sources:
       - path: HealthLoomTests
-    # Tip jar test lane: the committed StoreKit config rides in the test
-    # bundle (referenced, not copied). Lives under HealthLoomTests/ so it
-    # never lands in the shipping app target.
-    resources:
-      - path: HealthLoomTests/Fixtures/Tips.storekit
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
@@ -208,6 +203,20 @@ schemes:
         HealthLoomUITests: [test]
     test:
       config: Debug
+      # NOTE (third-party round-2 item 6 + fix-round F2): a
+      # `storeKitConfiguration` key here does NOT emit a TestAction ref
+      # — xcodegen 2.46.0 only honors the run-action key (proven by regen
+      # byte-check; the reviewer's probe additionally found the test key
+      # misrouting as a duplicate LaunchAction ref — either way unusable,
+      # do not re-add). Do not misread this as "the fixture misses test
+      # bundles": the .storekit FILE rides in the built .xctest via the
+      # `sources:` glob above (the old `resources:` block was dead —
+      # regen byte-identical without it — and is deleted; the previous
+      # sentence claiming otherwise was factually wrong). Content in the
+      # bundle, activation on runs: the scheme's run-action key is what
+      # ACTIVATES the fixture, for Xcode runs only — so unit/UI tests
+      # stay seam- and hook-driven. If a future xcodegen emits TestAction
+      # refs, attach it here and re-prove via the scheme grep.
       targets:
         - HealthLoomTests
         - HealthLoomUITests

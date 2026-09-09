@@ -112,35 +112,58 @@ enum BannedHealthSymbols {
 /// Asserts no banned symbol appears in the Swift SOURCES under `directory`
 /// (repo-relative, e.g. `"HealthLoomApp/iCloud"`). `//` line comments are
 /// skipped — prose documents the ban by naming it; code may not contain it.
-func assertNoHealthKitSymbols(in directory: String, file: StaticString = #filePath) throws {
+///
+/// `file`/`sourceLocation` default to the CALLER's (Swift evaluates
+/// default arguments at the call site, and the repo root resolves
+/// identically for every caller in this directory) — a failure attributes
+/// to the test that caught the symbol, never to this file. The loop
+/// variable is deliberately NOT named `file` (it used to shadow the
+/// parameter; round-2 item 5).
+func assertNoHealthKitSymbols(
+    in directory: String,
+    file: StaticString = #filePath,
+    sourceLocation: SourceLocation = #_sourceLocation
+) throws {
     let thisFile = URL(fileURLWithPath: String(describing: file))
-    // `#filePath` here is TestDoubles.swift (this file) — same directory
-    // as every caller, so the repo root resolves identically.
     let dir = thisFile
         .deletingLastPathComponent() // HealthLoomTests
         .deletingLastPathComponent() // repo root
         .appendingPathComponent(directory)
     var hits: [String] = []
-    for file in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-        guard file.pathExtension == "swift" else { continue }
-        let source = try String(contentsOf: file, encoding: .utf8)
+    for candidate in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+        guard candidate.pathExtension == "swift" else { continue }
+        let source = try String(contentsOf: candidate, encoding: .utf8)
         let code = source
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
         for symbol in BannedHealthSymbols.all where code.contains(symbol) {
-            hits.append("\(file.lastPathComponent): \(symbol)")
+            hits.append("\(candidate.lastPathComponent): \(symbol)")
         }
     }
-    #expect(hits.isEmpty, "HealthKit symbols in \(directory): \(hits)")
+    #expect(hits.isEmpty, "HealthKit symbols in \(directory): \(hits)", sourceLocation: sourceLocation)
 }
 
 /// Ephemeral `UserDefaults` suite that cleans up after itself
-/// (third-party item 12): bare `UserDefaults(suiteName:)` suites leave a
-/// plist per run. Dropped at the end of the owning test (deinit removes
-/// the persistent domain) — hold one per test, never share.
+/// (third-party round-2 item 14: rolled out to EVERY suite site — no
+/// half-migration). Three layers, because each alone has a hole:
+/// - PRE-CLEAN at init: a fresh suite even if a same-named suite (e.g.
+///   a `#function`-keyed one) survived a previous run in this process.
+/// - POST-CLEAN at deinit: removes the domain when the holder drops.
+///   Best-effort — Swift frees locals after their LAST USE, not at
+///   scope end, so an early drop can precede later writes (which would
+///   recreate the plist).
+/// - `atexit` JANITOR backstop: every suite name ever minted is removed
+///   again at process exit, so the plist leak is closed even where a
+///   holder's lifetime ends early. The janitor is the guarantee; holder
+///   lifetime (fixture ownership / `withExtendedLifetime` at
+///   vacuity-sensitive assertions) is defense-in-depth.
+/// Hold one per test, never share.
 final class EphemeralDefaults {
     let defaults: UserDefaults
+    /// The suite name (for call sites that must name their suite, e.g.
+    /// a wipe-coordinator reset closure that removes its own domain).
+    var suiteName: String { name }
     private let name: String
 
     init(prefix: String) throws {
@@ -149,6 +172,8 @@ final class EphemeralDefaults {
             throw EphemeralDefaultsError.noSuite
         }
         self.defaults = defaults
+        defaults.removePersistentDomain(forName: name) // pre-clean
+        EphemeralDefaultsJanitor.track(name)
     }
 
     deinit {
@@ -156,6 +181,31 @@ final class EphemeralDefaults {
         // is non-Sendable. Domain-keyed, so this removes the same
         // persisted plist the held instance wrote.
         UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+    }
+}
+
+/// Process-exit backstop for ephemeral suites (see `EphemeralDefaults`).
+/// Test-support only — never ships. File-scope globals (not type
+/// members): the `atexit` handler is a context-free C function and can
+/// only touch globals.
+nonisolated(unsafe) private var janitorNames: [String] = []
+nonisolated(unsafe) private var janitorArmed = false
+private let janitorLock = NSLock()
+
+enum EphemeralDefaultsJanitor {
+    static func track(_ name: String) {
+        janitorLock.withLock {
+            janitorNames.append(name)
+            if !janitorArmed {
+                janitorArmed = true
+                Darwin.atexit {
+                    let pending = janitorLock.withLock { janitorNames }
+                    for name in pending {
+                        UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+                    }
+                }
+            }
+        }
     }
 }
 

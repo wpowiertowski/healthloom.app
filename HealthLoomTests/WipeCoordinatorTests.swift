@@ -147,9 +147,9 @@ struct WipeCoordinatorTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let storeFile = dir.appending(path: "CoreModel.store")
         try Data("x".utf8).write(to: storeFile)
-        let suiteName = "WipeCoordinatorTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
+        let ephemeralWipe = try EphemeralDefaults(prefix: "wipecoordinator")
+        let defaults = ephemeralWipe.defaults
+        let suiteName = ephemeralWipe.suiteName
         defaults.set(true, forKey: "someKey")
 
         var revoked = false

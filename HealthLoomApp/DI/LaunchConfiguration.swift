@@ -160,6 +160,14 @@ struct LaunchConfiguration: Sendable {
     /// starts the stub `.denied` for the guidance path.
     var stubNotifications: Bool
     var denyNotifications: Bool
+    /// Round-2 item 7 + fix-round F1: `-UITestTipsStub=empty|failed` (or
+    /// a comma-separated sequence like `failed,empty`) short-circuits
+    /// the tip catalogue fetch — consumed FIFO, so Retry settles inside
+    /// the stub sequence without ever touching the network. Unknown
+    /// values fall back to `.emptyProducts` (same rule as
+    /// `aiModelsScenario`: a typo still exercises a deterministic path,
+    /// never the live-wiring one). Empty = no stub (real fetch).
+    var tipsStub: [TipUITestStub]
 
     static var current: LaunchConfiguration {
         Self.resolve(arguments: ProcessInfo.processInfo.arguments)
@@ -207,8 +215,22 @@ struct LaunchConfiguration: Sendable {
             seedYouTab: seedYouTab,
             isUITest: arguments.contains(where: { $0.hasPrefix("-UITest") }),
             stubNotifications: arguments.contains("-UITestStubNotifications"),
-            denyNotifications: arguments.contains("-UITestNotificationsDenied")
+            denyNotifications: arguments.contains("-UITestNotificationsDenied"),
+            tipsStub: Self.tipsStub(from: arguments)
         )
+    }
+
+    /// `-UITestTipsStub=empty|failed[,…]` (round-2 item 7 + fix-round
+    /// F1). Absent = no stub (real fetch); unknown token =
+    /// `.emptyProducts`; bare `=` keeps the old single-empty behavior.
+    static func tipsStub(from arguments: [String]) -> [TipUITestStub] {
+        let prefix = "-UITestTipsStub"
+        guard let flag = arguments.first(where: { $0.hasPrefix(prefix + "=") }) else {
+            return []
+        }
+        let raw = String(flag.dropFirst(prefix.count + 1))
+        if raw.isEmpty { return [.emptyProducts] }
+        return raw.split(separator: ",").map { $0 == "failed" ? .failed : .emptyProducts }
     }
 
     /// `-UITestAIModels` (bare = `.clean`) or `-UITestAIModels=<scenario>`.

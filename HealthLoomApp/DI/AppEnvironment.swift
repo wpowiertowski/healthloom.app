@@ -76,7 +76,7 @@ final class AppEnvironment {
 
     let modelContainer: ModelContainer
     let cloudSync: CloudSyncEngine
-    let tipStore = TipStore()
+    let tipStore: TipStore
     let healthKitAuth: HealthKitAuth
     let googleAuthManager: GoogleAuthManager
     let syncEngine: SyncEngine
@@ -167,6 +167,9 @@ final class AppEnvironment {
     let insightNotifier: any InsightNotifying
     init(launchConfiguration: LaunchConfiguration = .current) {
         self.launchConfiguration = launchConfiguration
+        // Round-2 item 7: the catalogue stub sequence (if any) rides in
+        // the store so Settings' `.task` needs no branching.
+        self.tipStore = TipStore(uiTestStubs: launchConfiguration.tipsStub)
 
         // WP-33: UI-test launches can ask for a clean Today-panel metric
         // order (see LaunchConfiguration.resetTodayMetrics's doc comment).
