@@ -24,6 +24,7 @@
 
 import SwiftUI
 import Testing
+import UIKit
 
 enum SnapshotAssert {
     /// Renders `view` at a fixed 390pt width under the given appearance
@@ -50,6 +51,59 @@ enum SnapshotAssert {
             return
         }
         let url = referenceURL(name: name, callerFile: file)
+        recordOrCompare(data: data, name: name, url: url)
+    }
+
+    /// Window-hosted variant (third-party F-A): `ImageRenderer` renders
+    /// `ScrollView` content empty — it has no intrinsic size for the
+    /// renderer to lay out against — so the welcome refs pinned blank
+    /// canvas. Hosting in a live window and drawing the hierarchy renders
+    /// real pixels; sizing comes from `sizeThatFits` so full scroll
+    /// content (taller than any screen at AXXXL) is captured, not just
+    /// the viewport. Compare/record semantics identical to `assert`.
+    @MainActor
+    static func assertHosted(
+        _ view: some View,
+        named name: String,
+        colorScheme: ColorScheme,
+        sizeCategory: ContentSizeCategory,
+        file: StaticString = #filePath
+    ) {
+        let configured = AnyView(view
+            .environment(\.colorScheme, colorScheme)
+            .environment(\.sizeCategory, sizeCategory)
+            .frame(width: 390))
+        let hosting = UIHostingController(rootView: configured)
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
+            Issue.record("Snapshot '\(name)': no window scene — test bundle must be app-hosted")
+            return
+        }
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = hosting
+        window.makeKeyAndVisible()
+        let target = hosting.view.sizeThatFits(CGSize(width: 390, height: CGFloat.greatestFiniteMagnitude))
+        hosting.view.frame = CGRect(origin: .zero, size: target)
+        hosting.view.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2 // match `assert`'s explicit scale (CI picks its own device)
+        // 8-bit SDR: the default `.automatic` range follows the display
+        // into 16-bit output, which loads with a runtime libpng depth
+        // warning and doubles ref size for zero test value.
+        format.preferredRange = .standard
+        let image = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            hosting.view.drawHierarchy(in: CGRect(origin: .zero, size: target), afterScreenUpdates: true)
+        }
+        guard let data = image.pngData() else {
+            Issue.record("Snapshot '\(name)': hosted render produced no image")
+            return
+        }
+        let url = referenceURL(name: name, callerFile: file)
+        recordOrCompare(data: data, name: name, url: url)
+    }
+
+    /// Shared record-or-compare tail for both render paths.
+    @MainActor
+    private static func recordOrCompare(data: Data, name: String, url: URL) {
         if ProcessInfo.processInfo.environment["SNAPSHOT_RECORD"] == "1" {
             do {
                 try FileManager.default.createDirectory(

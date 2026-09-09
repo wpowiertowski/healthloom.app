@@ -136,6 +136,19 @@ struct TodayMetricFormatterTests {
         #expect(display.accessibilityText == "Heart, no data yet")
     }
 
+    // WP-38 degradation matrix, HK-denied leg (third-party F8): a denied
+    // authorization surfaces as nil readings at the formatter boundary
+    // (TodayMetricsProvider yields nothing per kind), so every kind must
+    // degrade to its empty row — no value, no progress, no crash.
+    @Test func deniedAuthorizationEmptiesEveryKind() {
+        for kind in TodayMetricKind.allCases {
+            let display = TodayMetricFormatter.display(kind: kind, reading: nil, locale: Self.enUS, unitSystem: .imperial)
+            #expect(display.value == nil, "\(kind) leaks a value without a reading")
+            #expect(display.sub == "No data yet")
+            #expect(display.progress == nil)
+        }
+    }
+
     @Test func stepsRowCarriesGoalPercentAndCappedProgress() {
         let display = TodayMetricFormatter.display(
             kind: .steps,

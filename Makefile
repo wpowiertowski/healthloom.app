@@ -30,7 +30,7 @@ test:
 		-project HealthLoom.xcodeproj \
 		-scheme HealthLoom \
 		-destination "platform=iOS Simulator,id=$$udid" \
-		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
 		GCC_TREAT_WARNINGS_AS_ERRORS=YES
 	# NOTE (owner directive: strict warnings-as-errors everywhere, no
 	# carve-outs): the flags above apply command-line-wide — first-party

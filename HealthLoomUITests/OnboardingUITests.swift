@@ -41,6 +41,13 @@ final class OnboardingUITests: XCTestCase {
         let footnote = app.staticTexts["onboarding.footnote"]
         XCTAssertTrue(footnote.waitForExistence(timeout: 10))
         XCTAssertTrue(footnote.label.contains("not a medical professional"))
+        // Third-party F5: existence is not visibility. The footnote must
+        // be hittable inside the window, and so must Get Started — the
+        // F1 overflow pushed the button off-screen at large sizes.
+        XCTAssertTrue(footnote.isHittable, "disclaimer footnote exists but is not hittable")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(footnote.frame))
+        let getStarted = app.buttons["onboarding.welcome.continue"]
+        XCTAssertTrue(getStarted.isHittable, "Get Started exists but is not hittable")
     }
 
     @MainActor

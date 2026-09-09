@@ -63,6 +63,11 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
     /// disclaimer on the welcome step). Optional so the other steps —
     /// consent sheets with their own legal copy — stay untouched.
     let footnote: String?
+    /// Identifier applied to the footnote text (third-party F11): a
+    /// parameter, not a literal, per this file's convention of taking
+    /// identifiers from the call site (`OnboardingPrimaryButton` does the
+    /// same for its button).
+    let footnoteAccessibilityIdentifier: String
     // Plain stored properties -- `@ViewBuilder` belongs on the `init`
     // parameters below (which build these), not on the storage itself.
     let content: Content
@@ -74,6 +79,7 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
         title: String,
         message: String,
         footnote: String? = nil,
+        footnoteAccessibilityIdentifier: String = "onboarding.footnote",
         @ViewBuilder content: () -> Content = { EmptyView() },
         @ViewBuilder actions: () -> Actions = { EmptyView() }
     ) {
@@ -82,12 +88,21 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
         self.title = title
         self.message = message
         self.footnote = footnote
+        self.footnoteAccessibilityIdentifier = footnoteAccessibilityIdentifier
         self.content = content()
         self.actions = actions()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Third-party F1: a ScrollView, not a bare VStack. At AX3–AX5
+        // with unbounded custom-font scaling, title + message + footnote
+        // can exceed the screen and the old VStack (with its bottoming
+        // Spacer) pushed the actions off-screen with no way to reach
+        // them. Scrolling keeps every action reachable; type scaling
+        // stays uncapped deliberately (a cap would trade a layout bug
+        // for an accessibility one).
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
             OnboardingBrandMark()
                 .padding(.top, 12)
 
@@ -142,7 +157,7 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 10)
-                    .accessibilityIdentifier("onboarding.footnote")
+                    .accessibilityIdentifier(footnoteAccessibilityIdentifier)
             }
 
             content
@@ -150,6 +165,7 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
             Spacer(minLength: 20)
 
             actions
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 22)

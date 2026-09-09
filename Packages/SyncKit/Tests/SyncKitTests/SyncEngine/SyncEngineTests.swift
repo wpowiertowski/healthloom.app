@@ -327,6 +327,35 @@ import Testing
         #expect(state.lastError == nil)
     }
 
+    // WP-38 degradation matrix, offline leg (third-party F8): no HTTP
+    // response at all (airplane mode, dead zone) surfaces as
+    // .transport, reports a per-type error, moves no cursor, and writes
+    // nothing. (Redaction of the persisted message is pinned separately
+    // by persistedErrorMessagesAreRedactedBeforeTheyReachTheStore — this
+    // test asserts only that a message is persisted, not its wording.)
+    @Test func offlineTransportReportsErrorWithoutMovingCursorOrWriting() async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        mock.setScript(type: .steps, pageToken: nil, results: [.failure(.transport("URLError"))])
+        let store = MockHealthStore()
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: store),
+            modelContainer: container,
+            clock: clock
+        )
+
+        let result = await engine.sync(type: .steps)
+        #expect(result.status == .error)
+        #expect(result.errorMessage != nil)
+        let state = try #require(try Self.syncState(container, type: .steps))
+        #expect(state.lastStatus == "error")
+        #expect(state.lastSyncedAt == nil)
+        #expect(state.lastError != nil)
+        #expect(store.savedBatches.isEmpty)
+    }
+
     @Test func persistedErrorMessagesAreRedactedBeforeTheyReachTheStore() async throws {
         // D11: a pipeline error embedding a bearer token must reach
         // SyncState.lastError (and the outcome) only as [REDACTED].

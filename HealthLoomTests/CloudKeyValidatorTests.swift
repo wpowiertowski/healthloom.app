@@ -21,11 +21,32 @@ struct CloudKeyValidatorTests {
         /// Canned body for the next response (WP-29 F5: Gemini 400s only
         /// count as invalid-key when the body names `API_KEY_INVALID`).
         nonisolated(unsafe) static var nextBody: Data = Data()
+        /// Outgoing request body of the last intercepted call (third-party
+        /// F10: lets the wire-format test decode what was actually sent).
+        nonisolated(unsafe) static var lastRequestBody: Data?
 
         nonisolated override class func canInit(with request: URLRequest) -> Bool { true }
         nonisolated override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
         nonisolated override func startLoading() {
+            // URLSession may relocate a Data body onto httpBodyStream by
+            // the time a protocol sees it — capture both forms.
+            if let body = request.httpBody {
+                Self.lastRequestBody = body
+            } else if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    data.append(buffer, count: count)
+                }
+                Self.lastRequestBody = data
+            } else {
+                Self.lastRequestBody = nil
+            }
             guard let next = Self.next else {
                 client?.urlProtocol(self, didFailWithError: URLError(.unknown))
                 return
@@ -95,6 +116,23 @@ struct CloudKeyValidatorTests {
         #expect(claude != .valid)
         let gemini = await validator(statusCode: 500).validate(key: "k", for: .gemini)
         #expect(gemini != .invalidKey)
+    }
+
+    @Test("Claude ping body admits no tools key (structural, third-party F10)")
+    func claudePingBodyHasNoToolsKey() async throws {
+        // Direct pin: the type itself encodes (distinguishes a broken
+        // Encodable from transport body relocation below).
+        let encoded = try JSONEncoder().encode(ClaudeMessageRequest.ping)
+        #expect(!encoded.isEmpty)
+        #expect(await validator(statusCode: 200).validate(key: "k", for: .claude) == .valid)
+        let sent = try #require(StubTransport.lastRequestBody, "ping sent no body")
+        let dict = try #require(try JSONSerialization.jsonObject(with: sent) as? [String: Any])
+        // Exact key set: any added field (notably "tools") fails here.
+        #expect(Set(dict.keys) == ["model", "max_tokens", "messages"])
+        #expect(dict["model"] as? String == CloudModelOptions.claudeDefault)
+        #expect(dict["max_tokens"] as? Int == 1)
+        let messages = try #require(dict["messages"] as? [[String: String]])
+        #expect(messages == [["role": "user", "content": "ok"]])
     }
 
     @Test("an offline transport maps to transportError")
