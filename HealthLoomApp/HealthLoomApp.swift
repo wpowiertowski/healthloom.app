@@ -206,7 +206,7 @@ private enum HealthLoomBackgroundSync {
     nonisolated static let identifier = "com.healthloom.sync.refresh"
 
     nonisolated private static let configuration = BackgroundSyncConfiguration()
-    nonisolated private static let logger = Logger(subsystem: "com.healthloom.app", category: "BackgroundSync")
+    nonisolated private static let logger = Logger(subsystem: "app.healthloom", category: "BackgroundSync")
 
     /// WP-16 step 1: register the launch handler. Must be called exactly
     /// once per process launch (Apple's own doc comment on `register(...)`:
