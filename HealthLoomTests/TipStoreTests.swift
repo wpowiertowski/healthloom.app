@@ -13,11 +13,19 @@
 // - cancel/pending result mapping (constructible without a transaction);
 // - tip-count persistence round-trip; initial state;
 // - begin()/finishUnfinished() terminate with no transactions pending;
+// - no entitlements surface and no restore symbol exists (consumables
+//   never restore — the header's claim, pinned);
 // - privacy grep-test over the Tips directory.
 // Live purchase/pending/failed/refund paths are covered by code structure
 // (every arm terminates — review `purchase()`/`handle(_:)`) plus manual QA
-// with the attached config (see TipProductID docs); the lane grows the
-// SKTestSession arms the day the framework compiles again.
+// with the attached config (see TipProductID docs).
+//
+// TODO(SKTestSession) [fast-follow F1]: when `import StoreKitTest`
+// compiles again under this SDK (fixed Apple framework — re-prove with a
+// zero-flags build before relying on it), restore the session lane:
+// success (finish + count once), unfinished-at-launch, ask-to-buy
+// pending, simulated failure, refund-noop, and the PurchaseDriver seam
+// so those arms run tested==shipped instead of reviewed.
 
 import Foundation
 import StoreKit
@@ -104,6 +112,56 @@ struct TipStoreTests {
     func resultMapping() {
         #expect(TipStore.result(for: .userCancelled) == .cancelled)
         #expect(TipStore.result(for: .pending) == .pendingApproval)
+    }
+
+    @Test("tip count persists across instances")
+    func tipCountPersists() throws {
+        let defaults = try #require(UserDefaults(suiteName: "tips-persist-\(UUID().uuidString)"))
+        let first = TipStore(defaults: defaults)
+        first.recordTip()
+        first.recordTip()
+        #expect(TipStore(defaults: defaults).tipCount == 2)
+    }
+
+    @Test("no entitlements surface for tips (nothing restores)")
+    func noTipEntitlements() async {
+        // With no purchases, trivially empty — the point is the shape:
+        // consumables never enter currentEntitlements, so no restore
+        // path can exist. Grows a purchase-then-assert arm with F1.
+        var entitled: [String] = []
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let transaction) = result {
+                entitled.append(transaction.productID)
+            }
+        }
+        #expect(entitled.filter { TipProductID(rawValue: $0) != nil }.isEmpty)
+    }
+
+    @Test("no restore symbol exists in tip sources (grep-test)")
+    func noRestoreSymbols() throws {
+        // The header promises no restore path: any restore API
+        // (AppStore.sync, restoreCompletedTransactions, a custom
+        // `restore()` on the store) fails here. Comment-stripped like
+        // the privacy grep — prose may discuss restore, code may not.
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let tipsDir = thisFile
+            .deletingLastPathComponent() // HealthLoomTests
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("HealthLoomApp/Tips")
+        var hits: [String] = []
+        for file in try FileManager.default.contentsOfDirectory(at: tipsDir, includingPropertiesForKeys: nil) {
+            guard file.pathExtension == "swift" else { continue }
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let code = source
+                .components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+                .lowercased()
+            if code.contains("restor") {
+                hits.append(file.lastPathComponent)
+            }
+        }
+        #expect(hits.isEmpty, "restore symbols in tip sources: \(hits)")
     }
 
     @Test("no health data near purchase code (grep-test)")

@@ -119,12 +119,12 @@ final class TipStore {
                 case .unverified:
                     lastResult = .failed(message: "Purchase could not be verified.")
                 }
-            case .userCancelled:
-                lastResult = .cancelled
-            case .pending:
-                lastResult = .pendingApproval
+            case .userCancelled, .pending:
+                // Routed through the pure mapper (third-party F2): the
+                // arms the unit tests pin are the arms that ship.
+                lastResult = Self.result(for: result)
             @unknown default:
-                lastResult = .failed(message: "Purchase returned an unknown result.")
+                lastResult = Self.result(for: result)
             }
         } catch {
             lastResult = .failed(message: "Purchase failed: \(error.localizedDescription)")
@@ -156,6 +156,10 @@ final class TipStore {
 
     /// Late-arriving updates (renewals don't exist for consumables;
     /// refunds do): finish so nothing lingers, change no state.
+    /// Unverified updates are deliberately left unfinished (third-party
+    /// N2): finishing would acknowledge a possibly-tampered transaction
+    /// and destroy the evidence; leaving it re-presents a value this
+    /// handler ignores — no state change, no UI, no grant, forever.
     private func handle(_ update: VerificationResult<Transaction>) async {
         switch update {
         case .verified(let transaction):
@@ -178,12 +182,16 @@ final class TipStore {
                     recordTip()
                 }
             case .unverified:
-                break
+                break // same N2 posture as `handle(_:)`: never acknowledge.
             }
         }
     }
 
-    private func recordTip() {
+    /// Records one completed tip. Internal (not private) so tests pin
+    /// persistence without a purchase; production calls it only after
+    /// `finish()` (see ordering invariant). Grows the PurchaseDriver seam
+    /// (fast-follow F1) instead if that lands.
+    func recordTip() {
         tipCount += 1
         defaults.set(tipCount, forKey: Self.tipCountKey)
     }

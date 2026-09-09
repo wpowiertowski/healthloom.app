@@ -275,6 +275,21 @@ struct SettingsView: View {
                         .padding(.horizontal, 16).padding(.vertical, 11)
                         .accessibilityIdentifier("settings.tips.error")
                 }
+                // Third-party N1: Ask-to-Buy (or parental approval)
+                // defers the purchase — the section must say so instead
+                // of idling as if nothing happened. Cancellations stay
+                // silent (tapping away is not an error).
+                if appEnvironment.tipStore.lastResult == .pendingApproval {
+                    ThemedRowDivider()
+                    Text("Waiting for approval — the tip completes if approved in the App Store.")
+                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .foregroundStyle(Theme.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .accessibilityIdentifier("settings.tips.pending")
+                }
             }
             .padding(.top, 20)
             .task {
