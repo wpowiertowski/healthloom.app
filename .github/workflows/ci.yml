@@ -80,6 +80,14 @@ jobs:
           grep -q 'CFBundleDisplayName: HealthLoom' project.yml
           echo "display name consistent"
 
+      - name: Bundle ID is app.healthloom
+        # A bundle-ID drift silently orphans HealthKit attribution, the
+        # App Store listing, and the bundle-bound Google OAuth client.
+        run: |
+          set -euo pipefail
+          grep -q 'PRODUCT_BUNDLE_IDENTIFIER: app.healthloom' project.yml
+          echo "bundle ID consistent"
+
   packages:
     name: swift test (${{ matrix.package }})
     runs-on: macos-26
