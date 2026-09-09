@@ -104,6 +104,29 @@ final class SyncPreferences {
         Self.filterEnabled(types, disabled: disabledTypes)
     }
 
+    // MARK: - iCloud sync surface
+
+    /// Raw disabled-type values for the cloud snapshot (sorted for stable
+    /// encoding). Unknown future cases survive as strings — see
+    /// `SyncSettingsSnapshot`.
+    func snapshotRawValues() -> [String] {
+        disabledTypes.map(\.rawValue).sorted()
+    }
+
+    /// Applies a cloud-pulled snapshot. Unknown raw values are dropped
+    /// (a case this app version renamed cannot be toggled anyway); the
+    /// instance persists immediately so a force-quit cannot lose it.
+    func replaceDisabledTypes(with rawValues: [String]) {
+        disabledTypes = Set(rawValues.compactMap(GoogleDataType.init(rawValue:)))
+        persist()
+    }
+
+    /// Re-reads from defaults (a pull applied through the sync engine's
+    /// own instance; mirrors `InsightPreferences.reload`).
+    func reload() {
+        disabledTypes = Self.loadDisabledTypes(from: defaults)
+    }
+
     // MARK: - Pure functions (WP-17's required tests target these directly --
     // no `UserDefaults`, no instance, no side effects.)
 

@@ -32,6 +32,7 @@
 // fence explicitly allows in this file; nothing above this comment block
 // changed.
 
+import Combine
 import CoreModel
 import GoogleHealthClient
 import SwiftData
@@ -168,6 +169,49 @@ struct SettingsView: View {
                         await refreshInsightAuthStatus()
                     }
                 }
+
+            // iCloud sync (private DB: settings, insight prefs, coach
+            // history — never HealthKit values). Status-first surface:
+            // local-only is silent-by-design at the engine, but Settings
+            // names it so "why isn't my other device updated" has an
+            // answer; failures show their message; nothing is ever lost
+            // (local store stays the source of truth, intent queues).
+            ThemedSectionHeader(title: "iCloud Sync")
+            ThemedPanel {
+                HStack {
+                    Text(cloudSyncStatusText)
+                        .font(Theme.font(14, .regular, relativeTo: .subheadline))
+                        .foregroundStyle(Theme.secondary)
+                        .accessibilityIdentifier("settings.icloud.status")
+                    Spacer()
+                    Button("Sync Now") {
+                        Task {
+                            await appEnvironment.cloudSync.syncNow()
+                        }
+                    }
+                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .accessibilityIdentifier("settings.icloud.syncNow")
+                }
+                .padding(.horizontal, 16).padding(.vertical, 13)
+                if case .failed(let message) = appEnvironment.cloudSync.status {
+                    ThemedRowDivider()
+                    Text(message)
+                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .foregroundStyle(Theme.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .accessibilityIdentifier("settings.icloud.error")
+                }
+            }
+            .padding(.top, 20)
+            // A pull applied server state through the engine's own owner
+            // instances — this screen's instances re-read the same keys.
+            .onReceive(NotificationCenter.default.publisher(for: .cloudSyncDidApply)) { _ in
+                preferences.reload()
+                insightPrefs.reload()
+            }
 
             // WP-35 (implementation-plan.md): export (JSON dump + share
             // sheet, user-initiated) and the disconnect-and-wipe flow.
@@ -488,6 +532,27 @@ struct SettingsView: View {
         case .nutrition: return "Nutrition"
         case .ecg: return "ECG"
         case .irn: return "Irregular Rhythm Notifications"
+        }
+    }
+
+    /// iCloud status line. Every state names what it means for the user's
+    /// data — especially local-only (not an error) and pending (nothing
+    /// lost, intent queued).
+    private var cloudSyncStatusText: String {
+        switch appEnvironment.cloudSync.status {
+        case .localOnly:
+            return "Local only — sign in to iCloud to sync"
+        case .syncing:
+            return "Syncing…"
+        case .synced(_, let pending) where pending > 0:
+            return "Waiting to sync (\(pending))"
+        case .synced(let at, _):
+            guard let at else { return "Not synced yet" }
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .abbreviated
+            return "Synced \(formatter.localizedString(for: at, relativeTo: Date()))"
+        case .failed:
+            return "Sync needs attention"
         }
     }
 }

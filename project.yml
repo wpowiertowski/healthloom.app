@@ -123,6 +123,14 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+        # iCloud sync (private DB only — settings, insight prefs, coach
+        # history; NEVER HealthKit-sourced values). Container iCloud.app.
+        # healthloom must also be ticked on the App ID in the portal
+        # (human step — the app degrades to local-only without it).
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.app.healthloom
+        com.apple.developer.icloud-services:
+          - CloudKit
     dependencies:
       - package: CoreModel
       - package: Secrets

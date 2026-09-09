@@ -35,12 +35,22 @@ public enum CoreModel {
 
         let configuration: ModelConfiguration
         let onDiskURL: URL?
+        // Explicit `.none`: `cloudKitDatabase` defaults to `.automatic`,
+        // which silently promotes every container to CloudKit sync the
+        // moment the app gains the iCloud capability — breaking the store
+        // outright (CloudKit requires all-optional attributes) AND
+        // violating this app's sync scope (settings/insight-prefs/coach
+        // history ONLY, via the hand-built `CloudSyncEngine` — HealthKit-
+        // sourced entities must never leave the device). Local-only store
+        // here; CloudKit traffic goes exclusively through that engine.
         if inMemory {
-            configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            configuration = ModelConfiguration(
+                schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none
+            )
             onDiskURL = nil
         } else {
             let storeURL = try productionStoreURL()
-            configuration = ModelConfiguration(schema: schema, url: storeURL)
+            configuration = ModelConfiguration(schema: schema, url: storeURL, cloudKitDatabase: .none)
             onDiskURL = storeURL
         }
 

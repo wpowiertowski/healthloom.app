@@ -92,6 +92,19 @@ struct HealthLoomApp: App {
                 await InsightRunnerHost.runIfDue()
             }
         }
+        // iCloud sync on launch, every foreground, and on demand
+        // (Settings). Gated out of UI tests (hermetic launches must never
+        // reach CloudKit); the engine itself degrades to silent
+        // local-only without an iCloud account. `initial: true` covers
+        // launch; the runner's own once-daily gate is unrelated.
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active else { return }
+            if !appEnvironment.launchConfiguration.isUITest {
+                Task {
+                    await appEnvironment.cloudSync.syncNow()
+                }
+            }
+        }
     }
 }
 
