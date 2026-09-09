@@ -37,7 +37,10 @@ import Observation
 import SwiftData
 
 /// Container this feature uses. Must ALSO be ticked on the App ID in the
-/// portal (human step) — without it every call fails closed to local-only.
+/// portal (human step) — without the tick the account can still report
+/// `.available` while every call fails, surfacing a container-unavailable
+/// error (NOT silent local-only: silent is reserved for no-account, where
+/// the user did nothing wrong).
 nonisolated enum CloudSyncContainer {
     static let identifier = "iCloud.app.healthloom"
 }
@@ -187,6 +190,10 @@ final class CloudSyncEngine {
     private let insightPrefs: InsightPreferences
 
     var status: CloudSyncStatus = .synced(at: nil, pending: 0)
+
+    /// Queued push intent, for tests (structural failures must NOT queue;
+    /// retryable ones must). Status already surfaces the count to users.
+    var pendingOutboxCount: Int { outbox.count }
 
     init(
         container: ModelContainer,
@@ -409,6 +416,13 @@ final class CloudSyncEngine {
         } catch {
             throw CloudSyncError.failed(error.localizedDescription)
         }
+        // Synthetic turnID, kept deliberately (third-party N1): a content
+        // hash would survive clock changes, but renaming the scheme later
+        // orphans already-pushed records (save-if-absent keys on the name
+        // — orphans re-push as server-side duplicates). Fractional-second
+        // timestamps make collisions negligible, and readable names are
+        // debuggable in the CloudKit dashboard. Revisit only with a
+        // tombstone pass.
         return rows.map {
             CoachTurnSnapshot(
                 turnID: "\($0.createdAt.timeIntervalSince1970)-\($0.role)",

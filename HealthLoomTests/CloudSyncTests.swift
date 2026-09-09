@@ -120,6 +120,26 @@ struct CloudSyncTests {
         #expect(await harness.db.saved(ofType: CloudRecordType.insightPrefs).count == 1)
     }
 
+    @Test("clean syncs save nothing new (3-sync stability)")
+    func cleanSyncsSaveNothingNew() async throws {
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "hello", at: harness.now)
+        let engine = harness.engine()
+        await engine.syncNow()
+        let afterFirst = await harness.db.savedRecords.count
+        #expect(afterFirst > 0) // first sync does real work
+        await engine.syncNow()
+        let afterSecond = await harness.db.savedRecords.count
+        #expect(afterSecond == afterFirst) // converged: nothing new
+        await engine.syncNow()
+        #expect(await harness.db.savedRecords.count == afterSecond)
+        if case .synced(_, let pending) = engine.status {
+            #expect(pending == 0)
+        } else {
+            Issue.record("expected synced status, got \(engine.status)")
+        }
+    }
+
     @Test("equal server content skips the write")
     func equalContentSkipsSave() async throws {
         let harness = try CloudSyncHarness.make()
@@ -326,6 +346,9 @@ struct CloudSyncTests {
         } else {
             Issue.record("expected failed status, got \(engine.status)")
         }
+        // Retrying cannot help a structural failure, so nothing queues —
+        // a poisoned outbox would retry forever and mask recovery.
+        #expect(engine.pendingOutboxCount == 0)
     }
 
     @Test("outage then recovery flushes the outbox")
@@ -367,6 +390,29 @@ struct CloudSyncTests {
     }
 
     // MARK: Privacy
+
+    @Test("every record builder calls validatedFields (removal goes red)")
+    func buildersCallValidatedFields() throws {
+        // Structural companion to `hkShapedFieldsRejected`: the allowlist
+        // only protects records whose builder actually invokes it. A
+        // future builder (or a refactor dropping the call) fails here.
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let payload = thisFile
+            .deletingLastPathComponent() // HealthLoomTests
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("HealthLoomApp/iCloud/CloudSyncPayload.swift")
+        let source = try String(contentsOf: payload, encoding: .utf8)
+        let builders = source.components(separatedBy: "static func record(for ")
+        #expect(builders.count == 4, "expected 3 record builders, found \(builders.count - 1)")
+        for chunk in builders.dropFirst() {
+            let body = chunk.components(separatedBy: "\n    static func ").first ?? chunk
+            let signature = String(chunk.prefix(while: { $0 != "\n" }))
+            #expect(
+                body.contains("validatedFields"),
+                "builder \(signature) does not call validatedFields"
+            )
+        }
+    }
 
     @Test("HealthKit-shaped fields are rejected, never encoded")
     func hkShapedFieldsRejected() {
@@ -413,6 +459,22 @@ struct CloudSyncTests {
         #expect(hits.isEmpty, "HealthKit symbols in iCloud sync sources: \(hits)")
     }
 
+
+    @Test("both container sites opt out of automatic CloudKit (removal goes red)")
+    func containersOptOutOfAutomaticCloudKit() throws {
+        // `.automatic` silently promotes the store to CloudKit sync when
+        // the capability lands (store-breaking AND a scope violation for
+        // HK-sourced entities) — both `ModelConfiguration` sites in
+        // CoreModel.swift must carry `.none`. Count-pinned: deleting one
+        // opt-out must fail here, not in production.
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let coreModel = thisFile
+            .deletingLastPathComponent() // HealthLoomTests
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("Packages/CoreModel/Sources/CoreModel/CoreModel.swift")
+        let source = try String(contentsOf: coreModel, encoding: .utf8)
+        #expect(source.components(separatedBy: "cloudKitDatabase: .none").count - 1 == 2)
+    }
 
     @Test("snapshot round-trips preserve values")
     func snapshotRoundTrips() throws {
