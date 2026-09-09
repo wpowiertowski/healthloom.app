@@ -51,11 +51,8 @@ struct ReadinessAssembleTests {
 
 @Suite("ReadinessScoreHistory")
 struct ReadinessScoreHistoryTests {
-    private func makeDefaults() throws -> UserDefaults {
-        let suiteName = "ReadinessScoreHistoryTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        return defaults
+    private func makeDefaults() throws -> EphemeralDefaults {
+        try EphemeralDefaults(prefix: "readiness")
     }
 
     private func day(_ offset: Int) -> Date {
@@ -63,25 +60,29 @@ struct ReadinessScoreHistoryTests {
     }
 
     @Test func emptyHistoryYieldsNoRecentScores() throws {
-        #expect(ReadinessScoreHistory(defaults: try makeDefaults()).recentScores().isEmpty)
+        let ephemeral1 = try makeDefaults()
+        #expect(ReadinessScoreHistory(defaults: ephemeral1.defaults).recentScores().isEmpty)
     }
 
     @Test func todayIsExcludedFromRecentScores() throws {
-        let history = ReadinessScoreHistory(defaults: try makeDefaults())
+        let ephemeral2 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral2.defaults)
         history.record(score: 80, today: day(-1))
         history.record(score: 90, today: day(0))
         #expect(history.recentScores(today: day(0)) == [80])
     }
 
     @Test func sameDayRecordReplacesInsteadOfDuplicating() throws {
-        let history = ReadinessScoreHistory(defaults: try makeDefaults())
+        let ephemeral3 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral3.defaults)
         history.record(score: 80, today: day(0))
         history.record(score: 82, today: day(0))
         #expect(history.recentScores(today: day(1)) == [82])
     }
 
     @Test func ringCapsAtThirty() throws {
-        let history = ReadinessScoreHistory(defaults: try makeDefaults())
+        let ephemeral4 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral4.defaults)
         for offset in (-40)...(-1) {
             history.record(score: 70, today: day(offset))
         }

@@ -5,8 +5,8 @@
 // targets are pure static functions on `SyncPreferences`
 // (`HealthLoomApp/Settings/SyncPreferences.swift`) -- tested here directly,
 // with no `UserDefaults` involved at all. A second group of tests covers the
-// `UserDefaults`-backed instance API itself, using a throwaway
-// `UserDefaults(suiteName:)` per test so nothing here ever touches
+// `UserDefaults`-backed instance API itself, using a bound
+// `EphemeralDefaults` holder per test so nothing here ever touches
 // `UserDefaults.standard` (the real app's defaults).
 
 import Testing
@@ -97,19 +97,21 @@ struct SyncPreferencesPureFunctionTests {
 @Suite("SyncPreferences - instance / UserDefaults persistence")
 @MainActor
 struct SyncPreferencesInstanceTests {
-    /// Every test builds its own throwaway `UserDefaults(suiteName:)` and
-    /// tears it down before returning -- a struct suite (no `init`/`deinit`
-    /// lifecycle assumptions) so cleanup ordering is explicit and never
-    /// depends on when Swift deallocates a class instance.
-    private func makeEphemeralDefaults() -> (defaults: UserDefaults, cleanup: () -> Void) {
-        let suiteName = "com.healthloom.tests.syncPreferences.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        return (defaults, { defaults.removePersistentDomain(forName: suiteName) })
+    /// Every test binds its own `EphemeralDefaults` holder (pre-cleaned
+    /// suite, post-cleaned at deinit, janitor-backed at exit) — uniform
+    /// with every other suite site (round-2 item 14).
+    // Round-2 item 14: uniform ownership — the holder IS the cleanup
+    // (pre-clean at init, post-clean at deinit, janitor at exit). The old
+    // tuple-with-closure said "cleanup ordering is explicit"; the
+    // explicitness that matters is the BINDING (holder alive for the
+    // whole test), which `let ephemeral` gives.
+    private func makeEphemeralDefaults() throws -> EphemeralDefaults {
+        try EphemeralDefaults(prefix: "syncpreferences")
     }
 
     @Test func freshInstanceHasEveryTypeEnabled() async throws {
-        let (defaults, cleanup) = makeEphemeralDefaults()
-        defer { cleanup() }
+        let ephemeral = try makeEphemeralDefaults()
+        let defaults = ephemeral.defaults
         let preferences = SyncPreferences(defaults: defaults)
 
         for type in SyncPreferences.syncableTypes {
@@ -119,8 +121,8 @@ struct SyncPreferencesInstanceTests {
     }
 
     @Test func disablingATypePersistsAndIsReflectedByIsEnabled() async throws {
-        let (defaults, cleanup) = makeEphemeralDefaults()
-        defer { cleanup() }
+        let ephemeral = try makeEphemeralDefaults()
+        let defaults = ephemeral.defaults
         let preferences = SyncPreferences(defaults: defaults)
 
         preferences.setEnabled(false, for: .weight)
@@ -131,8 +133,8 @@ struct SyncPreferencesInstanceTests {
     }
 
     @Test func disabledStatePersistsAcrossInstancesOverTheSameDefaults() async throws {
-        let (defaults, cleanup) = makeEphemeralDefaults()
-        defer { cleanup() }
+        let ephemeral = try makeEphemeralDefaults()
+        let defaults = ephemeral.defaults
         let first = SyncPreferences(defaults: defaults)
         first.setEnabled(false, for: .sleep)
 
@@ -142,8 +144,8 @@ struct SyncPreferencesInstanceTests {
     }
 
     @Test func reEnablingRemovesFromDisabledSet() async throws {
-        let (defaults, cleanup) = makeEphemeralDefaults()
-        defer { cleanup() }
+        let ephemeral = try makeEphemeralDefaults()
+        let defaults = ephemeral.defaults
         let preferences = SyncPreferences(defaults: defaults)
         preferences.setEnabled(false, for: .heartRate)
         #expect(!preferences.isEnabled(.heartRate))
@@ -155,8 +157,8 @@ struct SyncPreferencesInstanceTests {
     }
 
     @Test func filteredForSyncConsultsCurrentDisabledSet() async throws {
-        let (defaults, cleanup) = makeEphemeralDefaults()
-        defer { cleanup() }
+        let ephemeral = try makeEphemeralDefaults()
+        let defaults = ephemeral.defaults
         let preferences = SyncPreferences(defaults: defaults)
         preferences.setEnabled(false, for: .weight)
 
@@ -166,8 +168,8 @@ struct SyncPreferencesInstanceTests {
     }
 
     @Test func requiredScopesToEnableReturnsTheTypesOwnScope() async throws {
-        let (defaults, cleanup) = makeEphemeralDefaults()
-        defer { cleanup() }
+        let ephemeral = try makeEphemeralDefaults()
+        let defaults = ephemeral.defaults
         let preferences = SyncPreferences(defaults: defaults)
 
         #expect(preferences.requiredScopes(toEnable: .sleep) == [.sleep])
@@ -175,12 +177,10 @@ struct SyncPreferencesInstanceTests {
     }
 
     @Test func separateInstancesOverDifferentDefaultsDoNotInterfere() async throws {
-        let (defaultsA, cleanupA) = makeEphemeralDefaults()
-        let (defaultsB, cleanupB) = makeEphemeralDefaults()
-        defer {
-            cleanupA()
-            cleanupB()
-        }
+        let ephemeralA = try makeEphemeralDefaults()
+        let ephemeralB = try makeEphemeralDefaults()
+        let defaultsA = ephemeralA.defaults
+        let defaultsB = ephemeralB.defaults
 
         let a = SyncPreferences(defaults: defaultsA)
         let b = SyncPreferences(defaults: defaultsB)

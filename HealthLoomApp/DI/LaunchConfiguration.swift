@@ -160,6 +160,13 @@ struct LaunchConfiguration: Sendable {
     /// starts the stub `.denied` for the guidance path.
     var stubNotifications: Bool
     var denyNotifications: Bool
+    /// Round-2 item 7: `-UITestTipsStub=empty|failed` short-circuits the
+    /// tip catalogue fetch (one-shot — Retry exercises the real path)
+    /// so the settled UI states are deterministic without a StoreKit
+    /// session. Unknown values fall back to `.emptyProducts` (same rule
+    /// as `aiModelsScenario`: a typo still exercises a deterministic
+    /// path, never the live-wiring one).
+    var tipsStub: TipUITestStub?
 
     static var current: LaunchConfiguration {
         Self.resolve(arguments: ProcessInfo.processInfo.arguments)
@@ -207,8 +214,22 @@ struct LaunchConfiguration: Sendable {
             seedYouTab: seedYouTab,
             isUITest: arguments.contains(where: { $0.hasPrefix("-UITest") }),
             stubNotifications: arguments.contains("-UITestStubNotifications"),
-            denyNotifications: arguments.contains("-UITestNotificationsDenied")
+            denyNotifications: arguments.contains("-UITestNotificationsDenied"),
+            tipsStub: Self.tipsStub(from: arguments)
         )
+    }
+
+    /// `-UITestTipsStub=empty|failed` (round-2 item 7). Absent = no
+    /// stub (real fetch); unknown value = `.emptyProducts`.
+    static func tipsStub(from arguments: [String]) -> TipUITestStub? {
+        let prefix = "-UITestTipsStub"
+        guard let flag = arguments.first(where: { $0.hasPrefix(prefix + "=") }) else {
+            return nil
+        }
+        switch String(flag.dropFirst(prefix.count + 1)) {
+        case "failed": return .failed
+        default: return .emptyProducts
+        }
     }
 
     /// `-UITestAIModels` (bare = `.clean`) or `-UITestAIModels=<scenario>`.

@@ -25,7 +25,8 @@ struct InsightPreferencesInitTests {
     // lastRun whenever insights were enabled. Init must be read-only.
     @Test("init from populated defaults preserves every field")
     func initPreservesAllFields() throws {
-        let defaults = try #require(UserDefaults(suiteName: "prefs-init-\(UUID().uuidString)"))
+        let ephemeralInit = try EphemeralDefaults(prefix: "morninginsight-init")
+        let defaults = ephemeralInit.defaults
         let stamp = Date(timeIntervalSince1970: 1_800_000_000)
         let first = InsightPreferences(defaults: defaults)
         first.morningInsightsEnabled = true
@@ -208,11 +209,8 @@ private actor TierScript {
 @Suite("MorningInsightRunner")
 @MainActor
 struct MorningInsightRunnerTests {
-    static func makeDefaults() throws -> UserDefaults {
-        let name = "MorningInsightTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defaults.removePersistentDomain(forName: name)
-        return defaults
+    static func makeDefaults() throws -> EphemeralDefaults {
+        try EphemeralDefaults(prefix: "morninginsight")
     }
 
     static func at(_ string: String) -> Date? {
@@ -298,7 +296,8 @@ struct MorningInsightRunnerTests {
 
     @Test("full run persists, notifies redacted, and records") func fullRun() async throws {
         let container = try CoreModel.makeContainer(inMemory: true)
-        let defaults = try Self.makeDefaults()
+        let ephemeral1 = try Self.makeDefaults()
+        let defaults = ephemeral1.defaults
         let now = try #require(Self.at("2026-09-08 08:00"))
         let notifier = StubInsightNotifier(status: .authorized)
         try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
@@ -327,15 +326,17 @@ struct MorningInsightRunnerTests {
         let now = try #require(Self.at("2026-09-08 08:00"))
 
         // Disabled.
+        let ephemeral2 = try Self.makeDefaults()
         let (offRunner, _) = makeRunner(
-            container: container, defaults: try Self.makeDefaults(), enabled: false,
+            container: container, defaults: ephemeral2.defaults, enabled: false,
             notifier: StubInsightNotifier(status: .authorized),
             inputs: Self.signalInputs(), now: now
         )
         #expect(await offRunner.runIfDue() == .skipped(.disabled))
 
         // Not due (ran today).
-        let doneDefaults = try Self.makeDefaults()
+        let ephemeral3 = try Self.makeDefaults()
+        let doneDefaults = ephemeral3.defaults
         let (doneRunner, donePrefs) = makeRunner(
             container: container, defaults: doneDefaults, enabled: true,
             notifier: StubInsightNotifier(status: .authorized),
@@ -345,8 +346,9 @@ struct MorningInsightRunnerTests {
         #expect(await doneRunner.runIfDue() == .skipped(.notDue))
 
         // No fresh sync.
+        let ephemeral4 = try Self.makeDefaults()
         let (staleRunner, _) = makeRunner(
-            container: container, defaults: try Self.makeDefaults(), enabled: true,
+            container: container, defaults: ephemeral4.defaults, enabled: true,
             notifier: StubInsightNotifier(status: .authorized),
             inputs: Self.signalInputs(), now: now
         )
@@ -356,8 +358,9 @@ struct MorningInsightRunnerTests {
         try seedSync(container: container, at: syncDate)
 
         // No tier.
+        let ephemeral5 = try Self.makeDefaults()
         let (noTierRunner, _) = makeRunner(
-            container: container, defaults: try Self.makeDefaults(), enabled: true,
+            container: container, defaults: ephemeral5.defaults, enabled: true,
             notifier: StubInsightNotifier(status: .authorized),
             tier: TierScript([nil]),
             inputs: Self.signalInputs(), now: now
@@ -365,16 +368,18 @@ struct MorningInsightRunnerTests {
         #expect(await noTierRunner.runIfDue() == .skipped(.noTier))
 
         // Unauthorized (never requests inside the runner).
+        let ephemeral6 = try Self.makeDefaults()
         let (deniedRunner, _) = makeRunner(
-            container: container, defaults: try Self.makeDefaults(), enabled: true,
+            container: container, defaults: ephemeral6.defaults, enabled: true,
             notifier: StubInsightNotifier(status: .denied),
             inputs: Self.signalInputs(), now: now
         )
         #expect(await deniedRunner.runIfDue() == .skipped(.unauthorized))
 
         // No signals.
+        let ephemeral7 = try Self.makeDefaults()
         let (emptyRunner, _) = makeRunner(
-            container: container, defaults: try Self.makeDefaults(), enabled: true,
+            container: container, defaults: ephemeral7.defaults, enabled: true,
             notifier: StubInsightNotifier(status: .authorized), now: now
         )
         #expect(await emptyRunner.runIfDue() == .skipped(.noSignals))
@@ -386,7 +391,8 @@ struct MorningInsightRunnerTests {
         // visible to the other after the runner's reload.
         let container = try CoreModel.makeContainer(inMemory: true)
         try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
-        let defaults = try Self.makeDefaults()
+        let ephemeral8 = try Self.makeDefaults()
+        let defaults = ephemeral8.defaults
         let now = try #require(Self.at("2026-09-08 08:00"))
         let settingsCopy = makePrefs(in: defaults, enabled: false)
         let (runner, runnerCopy) = makeRunner(
@@ -404,7 +410,8 @@ struct MorningInsightRunnerTests {
     @Test("tier flip mid-flight aborts") func toctou() async throws {
         let container = try CoreModel.makeContainer(inMemory: true)
         try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
-        let defaults = try Self.makeDefaults()
+        let ephemeral9 = try Self.makeDefaults()
+        let defaults = ephemeral9.defaults
         let now = try #require(Self.at("2026-09-08 08:00"))
         let (runner, prefs) = makeRunner(
             container: container, defaults: defaults, enabled: true,
@@ -420,7 +427,8 @@ struct MorningInsightRunnerTests {
         struct NotifyBoom: Error {}
         let container = try CoreModel.makeContainer(inMemory: true)
         try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
-        let defaults = try Self.makeDefaults()
+        let ephemeral10 = try Self.makeDefaults()
+        let defaults = ephemeral10.defaults
         let now = try #require(Self.at("2026-09-08 08:00"))
         let notifier = StubInsightNotifier(status: .authorized)
         notifier.scheduleError = NotifyBoom()
@@ -446,7 +454,8 @@ struct MorningInsightRunnerTests {
     @Test("generation failure records nothing") func failure() async throws {
         let container = try CoreModel.makeContainer(inMemory: true)
         try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
-        let defaults = try Self.makeDefaults()
+        let ephemeral11 = try Self.makeDefaults()
+        let defaults = ephemeral11.defaults
         let now = try #require(Self.at("2026-09-08 08:00"))
         let factory = CoachSessionFactory(build: { _, _, _ in ThrowingSession() })
         let (runner, prefs) = makeRunner(

@@ -81,19 +81,25 @@ struct HealthLoomApp: App {
                 .environment(appEnvironment)
                 .modelContainer(appEnvironment.modelContainer)
         }
-        // Single scenePhase dispatcher (was three modifiers — third-party
-        // item 14). `initial: true` covers launch; the inactive attach
-        // fires nothing (guard). Arms: WP-34's morning-insight trigger
-        // (own once-daily gate; the BG path below shares the entry so a
-        // double-generate is impossible), the tip listener (no-op
-        // re-entry; idles without transactions, so no UITest gate), and
-        // iCloud sync (UITest-gated here — hermetic launches must never
-        // reach CloudKit; the engine degrades to silent local-only).
-        .onChange(of: scenePhase, initial: true) { _, phase in
+        // Two dispatchers, deliberately (round-2 item 13 overrode the
+        // round-1 merge): the WP-34 insight arm is TRANSITIONS-ONLY (no
+        // `initial:`) — its pre-merge semantics. Firing `runIfDue` on
+        // cold-launch attach would spend MainActor + HealthKit read time
+        // inside launch; background/foreground transitions are the
+        // trigger this arm was built for (the BG-sync completion path
+        // below shares the entry, so a double-generate is impossible).
+        // The tip listener + iCloud sync arm keeps `initial: true`
+        // (launch coverage; the tip `begin()` re-entry is a no-op and
+        // the sync arm stays UITest-gated — hermetic launches must never
+        // reach CloudKit).
+        .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task {
                 await InsightRunnerHost.runIfDue()
             }
+        }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active else { return }
             Task {
                 await appEnvironment.tipStore.begin()
             }

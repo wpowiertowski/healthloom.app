@@ -18,22 +18,21 @@ import Testing
 
 @Suite("TodayMetricPreferences")
 struct TodayMetricPreferencesTests {
-    private func makeDefaults() throws -> UserDefaults {
-        let suiteName = "TodayMetricPreferencesTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        return defaults
+    private func makeDefaults() throws -> EphemeralDefaults {
+        try EphemeralDefaults(prefix: "todaymetrics")
     }
 
     @Test func freshDefaultsShowTheMockupsDefaultFour() throws {
-        let preferences = TodayMetricPreferences(defaults: try makeDefaults())
+        let ephemeral1 = try makeDefaults()
+        let preferences = TodayMetricPreferences(defaults: ephemeral1.defaults)
         #expect(preferences.visibleKinds == [.heart, .steps, .sleep, .bloodOxygen])
         #expect(preferences.hiddenKinds == [.weight, .distance, .activeEnergy])
     }
 
 
     @Test func hideAndShowPersistAndAppendAtTheEnd() throws {
-        let defaults = try makeDefaults()
+        let ephemeral2 = try makeDefaults()
+        let defaults = ephemeral2.defaults
         let preferences = TodayMetricPreferences(defaults: defaults)
 
         preferences.hide(.sleep)
@@ -99,7 +98,8 @@ struct TodayMetricPreferencesTests {
     @Test func reorderDifferencePersists() throws {
         // WP-33's "reorder persistence" requirement, via the live path:
         // a fresh instance reads the reordered order back.
-        let defaults = try makeDefaults()
+        let ephemeral3 = try makeDefaults()
+        let defaults = ephemeral3.defaults
         let preferences = TodayMetricPreferences(defaults: defaults)
         preferences.reorder(sources: [.bloodOxygen], destination: .before(.heart))
         #expect(preferences.visibleKinds.first == .bloodOxygen)

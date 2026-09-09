@@ -228,11 +228,32 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.tips.thanks")
                     ThemedRowDivider()
                 }
-                // Three fetch states (third-party item 3): spinner until
-                // the first fetch settles (idle AND loading — an empty
-                // list pre-fetch is not yet "coming soon"), tiers when
-                // loaded, coming-soon when settled-empty.
-                if !appEnvironment.tipStore.hasAttemptedLoad || appEnvironment.tipStore.isLoading {
+                // Load states (round-2 item 12 enum): spinner while idle
+                // or loading (an empty list pre-fetch is not yet
+                // "coming soon"), tiers or coming-soon when loaded,
+                // error + retry when failed.
+                if appEnvironment.tipStore.loadState == .failed {
+                    Text("Couldn't load tips — check your connection and try again.")
+                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .foregroundStyle(Theme.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 13)
+                        .accessibilityIdentifier("settings.tips.loadError")
+                    ThemedRowDivider()
+                    Button {
+                        Task {
+                            await appEnvironment.tipStore.loadProducts()
+                        }
+                    } label: {
+                        Text("Retry")
+                            .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                            .foregroundStyle(Theme.ink)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.vertical, 13)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("settings.tips.retry")
+                } else if appEnvironment.tipStore.loadState != .loaded {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
@@ -301,11 +322,13 @@ struct SettingsView: View {
                 }
             }
             .padding(.top, 20)
-            // Hermetic UI tests never fetch products (third-party item 7
-            // — same policy as the CloudKit gate): the section settles
-            // into coming-soon deterministically.
+            // Hermetic UI tests never hit StoreKit (round-1 item 7
+            // stands) — UNLESS an explicit tips stub is requested, which
+            // short-circuits inside the store without touching the
+            // network (round-2 item 7).
             .task {
-                if !appEnvironment.launchConfiguration.isUITest {
+                let config = appEnvironment.launchConfiguration
+                if config.tipsStub != nil || !config.isUITest {
                     await appEnvironment.tipStore.loadProducts()
                 }
             }

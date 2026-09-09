@@ -44,9 +44,12 @@ struct TierSwitcherTests {
         // identity. A non-nil mapping builds tier-tagged doubles, proving
         // which model served, not just which slot was picked.
         chunks: ((ModelTier) -> [String])? = nil
-    ) throws -> (CoachChatViewModel, TierSettingsStore, CloudGateCache) {
+    ) throws -> (CoachChatViewModel, TierSettingsStore, CloudGateCache, EphemeralDefaults) {
         let container = try CoreModel.makeContainer(inMemory: true)
-        let settings = TierSettingsStore(defaults: UserDefaults(suiteName: "test.\(UUID().uuidString)")!)
+        // Round-2 item 14: the holder escapes in the tuple so the suite
+        // lives as long as the test's bindings do (janitor-backed too).
+        let ephemeral = try EphemeralDefaults(prefix: "tierswitcher")
+        let settings = TierSettingsStore(defaults: ephemeral.defaults)
         let gates = CloudGateCache()
         let catalog = ModelCatalog(
             onDeviceAvailable: { true },
@@ -78,7 +81,7 @@ struct TierSwitcherTests {
             tierSettings: settings,
             tierCatalog: catalog
         ))
-        return (viewModel, settings, gates)
+        return (viewModel, settings, gates, ephemeral)
     }
 
     /// Enables a tier the way production does: consent + key presence in
@@ -106,7 +109,8 @@ struct TierSwitcherTests {
 
     @Test("the menu offers enabled tiers only, in ladder order")
     func menuOffersOnlyEnabledTiers() throws {
-        let (viewModel, settings, gates) = try makeViewModel()
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel()
+        defer { withExtendedLifetime(ephemeral) {} }
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.enabledTiers == [.onDevice, .privateCloudCompute])
         #expect(viewModel.enabledTierNames == "On-device · Apple cloud (PCC)")
@@ -114,7 +118,8 @@ struct TierSwitcherTests {
 
     @Test("selecting a non-enabled tier fails and keeps the selection")
     func selectBlockedTierFails() throws {
-        let (viewModel, settings, gates) = try makeViewModel()
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel()
+        defer { withExtendedLifetime(ephemeral) {} }
         // Claude: live but neither consented nor keyed.
         #expect(viewModel.selectTier(.claude) == false)
         #expect(viewModel.selectedTier == .onDevice)
@@ -130,7 +135,8 @@ struct TierSwitcherTests {
 
     @Test("send on a tier disabled since selection is blocked at dispatch")
     func sendBlockedOnDisabledTier() throws {
-        let (viewModel, settings, gates) = try makeViewModel()
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel()
+        defer { withExtendedLifetime(ephemeral) {} }
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         settings.withdrawConsent(for: .privateCloudCompute)
@@ -142,7 +148,8 @@ struct TierSwitcherTests {
 
     @Test("replies are stamped with the serving tier")
     func providerStampsServingTier() async throws {
-        let (viewModel, settings, gates) = try makeViewModel()
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel()
+        defer { withExtendedLifetime(ephemeral) {} }
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         #expect(viewModel.send("hi") == true)
@@ -153,7 +160,8 @@ struct TierSwitcherTests {
 
     @Test("the transcript survives switches with per-turn stamps")
     func transcriptPreservedAcrossSwitches() async throws {
-        let (viewModel, settings, gates) = try makeViewModel()
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel()
+        defer { withExtendedLifetime(ephemeral) {} }
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.send("one") == true)
         try await waitForIdle(viewModel)
@@ -168,7 +176,8 @@ struct TierSwitcherTests {
     @Test("the safety suffix is re-applied across a switch sequence")
     func suffixSurvivesSwitches() async throws {
         let log = InstructionLog()
-        let (viewModel, settings, gates) = try makeViewModel(log: log)
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel(log: log)
+        defer { withExtendedLifetime(ephemeral) {} }
         enable(.privateCloudCompute, settings: settings, gates: gates)
         enable(.claude, settings: settings, gates: gates)
         let enabled = viewModel.enabledTiers
@@ -200,7 +209,8 @@ struct TierSwitcherTests {
 
     @Test("replies come from the selected tier's model (F1 identity)")
     func routesToTierModel() async throws {
-        let (viewModel, settings, gates) = try makeViewModel(chunks: { ["<\($0.rawValue)>"] })
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel(chunks: { ["<\($0.rawValue)>"] })
+        defer { withExtendedLifetime(ephemeral) {} }
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         #expect(viewModel.send("hi") == true)
@@ -220,7 +230,8 @@ struct TierSwitcherTests {
         // no model. PCC live + consented + keyed + toggled, so both guards
         // pass and the fail-closed arm is what answers.
         let container = try CoreModel.makeContainer(inMemory: true)
-        let settings = TierSettingsStore(defaults: UserDefaults(suiteName: "test.\(UUID().uuidString)")!)
+        let ephemeral = try EphemeralDefaults(prefix: "tierswitcher")
+        let settings = TierSettingsStore(defaults: ephemeral.defaults)
         let gates = CloudGateCache()
         let catalog = ModelCatalog(
             onDeviceAvailable: { true },
@@ -258,7 +269,8 @@ struct TierSwitcherTests {
 
     @Test("onAppear clamps a selection disabled while chat was away")
     func onAppearClampsStaleSelection() throws {
-        let (viewModel, settings, gates) = try makeViewModel()
+        let (viewModel, settings, gates, ephemeral) = try makeViewModel()
+        defer { withExtendedLifetime(ephemeral) {} }
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         settings.withdrawConsent(for: .privateCloudCompute)
