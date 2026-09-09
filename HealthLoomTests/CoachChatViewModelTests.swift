@@ -22,8 +22,9 @@ import Testing
 private struct WaitTimeout: Error {}
 
 /// Structural fixture (round-3 item 12): owns the view model
-/// AND its ephemeral suite. Call sites project `.viewModel` off a
-/// temporary — one token per site, bodies untouched, no defers.
+/// AND its ephemeral suite. Call sites bind the FIXTURE (round-4 item
+/// 6 — never a projection off a temporary) and read `.viewModel` off
+/// the binding — bodies otherwise untouched, no defers.
 @MainActor
 final class CoachChatFixture {
     let viewModel: CoachChatViewModel
@@ -74,7 +75,8 @@ struct CoachChatViewModelTests {
     @Test("onAppear prewarms the session for first-token latency")
     func onAppearPrewarms() async throws {
         let probe = PrewarmProbeSession()
-        let viewModel = try makeCoachViewModel(session: probe).viewModel
+        let coachFixture = try makeCoachViewModel(session: probe)
+        let viewModel = coachFixture.viewModel
         viewModel.onAppear()
         // The warm-up Task races the assertion; poll, don't assume.
         try await waitForCondition({ probe.prewarmCount > 0 })
@@ -83,7 +85,8 @@ struct CoachChatViewModelTests {
 
     @Test("send streams the reply and links its context snapshot")
     func sendStreamsAndLinks() async throws {
-        let viewModel = try makeCoachViewModel(session: TestCoachSession()).viewModel
+        let coachFixture = try makeCoachViewModel(session: TestCoachSession())
+        let viewModel = coachFixture.viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.turns.count == 2)
@@ -108,10 +111,11 @@ struct CoachChatViewModelTests {
             ))
         }
         try context.save()
-        let viewModel = try makeCoachViewModel(
+        let coachFixture = try makeCoachViewModel(
             session: TestCoachSession(),
             container: container
-        ).viewModel
+        )
+        let viewModel = coachFixture.viewModel
         viewModel.onAppear()
         #expect(viewModel.turns.count == CoachChatViewModel.maxLoadedTurns)
         #expect(viewModel.turns.first?.content == "turn 5")
@@ -120,7 +124,8 @@ struct CoachChatViewModelTests {
 
     @Test("stopping before the first token persists no empty turn")
     func stopBeforeFirstToken() async throws {
-        let viewModel = try makeCoachViewModel(session: TestCoachSession(suspendForever: true)).viewModel
+        let coachFixture = try makeCoachViewModel(session: TestCoachSession(suspendForever: true))
+        let viewModel = coachFixture.viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ viewModel.isResponding })
         viewModel.stop()
@@ -132,10 +137,11 @@ struct CoachChatViewModelTests {
 
     @Test("mid-stream error persists the visible partial and reports")
     func midStreamError() async throws {
-        let viewModel = try makeCoachViewModel(session: TestCoachSession(
+        let coachFixture = try makeCoachViewModel(session: TestCoachSession(
             chunks: ["part ", "rest."],
             failAfterChunks: 1
-        )).viewModel
+        ))
+        let viewModel = coachFixture.viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.turns.count == 2)
@@ -145,10 +151,11 @@ struct CoachChatViewModelTests {
 
     @Test("stop truncates the stream to a non-empty partial")
     func stopTruncates() async throws {
-        let viewModel = try makeCoachViewModel(session: TestCoachSession(
+        let coachFixture = try makeCoachViewModel(session: TestCoachSession(
             chunks: ["one ", "two ", "three ", "four."],
             chunkDelay: .milliseconds(200)
-        )).viewModel
+        ))
+        let viewModel = coachFixture.viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.draft.isEmpty })
         viewModel.stop()
@@ -165,7 +172,8 @@ struct CoachChatViewModelTests {
         // Third-party F15: the .modelNotReady leg lived here AND in the
         // gate loop below — it belongs to the loop (allCases covers it),
         // so this test keeps only the blank-input case it owns.
-        let viewModel = try makeCoachViewModel(session: TestCoachSession()).viewModel
+        let coachFixture = try makeCoachViewModel(session: TestCoachSession())
+        let viewModel = coachFixture.viewModel
         #expect(viewModel.send("   ") == false)
         #expect(viewModel.turns.isEmpty)
     }
@@ -179,7 +187,8 @@ struct CoachChatViewModelTests {
     @Test("coach leg: every non-available gate blocks sends with no turns")
     func unavailableGatesBlockCoachSends() async throws {
         for availability in CoachAvailability.allCases.filter({ $0 != .available }) {
-            let viewModel = try makeCoachViewModel(session: TestCoachSession(), availability: availability).viewModel
+            let coachFixture = try makeCoachViewModel(session: TestCoachSession(), availability: availability)
+            let viewModel = coachFixture.viewModel
                 viewModel.onAppear()
             try await waitForCondition({ viewModel.availability != .available }, timeout: 2)
             #expect(viewModel.send("hi") == false, "gate \(availability) let a send through")
@@ -196,9 +205,10 @@ struct CoachRoundTwoTests {
         // Round-3 item 12: routed through the helper (constant session
         // per build ≡ the old constant factory) — the inline
         // construction and its holder are gone.
-        let viewModel = try makeCoachViewModel(
+        let coachFixture = try makeCoachViewModel(
             session: TestCoachSession(chunks: ["one ", "two ", "three."], chunkDelay: .milliseconds(200))
-        ).viewModel
+        )
+        let viewModel = coachFixture.viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ viewModel.isResponding })
         // The view unmounts and remounts; the view model (and its stream)
@@ -217,11 +227,12 @@ struct CoachRoundTwoTests {
         // while the live gate reports `.modelNotReady`.
         // Round-3 item 12: routed through the helper — see above.
         let container = try CoreModel.makeContainer(inMemory: true)
-        let viewModel = try makeCoachViewModel(
+        let coachFixture = try makeCoachViewModel(
             session: TestCoachSession(),
             availability: .modelNotReady,
             container: container
-        ).viewModel
+        )
+        let viewModel = coachFixture.viewModel
         #expect(viewModel.send("hi") == true)
         try await waitForCondition({ !viewModel.isResponding })
         #expect(viewModel.errorMessage?.contains("isn't available") == true)
@@ -304,6 +315,14 @@ struct CoachRoundTwoTests {
         #expect(config.tipsStub == [.emptyProducts])
         config = LaunchConfiguration.resolve(arguments: ["-UITestTipsStub=failed,empty"])
         #expect(config.tipsStub == [.failed, .emptyProducts])
+        #expect(config.useInMemoryContainer == true)
+        // Round-4 item 13: typo'd kin still stub (never strand on the
+        // live fetch) — values parse uniformly off the matched name.
+        config = LaunchConfiguration.resolve(arguments: ["-UITestTipStub=failed"])
+        #expect(config.tipsStub == [.failed])
+        #expect(config.useInMemoryContainer == true)
+        config = LaunchConfiguration.resolve(arguments: ["-UITestTipStub"])
+        #expect(config.tipsStub == [.emptyProducts])
         #expect(config.useInMemoryContainer == true)
     }
 }

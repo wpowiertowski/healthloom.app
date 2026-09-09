@@ -81,6 +81,16 @@ struct CloudSyncHarness {
 
     // The ephemeral holder rides in the harness (struct field keeps it
     // alive for the test's duration; deinit removes the domain after).
+    // Round-4 item 4 audit, stated exactly: EVERY test below reads
+    // defaults through `harness.` at-or-after its last use of the
+    // holder (verified mechanically — no test projects a bare
+    // `defaults` local past its last `harness.` touch), and `let
+    // harness` lives through its last textual use, so the domain
+    // cannot drop before the final assertion. The rule for future
+    // edits: never read defaults past the last `harness.` touch —
+    // that shape (not today's code) is what would go vacuous, and
+    // `pullAssertionsAreWipeSensitive` proves the assertions would
+    // catch it.
     let ephemeral: EphemeralDefaults
     var defaults: UserDefaults { ephemeral.defaults }
 
@@ -218,6 +228,69 @@ struct CloudSyncTests {
         await harness.engine().syncNow()
         // Local edit survives; the future-schema record was not applied.
         #expect(!SyncPreferences(defaults: harness.defaults).isEnabled(.steps))
+    }
+
+    // MARK: Lifetime + scan-infra proofs (round-4 items 1, 4, 12)
+
+    @Test("holder death removes the domain (post-clean is real)")
+    func holderDeathRemovesDomain() async throws {
+        // Round-4 item 4: pins the POST-CLEAN behavior the whole
+        // ephemeral scheme relies on — and the teeth behind the
+        // non-vacuity proof below. (Proven by probe before committing:
+        // the wipe shows through retained AND fresh instances alike,
+        // so no stale cache can hide an early death.)
+        let name: String
+        do {
+            let holder = try EphemeralDefaults(prefix: "lifetimes")
+            name = holder.suiteName
+            holder.defaults.set(true, forKey: "lifetimes.key")
+            #expect(holder.defaults.bool(forKey: "lifetimes.key") == true)
+        }
+        #expect(UserDefaults(suiteName: name)?.bool(forKey: "lifetimes.key") == false)
+    }
+
+    @Test("named pull assertions are wipe-sensitive (non-vacuous)")
+    func pullAssertionsAreWipeSensitive() async throws {
+        // Round-4 item 4: the UNDERLYING reads behind
+        // `serverNewerApplies`' / `newerSchemaSkipped`'s final
+        // assertions, measured against a SIMULATED early-deinit wipe
+        // (fresh-instance `removePersistentDomain` — exactly what
+        // `EphemeralDefaults.deinit` does). Post-wipe they read
+        // steps=true, weight=true, preferWatch=false: weight and
+        // preferWatch CONTRADICT the real tests' expectations (both
+        // would go red), while steps coincides (wipe-insensitive
+        // alone — covered by the conjunction: all three must hold,
+        // and a wipe breaks two). So the named tests test something:
+        // a vacuous pass is impossible, not merely absent.
+        let harness = try CloudSyncHarness.make()
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .weight)
+        harness.defaults.set(true, forKey: "com.healthloom.settings.preferAppleWatchDuringWorkouts")
+        // The feared shape, simulated: holder dies here.
+        UserDefaults(suiteName: harness.ephemeral.suiteName)?
+            .removePersistentDomain(forName: harness.ephemeral.suiteName)
+        #expect(SyncPreferences(defaults: harness.defaults).isEnabled(.steps) == true)
+        #expect(SyncPreferences(defaults: harness.defaults).isEnabled(.weight) == true)
+        #expect(harness.defaults.bool(forKey: "com.healthloom.settings.preferAppleWatchDuringWorkouts") == false)
+    }
+
+    @Test("missing scan root fails loudly, not green")
+    func missingScanRootThrows() throws {
+        // Round-4 item 1: a renamed root must FAIL, never pass over
+        // zero files. (The enumerator-alone returns non-nil-empty for
+        // a missing dir — the existence pre-check restores fail-loud.)
+        #expect(throws: SourceScanError.missingDirectory("HealthLoomApp/NoSuchDir-round4")) {
+            try scanSources(in: "HealthLoomApp/NoSuchDir-round4")
+        }
+    }
+
+    @Test("scan reports paths relative to the root")
+    func scanReportsRelativePaths() throws {
+        // Round-4 item 12: the nested fixture must report as
+        // `Nested/Probe.swift` — relative, so subdir hits stay
+        // distinguishable — never the bare `Probe.swift`.
+        let files = try scanSources(in: "HealthLoomTests/__ScanFixture__").map(\.file)
+        #expect(files == [ScanFixtureProbe.relativePath])
     }
 
     @Test("server-newer prefs apply; equal prefs skip the write")
@@ -485,3 +558,4 @@ final class LockedBox: Sendable {
     nonisolated(unsafe) var value: Bool
     init(_ value: Bool) { self.value = value }
 }
+

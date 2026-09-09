@@ -163,10 +163,12 @@ struct LaunchConfiguration: Sendable {
     /// Round-2 item 7 + fix-round F1: `-UITestTipsStub=empty|failed` (or
     /// a comma-separated sequence like `failed,empty`) short-circuits
     /// the tip catalogue fetch — consumed FIFO, so Retry settles inside
-    /// the stub sequence without ever touching the network. Unknown
-    /// values fall back to `.emptyProducts` (same rule as
-    /// `aiModelsScenario`: a typo still exercises a deterministic path,
-    /// never the live-wiring one). Empty = no stub (real fetch).
+    /// the stub sequence without ever touching the network. The bare
+    /// `-UITestTipsStub` form (no `=`) takes the default stub, and any
+    /// `-UITestTip*` typo'd kin still stubs (round-4 item 13 — never
+    /// the live-wiring path). Unknown values fall back to
+    /// `.emptyProducts` (same rule as `aiModelsScenario`). Empty = no
+    /// stub (real fetch).
     var tipsStub: [TipUITestStub]
 
     static var current: LaunchConfiguration {
@@ -231,15 +233,20 @@ struct LaunchConfiguration: Sendable {
     /// F1). Absent = no stub (real fetch); unknown token =
     /// `.emptyProducts`; bare `=` keeps the old single-empty behavior.
     static func tipsStub(from arguments: [String]) -> [TipUITestStub] {
-        // Round-3 item 4: the bare form (no `=`) mirrors
-        // `aiModelsScenario(from:)` — bare means the default stub, so a
-        // typo'd-or-bare flag still exercises a deterministic path
-        // instead of stranding the section on a permanent spinner.
-        let prefix = "-UITestTipsStub"
-        guard let flag = arguments.first(where: { $0 == prefix || $0.hasPrefix(prefix + "=") }) else {
+        // Round-4 item 13: intent is ANY `-UITestTip*` flag — the
+        // canonical `-UITestTipsStub` plus typo'd kin (e.g.
+        // `-UITestTipStub=failed`, which the old exact/prefix match
+        // silently ignored: `tipsStub == []` with `isUITest == true`,
+        // stranding the section on the live fetch + spinner). A
+        // misspelled flag still stubs instead of stranding — the value
+        // after `=` parses uniformly off WHATEVER name matched, so
+        // intent without precision still settles deterministically;
+        // `=`-less forms take the bare default. (No existing flag
+        // starts `-UITestTip` except this family; future ones join it.)
+        guard let flag = arguments.first(where: { $0.hasPrefix("-UITestTip") }) else {
             return []
         }
-        let raw = flag == prefix ? "empty" : String(flag.dropFirst(prefix.count + 1))
+        let raw = flag.split(separator: "=", maxSplits: 1).dropFirst().first.map(String.init) ?? "empty"
         if raw.isEmpty { return [.emptyProducts] }
         return raw.split(separator: ",").map { $0 == "failed" ? .failed : .emptyProducts }
     }

@@ -82,20 +82,27 @@ struct HealthLoomApp: App {
                 .modelContainer(appEnvironment.modelContainer)
         }
         // Single dispatcher, re-merged (round-3 item 15 overrode the
-        // round-2 split — and the split's justification does not hold,
-        // stated concretely: (1) an `onChange` WITHOUT `initial:` still
-        // fires at cold launch (inactive→active IS a transition, so the
-        // transitions-only arm never skipped launch at all); (2) every
-        // arm body is already `Task`-dispatched, so nothing here runs on
-        // the launch path either way; (3) the runner is nil-gated under
-        // UITest. The split bought two modifiers for zero behavioral
-        // difference. `initial: true` covers attach; the guard covers
-        // everything else. Arms: WP-34's morning-insight trigger (own
-        // once-daily gate; the BG path below shares the entry so a
-        // double-generate is impossible), the tip listener (no-op
-        // re-entry; idles without transactions, so no UITest gate), and
-        // iCloud sync (UITest-gated here — hermetic launches must never
-        // reach CloudKit; the engine degrades to silent local-only).
+        // round-2 split) and KEPT (round-4 item 8 — picked with
+        // evidence, not re-split without proof):
+        // - Cold launch pays nothing extra: attach evaluates with
+        //   phase == .inactive, so the guard drops the initial fire;
+        //   the arms run once, on the inactive→active transition — the
+        //   same single run the split produced.
+        // - The only `initial:true` fire the split avoided is an attach
+        //   with the scene ALREADY .active (warm relaunch/reconnect —
+        //   exotic on this single-scene iPhone target), and its cost is
+        //   bounded per arm, all `Task`-dispatched (zero first-frame
+        //   blocking): insight = a defaults read + date math + one
+        //   store fetch + notification IPC before any inference — and
+        //   inference itself fires only when due (≤ once daily, and the
+        //   next transition would trigger it identically); tips =
+        //   listener attach (no-op re-entry) + an unfinished-sweep that
+        //   idles without transactions; sync = UITest-gated, CloudKit
+        //   or silent local-only.
+        // Re-splitting would re-spend a modifier to save only the
+        // exotic attach-fire's bounded cost, while risking `begin()`
+        // coverage (item 15's rationale stands). `initial: true`
+        // covers attach; the guard covers everything else.
         .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active else { return }
             Task {

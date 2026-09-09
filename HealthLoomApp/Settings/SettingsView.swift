@@ -228,15 +228,17 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.tips.thanks")
                     ThemedRowDivider()
                 }
-                // Load states (round-2 item 12 enum + round-3 item 6):
-                // spinner while idle/loading; tiers whenever a catalogue
-                // exists (loaded OR failed-with-preserved-products — an
-                // offline refresh keeps working tiers with the error and
-                // retry riding under them); coming-soon when
-                // settled-empty; error + retry alone when failed-empty.
-                let showTiers = !appEnvironment.tipStore.products.isEmpty
-                    && (appEnvironment.tipStore.loadState == .loaded || appEnvironment.tipStore.loadState == .failed)
-                if showTiers {
+                // Load states (round-4 item 3): the slot is pure
+                // (`TipStore.slot`, table-pinned) — tiers persist
+                // through a refresh-from-settled instead of blanking
+                // into a spinner; the `.failed` error + retry rides
+                // under preserved tiers, alone when the catalogue is
+                // empty.
+                let slot = TipStore.slot(
+                    productCount: appEnvironment.tipStore.products.count,
+                    loadState: appEnvironment.tipStore.loadState
+                )
+                if slot == .tiers {
                     ForEach(appEnvironment.tipStore.products.sorted(by: { $0.price < $1.price })) { product in
                         Button {
                             Task {
@@ -268,7 +270,7 @@ struct SettingsView: View {
                 if appEnvironment.tipStore.loadState == .failed {
                     // Round-3 item 6: under preserved tiers, alone when
                     // the catalogue is empty.
-                    if showTiers {
+                    if slot == .tiers {
                         ThemedRowDivider()
                     }
                     Text("Couldn't load tips — check your connection and try again.")
@@ -291,21 +293,21 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("settings.tips.retry")
-                } else if !showTiers {
-                    if appEnvironment.tipStore.loadState == .loaded {
-                        Text("Tips are coming soon — in-app purchase products are being set up.")
-                            .font(Theme.font(13, .regular, relativeTo: .footnote))
-                            .foregroundStyle(Theme.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16).padding(.vertical, 13)
-                            .accessibilityIdentifier("settings.tips.status")
-                    } else {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 13)
-                            .accessibilityIdentifier("settings.tips.loading")
-                    }
+                } else if slot == .comingSoon {
+                    Text("Tips are coming soon — in-app purchase products are being set up.")
+                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .foregroundStyle(Theme.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 13)
+                        .accessibilityIdentifier("settings.tips.status")
+                } else if slot == .spinner {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .accessibilityIdentifier("settings.tips.loading")
                 }
+                // `.errorAlone` contributes no slot content — the
+                // `.failed` block above renders message + retry.
                 if case .failed(let message) = appEnvironment.tipStore.lastResult {
                     ThemedRowDivider()
                     Text(message)
