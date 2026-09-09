@@ -71,7 +71,7 @@ struct OnboardingSnapshotTests {
         ]
         for scheme in [ColorScheme.light, .dark] {
             for (label, size) in sizes {
-                SnapshotAssert.assert(
+                SnapshotAssert.assertHosted(
                     WelcomeView(onContinue: {}),
                     named: "welcome-\(scheme == .light ? "light" : "dark")-\(label)",
                     colorScheme: scheme,

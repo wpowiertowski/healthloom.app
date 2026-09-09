@@ -64,6 +64,11 @@ jobs:
           done
           # grep rc: 0 = match, 1 = clean, 2+ = error — only 1 passes.
           rc=0
+          # Spelling ladder (third-party N2): the YAML block scalar passes
+          # `\\` through untouched, the shell's double quotes collapse it
+          # to `\`, and grep -E receives `fitbit\.com` — a literal dot.
+          # A single `\` here would reach grep as `\.com`... i.e. still
+          # correct by luck; the double is what makes it deliberate.
           grep -rn -E "fitbit\\.com" --include='*.swift' Packages/*/Sources HealthLoomApp || rc=$?
           if [ "$rc" -ne 1 ]; then
             echo "legacy Fitbit reference found (or grep failed: rc=$rc)" >&2

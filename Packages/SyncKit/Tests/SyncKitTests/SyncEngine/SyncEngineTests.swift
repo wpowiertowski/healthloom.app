@@ -329,8 +329,10 @@ import Testing
 
     // WP-38 degradation matrix, offline leg (third-party F8): no HTTP
     // response at all (airplane mode, dead zone) surfaces as
-    // .transport, reports a per-type error, moves no cursor, writes
-    // nothing, and leaves the persisted message redacted-safe.
+    // .transport, reports a per-type error, moves no cursor, and writes
+    // nothing. (Redaction of the persisted message is pinned separately
+    // by persistedErrorMessagesAreRedactedBeforeTheyReachTheStore — this
+    // test asserts only that a message is persisted, not its wording.)
     @Test func offlineTransportReportsErrorWithoutMovingCursorOrWriting() async throws {
         let container = try CoreModel.makeContainer(inMemory: true)
         let clock = TestSyncClock(Self.fixedNow)
