@@ -42,8 +42,10 @@ test:
 	# local helper for exactly this reason); adding one requires it to
 	# build warning-free under this SDK first.
 
+# NOTE: clean must NOT delete HealthLoom.xcodeproj — it is tracked since
+# the Xcode Cloud repo-prep (cloud builds compile the committed project).
+# Regenerating is `make xcode` (pinned xcodegen via project-drift CI).
 clean:
-	rm -rf HealthLoom.xcodeproj
 	rm -rf ~/Library/Developer/Xcode/DerivedData/HealthLoom-*
 	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
 		(cd Packages/$$pkg && swift package clean); \

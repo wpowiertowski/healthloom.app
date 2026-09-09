@@ -98,3 +98,9 @@ Every review strictly abides by `code-review.md`:
    `code-review.md` stay in the repo.
 4. Review state first (`git log` + `status` + diffstat) before reading code
    (§7.4): full-diff → collaborator read → spec check → build → tests.
+5. HealthLoom.xcodeproj is committed (Xcode Cloud builds from it and has no
+   XcodeGen step): regenerate with the pinned generator (`make xcode` —
+   version pinned in `.github/workflows/ci.yml` env) and commit the result
+   after any structural change (added/removed/moved files, `project.yml`
+   edits). CI's project-drift job regenerates and fails if the commit is
+   stale. `make clean` never deletes the project.

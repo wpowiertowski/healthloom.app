@@ -60,6 +60,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.healthloom
+        # Xcode Cloud repo-prep (LumiVault pattern): the committed .xcodeproj
+        # must carry the team so cloud builds sign. Automatic style only —
+        # no profiles or checked-in secrets, ever.
+        DEVELOPMENT_TEAM: 6AS496S47T
+        CODE_SIGN_STYLE: Automatic
         PRODUCT_NAME: HealthLoom
         ENABLE_PREVIEWS: YES
         SWIFT_TREAT_WARNINGS_AS_ERRORS: YES

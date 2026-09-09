@@ -31,12 +31,17 @@ playground.xcworkspace
 
 .build/
 
-# XcodeGen (WP-01): project.yml is the source of truth; the generated
-# .xcodeproj is reproducible via `xcodegen generate` and not committed, to
-# avoid pbxproj merge conflicts. HealthLoomApp/Info.plist and
-# HealthLoom.entitlements ARE committed (they're xcodegen `info`/`entitlements`
-# outputs, but review-worthy content -- usage strings, capabilities).
-HealthLoom.xcodeproj/
+# XcodeGen: project.yml is the source of truth. Since the Xcode Cloud
+# repo-prep the generated HealthLoom.xcodeproj IS committed (Xcode Cloud
+# builds from the committed project and has no XcodeGen step) — regenerate
+# with the pinned version (`make xcode`) and commit after any structural
+# change; CI's project-drift job fails otherwise. HealthLoomApp/Info.plist
+# and HealthLoom.entitlements ARE committed (they're xcodegen
+# `info`/`entitlements` outputs, but review-worthy content -- usage strings,
+# capabilities).
+# Per-user Xcode state inside the now-tracked .xcodeproj stays out — only
+# project.pbxproj + xcshareddata (schemes Xcode Cloud builds from) commit.
+xcuserdata/
 *.xcworkspace/
 
 # CocoaPods
