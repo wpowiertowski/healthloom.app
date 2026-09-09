@@ -76,9 +76,24 @@ final class YouTabUITests: XCTestCase {
         XCTAssertTrue(anyElement["you.correct.sheet"].waitForExistence(timeout: 10))
         let field = app.textFields["you.correct.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 10))
+        let expectedCorrection = "~9,000 steps/day (my tracker)"
         // Triple-tap selects the pre-filled text so typing replaces it.
         field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
-        field.typeText("~9,000 steps/day (my tracker)")
+        field.typeText(expectedCorrection)
+        // Loaded runners can mangle gesture typing (a missed select-all
+        // appends to the prefill, or the keyboard drops characters) — and
+        // a mangled save fails the exact-text assertion below with no
+        // indication the typing was at fault (PR #32 CI red). Verify what
+        // the field holds BEFORE saving and retype once if it drifted;
+        // the save then pins exactly this string.
+        if (field.value as? String) != expectedCorrection {
+            field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+            field.typeText(expectedCorrection)
+            XCTAssertEqual(
+                field.value as? String, expectedCorrection,
+                "correction field holds mangled text after retype — typing fidelity failure, not a product regression"
+            )
+        }
         anyElement["you.correct.save"].tap()
         XCTAssertFalse(anyElement["you.correct.sheet"].waitForExistence(timeout: 5))
         // The corrected text renders with the correction badge.

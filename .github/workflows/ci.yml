@@ -31,6 +31,11 @@ permissions:
 # https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
 env:
   XCODE_VERSION: "26.4.1"
+  # Pinned so the project-drift job compares against a fixed generator —
+  # see the comment on that job. Keep in lockstep with the version used
+  # locally and with the committed HealthLoom.xcodeproj.
+  XCODEGEN_VERSION: "2.46.0"
+  XCODEGEN_SHA256: "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806"
 
 jobs:
   # WP-38 launch gates: repo-wide source guards that fail fast on
@@ -156,6 +161,85 @@ jobs:
         working-directory: Packages/${{ matrix.package }}
         # Warnings fail the build: CI must go red on warnings.
         run: swift test -Xswiftc -warnings-as-errors
+
+  # Xcode Cloud repo-prep (LumiVault pattern): Xcode Cloud builds from the
+  # committed project and has no XcodeGen step, so the .xcodeproj must be
+  # in the repo and must match project.yml. This job regenerates with the
+  # pinned generator and fails on any drift.
+  project-drift:
+    name: XcodeGen Drift
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Toolchain-independent guard: even if the regeneration below has to
+      # be skipped for an XcodeGen upgrade, the strictness setting stays
+      # fenced — a committed project without warnings-as-errors would let
+      # Xcode Cloud ship warnings the local build rejects.
+      - name: Assert committed project carries warnings-as-errors
+        run: |
+          # Both halves (third-party N1): Swift without GCC still ships
+          # C/ObjC warnings, and vice versa.
+          if ! grep -q -- 'SWIFT_TREAT_WARNINGS_AS_ERRORS = YES' HealthLoom.xcodeproj/project.pbxproj; then
+            echo "::error::Committed project.pbxproj is missing SWIFT_TREAT_WARNINGS_AS_ERRORS."
+            echo "Run 'xcodegen generate' and commit the result."
+            exit 1
+          fi
+          if ! grep -q -- 'GCC_TREAT_WARNINGS_AS_ERRORS = YES' HealthLoom.xcodeproj/project.pbxproj; then
+            echo "::error::Committed project.pbxproj is missing GCC_TREAT_WARNINGS_AS_ERRORS."
+            echo "Run 'xcodegen generate' and commit the result."
+            exit 1
+          fi
+
+      # Pinned rather than `brew install xcodegen`, because this job
+      # compares generated output byte-for-byte. On an unpinned install,
+      # any XcodeGen release that changes that output turns every
+      # unrelated PR red — and the failure tells the author to commit a
+      # regenerated project, which would then break everyone still on the
+      # old version. With the version fixed, a drift failure means what it
+      # says. The checksum makes the pin tamper-evident: this tool
+      # generates the project the App Store build is compiled from.
+      #
+      # Bump XCODEGEN_VERSION and XCODEGEN_SHA256 together, in the same
+      # commit as the project regenerated with that version.
+      - name: Install XcodeGen ${{ env.XCODEGEN_VERSION }}
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          echo "${XCODEGEN_SHA256}  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Verify XcodeGen version
+        run: |
+          actual="$(xcodegen --version | awk '{print $NF}')"
+          echo "xcodegen reports: $actual (pinned: $XCODEGEN_VERSION)"
+          if [ "$actual" != "$XCODEGEN_VERSION" ]; then
+            echo "::error::Expected XcodeGen $XCODEGEN_VERSION, got $actual"
+            exit 1
+          fi
+
+      - name: Regenerate project from project.yml
+        run: xcodegen generate
+
+      # `git status --porcelain`, not `git diff`: regenerating can *add*
+      # files (a new shared scheme under xcshareddata/xcschemes/ when a
+      # target or scheme is added to project.yml), and `git diff` is blind
+      # to untracked paths — so the drift this job exists to catch would
+      # pass unnoticed and Xcode Cloud would build from a project missing
+      # that scheme.
+      - name: Fail if the committed project drifted
+        run: |
+          drift="$(git status --porcelain -- HealthLoom.xcodeproj)"
+          if [ -n "$drift" ]; then
+            echo "::error::HealthLoom.xcodeproj is out of date with project.yml."
+            echo "Run 'xcodegen generate' (XcodeGen ${XCODEGEN_VERSION}) and commit the result."
+            echo "$drift"
+            git diff -- HealthLoom.xcodeproj
+            exit 1
+          fi
+          echo "OK: committed project matches project.yml."
 
   app:
     name: xcodebuild build test (HealthLoom scheme)
