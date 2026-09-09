@@ -25,7 +25,15 @@
 //   server). On-device `.verified` checking is the whole story.
 // - NO restore path: consumables never appear in
 //   `Transaction.currentEntitlements`, so there is nothing to restore.
-//   Pinned by test (`tipsLeaveNoEntitlements`).
+//   Pinned by `entitlementsEmpty` + `noRestoreSymbols`.
+//
+// Manual QA (StoreKit config attached — see TipProductID):
+// - success / cancel / Ask-to-Buy approve / failure / refund per tier;
+// - Ask-to-Buy DECLINE: no transaction exists, so nothing resolves —
+//   `pendingApproval` sticks until the next attempt overwrites it (or
+//   relaunch clears it; the state is in-memory only). Verified benign:
+//   no charge, no count, self-heals. Confirm the sticky pending clears
+//   on the next attempt.
 
 import Foundation
 import Observation

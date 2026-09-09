@@ -129,10 +129,10 @@ struct TipStoreTests {
     func cancelledFetchKeepsState() async throws {
         let (store, ephemeral) = try freshStore()
         defer { _ = ephemeral }
-        // The live fetch ignores cancellation (proven: cancel-then-run
-        // still settles), so the test drives a suspender through the
-        // fetch seam. Cancel mid-flight: no settle flags, no wipe. The
-        // old code set productsUnavailable=true on this path.
+        // The live API's cancellation posture is Apple's to change, so
+        // this test drives a suspender through the fetch seam (pins our
+        // branch: cancel preserves state). See `liveCancelNeverCorrupts`
+        // for the live-API terminal-consistency probe.
         store.fetchProducts = { _ in
             try await Task.sleep(for: .seconds(30))
             return []
@@ -145,6 +145,22 @@ struct TipStoreTests {
         await task.value
         #expect(!store.isLoading)
         #expect(!store.hasAttemptedLoad)
+        #expect(store.products.isEmpty)
+    }
+
+    @Test("live cancel never corrupts (terminal consistency probe)")
+    func liveCancelNeverCorrupts() async throws {
+        let (store, ephemeral) = try freshStore()
+        defer { _ = ephemeral }
+        // No seam: the live fetch, cancelled immediately. Pins only
+        // terminal consistency — spinner clears, nothing corrupts —
+        // whichever way Apple's API treats cancellation. (Currently
+        // observed to settle through cancel; deliberately NOT pinned:
+        // Apple may change it, and either outcome is correct here.)
+        let task = Task { await store.loadProducts() }
+        task.cancel()
+        await task.value
+        #expect(!store.isLoading)
         #expect(store.products.isEmpty)
     }
 
