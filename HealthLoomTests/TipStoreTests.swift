@@ -21,7 +21,13 @@
 //   without corruption; the live-shaped URLError settles `.failed`;
 // - the load-state machine (idle → loading → loaded/failed, refetch
 //   from settled, recovery) and single-flight coalescing (round-3
-//   items 6+7);
+//   items 6+7), reshaped by round-4: the flight clears its own slot
+//   (no swallowed-Retry window), and a hung fetch settles `.failed`
+//   via cooperative timeout — proven recoverable, with the orphan's
+//   late result provably dropped;
+// - the tip-section slot table (tiers persist through refresh) and
+//   the shared verified-transaction interpreter (purchase + listener,
+//   one decision point — including revoked-via-purchase);
 // - tip-count persistence round-trip; initial state; sticky stubs;
 // - lifetimeTerminates + entitlementsEmpty smokes (trivially true without
 //   transactions — kept for shape, grow real arms with F1);
@@ -64,11 +70,12 @@ final class TipStoreFixture {
 
     init(
         fetchProducts: (([String]) async throws -> [Product])? = nil,
-        uiTestStubs: [TipUITestStub] = []
+        uiTestStubs: [TipUITestStub] = [],
+        loadTimeout: Duration = .seconds(30)
     ) throws {
         let ephemeral = try EphemeralDefaults(prefix: "tips")
         self.ephemeral = ephemeral
-        self.store = TipStore(defaults: ephemeral.defaults, fetchProducts: fetchProducts, uiTestStubs: uiTestStubs)
+        self.store = TipStore(defaults: ephemeral.defaults, fetchProducts: fetchProducts, uiTestStubs: uiTestStubs, loadTimeout: loadTimeout)
     }
 
     /// Same-suite access for the persistence round-trip (new store, same
@@ -350,6 +357,127 @@ struct TipStoreTests {
         #expect(store.loadState == .loaded)
         await store.loadProducts()
         #expect(script.calls == 2)
+    }
+
+    @Test("wedged fetch settles failed via timeout, then Retry heals")
+    func wedgedFetchRecovers() async throws {
+        // Round-4 item 2: a hung `Product.products` (suspender seam)
+        // settles `.failed` within the injected timeout — the section
+        // is never wedged — and a later Retry with a live fetch
+        // recovers to `.loaded`. One fetch per load (no hidden
+        // refetch inside the timeout path).
+        final class Script {
+            var calls = 0
+            var hang = true
+        }
+        let script = Script()
+        let fixture = try TipStoreFixture(
+            fetchProducts: { _ in
+                script.calls += 1
+                if script.hang {
+                    try await Task.sleep(for: .seconds(30))
+                }
+                return []
+            },
+            loadTimeout: .milliseconds(150)
+        )
+        let store = fixture.store
+        await store.loadProducts()
+        #expect(store.loadState == .failed)
+        #expect(script.calls == 1)
+        script.hang = false
+        await store.loadProducts()
+        #expect(store.loadState == .loaded)
+        #expect(script.calls == 2)
+    }
+
+    @Test("orphaned fetch cannot clobber a timeout settlement")
+    func orphanedFetchDropped() async throws {
+        // Round-4 item 2: the timeout arm wins at 150ms (`.failed`);
+        // the suspender completes at 300ms into the void — the
+        // settlement MUST still read `.failed`, or the race drops
+        // nothing and the generation argument is a lie.
+        let fixture = try TipStoreFixture(
+            fetchProducts: { _ in
+                try await Task.sleep(for: .milliseconds(300))
+                return []
+            },
+            loadTimeout: .milliseconds(150)
+        )
+        let store = fixture.store
+        await store.loadProducts()
+        #expect(store.loadState == .failed)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(store.loadState == .failed)
+        #expect(store.products.isEmpty)
+    }
+
+    @Test("sequential loads each fetch (no swallowed retry)")
+    func sequentialLoadsEachFetch() async throws {
+        // Round-4 item 7: the slot clears inside the flight's tail, so
+        // a call arriving after settlement ALWAYS launches fresh — the
+        // adopt-instead-of-fetch window is closed by construction (see
+        // the slot invariant). This pins the refresh contract the
+        // window threatened: every post-settle load refetches.
+        final class Script {
+            var calls = 0
+        }
+        let script = Script()
+        let fixture = try TipStoreFixture(fetchProducts: { _ in
+            script.calls += 1
+            return []
+        })
+        let store = fixture.store
+        await store.loadProducts()
+        #expect(store.loadState == .loaded)
+        await store.loadProducts()
+        await store.loadProducts()
+        #expect(script.calls == 3)
+    }
+
+    @Test("interpreter: one decision point for purchase and listener")
+    func verifiedInterpreterTable() throws {
+        // Round-4 item 5: `purchase()` and `handle(_:)` share
+        // `applyVerifiedTransaction` — these rows pin the SHARED
+        // decision, so revoked-via-purchase is covered without a live
+        // `Product`. (`lastResult` is `private(set)`, so the banner is
+        // seeded through the interpreter itself, never assigned.)
+        let fixture = try TipStoreFixture()
+        let store = fixture.store
+        // Own + non-revoked: counts once, success banner (the seed).
+        store.applyVerifiedTransaction(transactionID: 1, productID: TipProductID.small.rawValue, revocationDate: nil)
+        #expect(store.tipCount == 1)
+        #expect(store.lastResult == .succeeded(productID: TipProductID.small.rawValue))
+        // Foreign + REVOKED: finished by the caller, state untouched —
+        // the banner survives (round-3 item 2's row, now shared).
+        store.applyVerifiedTransaction(transactionID: 2, productID: "com.example.other", revocationDate: Date())
+        #expect(store.tipCount == 1)
+        #expect(store.lastResult == .succeeded(productID: TipProductID.small.rawValue))
+        // Foreign, non-revoked: same, untouched.
+        store.applyVerifiedTransaction(transactionID: 3, productID: "com.example.other", revocationDate: nil)
+        #expect(store.tipCount == 1)
+        #expect(store.lastResult == .succeeded(productID: TipProductID.small.rawValue))
+        // Own + REVOKED (the round-4 item 5 regression): no count, no
+        // success banner — clears to nil, exactly as `handle(_:)`
+        // treats it. Pre-fix `purchase()` set `.succeeded` here.
+        store.applyVerifiedTransaction(transactionID: 4, productID: TipProductID.small.rawValue, revocationDate: Date())
+        #expect(store.tipCount == 1)
+        #expect(store.lastResult == nil)
+    }
+
+    @Test("tip-section slot table")
+    func tipSectionSlotTable() {
+        // Round-4 item 3: tiers persist through refresh (`.loading`
+        // with products) and failure-with-products; the spinner is
+        // for the genuinely-empty loading path only.
+        #expect(TipStore.slot(productCount: 3, loadState: .loading) == .tiers)
+        #expect(TipStore.slot(productCount: 3, loadState: .failed) == .tiers)
+        #expect(TipStore.slot(productCount: 3, loadState: .loaded) == .tiers)
+        #expect(TipStore.slot(productCount: 3, loadState: .idle) == .tiers)
+        #expect(TipStore.slot(productCount: 0, loadState: .loading) == .spinner)
+        #expect(TipStore.slot(productCount: 0, loadState: .idle) == .spinner)
+        #expect(TipStore.slot(productCount: 0, loadState: .loaded) == .comingSoon)
+        #expect(TipStore.slot(productCount: 0, loadState: .failed) == .errorAlone)
     }
 
     @Test("stub session never falls through to the live fetch")

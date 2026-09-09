@@ -38,10 +38,10 @@ struct TierSwitcherTests {
 
     /// Structural fixture (round-3 item 12): owns the view model
     /// triple AND its ephemeral suite — no smuggled 4th tuple element.
-    /// Call sites project `.values` off a temporary (safe per the
-    /// death-before-writes argument in the helper comment), so bodies
-    /// keep their destructuring with zero churn and no lifetime
-    /// ceremony.
+    /// Call sites bind the FIXTURE (round-4 item 6 — never a
+    /// projection off a temporary, so no future write-inside-the-
+    /// helper can strand state past a temporary's death) and
+    /// destructure `.values` off the binding for zero-churn bodies.
     final class TierSwitcherFixture {
         let viewModel: CoachChatViewModel
         let settings: TierSettingsStore
@@ -72,13 +72,11 @@ struct TierSwitcherTests {
         let container = try CoreModel.makeContainer(inMemory: true)
         // Round-3 item 12: the holder rides in the fixture (same commit
         // introduced TipStoreFixture to avoid smuggling it through the
-        // tuple). A fixture temporary at the call site is safe by
-        // death-before-writes (fix-round N3): the temporary dies before
-        // the test writes anything, so deinit removes the just-
-        // pre-cleaned, still-empty domain — a no-op — while the
-        // members' own `UserDefaults` refs carry every later write;
-        // the janitor removes the recreated plist at exit. Init
-        // pre-clean guarantees freshness against same-named survivors.
+        // tuple). Call sites bind the fixture for the test's duration
+        // (round-4 item 6): the holder then outlives every write by
+        // construction — no death-before-writes luck, no temporary.
+        // Init pre-clean guarantees freshness against same-named
+        // survivors; the janitor closes the leak at exit.
         let ephemeral = try EphemeralDefaults(prefix: "tierswitcher")
         let settings = TierSettingsStore(defaults: ephemeral.defaults)
         let gates = CloudGateCache()
@@ -140,7 +138,8 @@ struct TierSwitcherTests {
 
     @Test("the menu offers enabled tiers only, in ladder order")
     func menuOffersOnlyEnabledTiers() throws {
-        let (viewModel, settings, gates) = try makeViewModel().values
+        let fixture = try makeViewModel()
+        let (viewModel, settings, gates) = fixture.values
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.enabledTiers == [.onDevice, .privateCloudCompute])
         #expect(viewModel.enabledTierNames == "On-device · Apple cloud (PCC)")
@@ -148,7 +147,8 @@ struct TierSwitcherTests {
 
     @Test("selecting a non-enabled tier fails and keeps the selection")
     func selectBlockedTierFails() throws {
-        let (viewModel, settings, gates) = try makeViewModel().values
+        let fixture = try makeViewModel()
+        let (viewModel, settings, gates) = fixture.values
         // Claude: live but neither consented nor keyed.
         #expect(viewModel.selectTier(.claude) == false)
         #expect(viewModel.selectedTier == .onDevice)
@@ -164,7 +164,8 @@ struct TierSwitcherTests {
 
     @Test("send on a tier disabled since selection is blocked at dispatch")
     func sendBlockedOnDisabledTier() throws {
-        let (viewModel, settings, gates) = try makeViewModel().values
+        let fixture = try makeViewModel()
+        let (viewModel, settings, gates) = fixture.values
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         settings.withdrawConsent(for: .privateCloudCompute)
@@ -176,7 +177,8 @@ struct TierSwitcherTests {
 
     @Test("replies are stamped with the serving tier")
     func providerStampsServingTier() async throws {
-        let (viewModel, settings, gates) = try makeViewModel().values
+        let fixture = try makeViewModel()
+        let (viewModel, settings, gates) = fixture.values
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         #expect(viewModel.send("hi") == true)
@@ -187,7 +189,8 @@ struct TierSwitcherTests {
 
     @Test("the transcript survives switches with per-turn stamps")
     func transcriptPreservedAcrossSwitches() async throws {
-        let (viewModel, settings, gates) = try makeViewModel().values
+        let fixture = try makeViewModel()
+        let (viewModel, settings, gates) = fixture.values
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.send("one") == true)
         try await waitForIdle(viewModel)
@@ -202,7 +205,8 @@ struct TierSwitcherTests {
     @Test("the safety suffix is re-applied across a switch sequence")
     func suffixSurvivesSwitches() async throws {
         let log = InstructionLog()
-        let (viewModel, settings, gates) = try makeViewModel(log: log).values
+        let fixture = try makeViewModel(log: log)
+        let (viewModel, settings, gates) = fixture.values
         enable(.privateCloudCompute, settings: settings, gates: gates)
         enable(.claude, settings: settings, gates: gates)
         let enabled = viewModel.enabledTiers
@@ -234,7 +238,8 @@ struct TierSwitcherTests {
 
     @Test("replies come from the selected tier's model (F1 identity)")
     func routesToTierModel() async throws {
-        let (viewModel, settings, gates) = try makeViewModel(chunks: { ["<\($0.rawValue)>"] }).values
+        let fixture = try makeViewModel(chunks: { ["<\($0.rawValue)>"] })
+        let (viewModel, settings, gates) = fixture.values
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         #expect(viewModel.send("hi") == true)
@@ -293,7 +298,8 @@ struct TierSwitcherTests {
 
     @Test("onAppear clamps a selection disabled while chat was away")
     func onAppearClampsStaleSelection() throws {
-        let (viewModel, settings, gates) = try makeViewModel().values
+        let fixture = try makeViewModel()
+        let (viewModel, settings, gates) = fixture.values
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)
         settings.withdrawConsent(for: .privateCloudCompute)

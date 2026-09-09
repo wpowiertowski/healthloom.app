@@ -124,11 +124,11 @@ private let testDoublesAnchor = #filePath
 /// (round-3 item 9): the single walk/strip/root-derivation every
 /// source-scanning grep-test shares — `//` line comments are skipped so
 /// prose may name a ban the code may not contain. Returns
-/// (fileName, code) pairs; callers match their own symbols. The walk is
-/// RECURSIVE (fix-round N2): a subdirectory added tomorrow is scanned,
-/// not silently exempted. (No subdirs exist under the scanned roots
-/// today, so this changes nothing yet.)
-enum SourceScanError: Error {
+/// (relativePath, code) pairs — paths relative to the scanned root
+/// (round-4 item 12), so subdir hits are distinguishable; callers match
+/// their own symbols. The walk is RECURSIVE (fix-round N2): a
+/// subdirectory added tomorrow is scanned, not silently exempted.
+enum SourceScanError: Error, Equatable {
     case missingDirectory(String)
 }
 
@@ -137,7 +137,17 @@ func scanSources(in directory: String) throws -> [(file: String, code: String)] 
         .deletingLastPathComponent() // HealthLoomTests
         .deletingLastPathComponent() // repo root
         .appendingPathComponent(directory)
-    guard let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil) else {
+    // Round-4 item 1: fail LOUD on a missing root. `enumerator(at:)`
+    // returns a non-nil EMPTY enumerator for a missing directory
+    // (verified) — without this check a renamed root would make every
+    // ban-grep pass VACUOUSLY over zero files (the pre-diff
+    // `contentsOfDirectory` threw loudly; the recursive rewrite lost
+    // that). `missingDirectory` is reachable again, pinned below.
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDirectory),
+          isDirectory.boolValue,
+          let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)
+    else {
         throw SourceScanError.missingDirectory(directory)
     }
     var out: [(file: String, code: String)] = []
@@ -148,7 +158,7 @@ func scanSources(in directory: String) throws -> [(file: String, code: String)] 
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
-        out.append((file: candidate.lastPathComponent, code: code))
+        out.append((file: String(candidate.path.dropFirst(dir.path.count + 1)), code: code))
     }
     return out
 }
