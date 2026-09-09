@@ -92,6 +92,16 @@ struct HealthLoomApp: App {
                 await InsightRunnerHost.runIfDue()
             }
         }
+        // Tip jar lifetime: transaction listener + unfinished completion.
+        // Ungated by UITest flags — the listener idles without
+        // transactions, and no UI test purchases. `initial: true` covers
+        // launch; later foregrounds re-enter harmlessly (no-op guard).
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active else { return }
+            Task {
+                await appEnvironment.tipStore.begin()
+            }
+        }
         // iCloud sync on launch, every foreground, and on demand
         // (Settings). Gated out of UI tests (hermetic launches must never
         // reach CloudKit); the engine itself degrades to silent

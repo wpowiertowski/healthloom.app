@@ -213,6 +213,89 @@ struct SettingsView: View {
                 insightPrefs.reload()
             }
 
+            // Tip jar (StoreKit 2 consumables). Graceful empty state:
+            // before the human creates the products in App Store Connect,
+            // `products` is empty and the section says so instead of
+            // rendering dead buttons.
+            ThemedSectionHeader(title: "Tip Jar")
+            ThemedPanel {
+                if appEnvironment.tipStore.tipCount > 0 {
+                    Text("Thanks for supporting HealthLoom — \(appEnvironment.tipStore.tipCount) tip\(appEnvironment.tipStore.tipCount == 1 ? "" : "s") so far!")
+                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .foregroundStyle(Theme.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .accessibilityIdentifier("settings.tips.thanks")
+                    ThemedRowDivider()
+                }
+                if appEnvironment.tipStore.products.isEmpty {
+                    Text("Tips are coming soon — in-app purchase products are being set up.")
+                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .foregroundStyle(Theme.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 13)
+                        .accessibilityIdentifier("settings.tips.status")
+                } else {
+                    ForEach(appEnvironment.tipStore.products.sorted(by: { $0.price < $1.price })) { product in
+                        Button {
+                            Task {
+                                await appEnvironment.tipStore.purchase(product)
+                            }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(product.displayName)
+                                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                                        .foregroundStyle(Theme.ink)
+                                    Text(product.description)
+                                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                                Spacer()
+                                Text(product.displayPrice)
+                                    .font(Theme.font(15, .regular, relativeTo: .subheadline))
+                                    .foregroundStyle(Theme.secondary)
+                                    .monospacedDigit()
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 13)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("settings.tips.\(TipProductID(rawValue: product.id)?.shortName ?? product.id)")
+                        .disabled(appEnvironment.tipStore.isPurchasing)
+                    }
+                }
+                if case .failed(let message) = appEnvironment.tipStore.lastResult {
+                    ThemedRowDivider()
+                    Text(message)
+                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .foregroundStyle(Theme.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .accessibilityIdentifier("settings.tips.error")
+                }
+                // Third-party N1: Ask-to-Buy (or parental approval)
+                // defers the purchase — the section must say so instead
+                // of idling as if nothing happened. Cancellations stay
+                // silent (tapping away is not an error).
+                if appEnvironment.tipStore.lastResult == .pendingApproval {
+                    ThemedRowDivider()
+                    Text("Waiting for approval — the tip completes if approved in the App Store.")
+                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .foregroundStyle(Theme.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .accessibilityIdentifier("settings.tips.pending")
+                }
+            }
+            .padding(.top, 20)
+            .task {
+                await appEnvironment.tipStore.loadProducts()
+            }
+
             // WP-35 (implementation-plan.md): export (JSON dump + share
             // sheet, user-initiated) and the disconnect-and-wipe flow.
             ThemedPanel {

@@ -76,6 +76,7 @@ final class AppEnvironment {
 
     let modelContainer: ModelContainer
     let cloudSync: CloudSyncEngine
+    let tipStore = TipStore()
     let healthKitAuth: HealthKitAuth
     let googleAuthManager: GoogleAuthManager
     let syncEngine: SyncEngine
