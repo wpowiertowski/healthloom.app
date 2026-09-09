@@ -124,14 +124,24 @@ private let testDoublesAnchor = #filePath
 /// (round-3 item 9): the single walk/strip/root-derivation every
 /// source-scanning grep-test shares — `//` line comments are skipped so
 /// prose may name a ban the code may not contain. Returns
-/// (fileName, code) pairs; callers match their own symbols.
+/// (fileName, code) pairs; callers match their own symbols. The walk is
+/// RECURSIVE (fix-round N2): a subdirectory added tomorrow is scanned,
+/// not silently exempted. (No subdirs exist under the scanned roots
+/// today, so this changes nothing yet.)
+enum SourceScanError: Error {
+    case missingDirectory(String)
+}
+
 func scanSources(in directory: String) throws -> [(file: String, code: String)] {
     let dir = URL(fileURLWithPath: testDoublesAnchor)
         .deletingLastPathComponent() // HealthLoomTests
         .deletingLastPathComponent() // repo root
         .appendingPathComponent(directory)
+    guard let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil) else {
+        throw SourceScanError.missingDirectory(directory)
+    }
     var out: [(file: String, code: String)] = []
-    for candidate in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+    for case let candidate as URL in enumerator {
         guard candidate.pathExtension == "swift" else { continue }
         let source = try String(contentsOf: candidate, encoding: .utf8)
         let code = source

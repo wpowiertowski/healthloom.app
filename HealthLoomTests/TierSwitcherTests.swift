@@ -38,9 +38,10 @@ struct TierSwitcherTests {
 
     /// Structural fixture (round-3 item 12): owns the view model
     /// triple AND its ephemeral suite — no smuggled 4th tuple element.
-    /// Call sites project `.values` off a temporary (members hold their
-    /// own defaults refs; see the helper comment), so bodies keep their
-    /// destructuring with zero churn and no lifetime ceremony.
+    /// Call sites project `.values` off a temporary (safe per the
+    /// death-before-writes argument in the helper comment), so bodies
+    /// keep their destructuring with zero churn and no lifetime
+    /// ceremony.
     final class TierSwitcherFixture {
         let viewModel: CoachChatViewModel
         let settings: TierSettingsStore
@@ -71,10 +72,13 @@ struct TierSwitcherTests {
         let container = try CoreModel.makeContainer(inMemory: true)
         // Round-3 item 12: the holder rides in the fixture (same commit
         // introduced TipStoreFixture to avoid smuggling it through the
-        // tuple). Members hold their own `UserDefaults` refs, so a
-        // fixture temporary at the call site is safe: live objects keep
-        // working on their caches, the init pre-clean guarantees
-        // freshness, and the janitor closes the leak at exit.
+        // tuple). A fixture temporary at the call site is safe by
+        // death-before-writes (fix-round N3): the temporary dies before
+        // the test writes anything, so deinit removes the just-
+        // pre-cleaned, still-empty domain — a no-op — while the
+        // members' own `UserDefaults` refs carry every later write;
+        // the janitor removes the recreated plist at exit. Init
+        // pre-clean guarantees freshness against same-named survivors.
         let ephemeral = try EphemeralDefaults(prefix: "tierswitcher")
         let settings = TierSettingsStore(defaults: ephemeral.defaults)
         let gates = CloudGateCache()

@@ -153,16 +153,25 @@ final class TipStore {
         await finishUnfinished()
     }
 
-    /// In-flight flight handle (round-3 item 7): the loader parks the
-    /// detached fetch here so concurrent callers join it (`await
-    /// inFlight?.value`) instead of duplicating the fetch or spinning on
-    /// the MainActor (the 50Hz `waitForSettle` poll is deleted). Joining
-    /// is advisory — a cancelled joiner lingers until settlement (proven
-    /// by probe: awaiting another task's value does NOT unwind on
-    /// cancel) — but settlement ALWAYS arrives (the flight is detached,
-    /// so caller cancellation never interrupts it), so no spinner
-    /// strands, ever. Assigned and cleared synchronously on the
-    /// MainActor with no suspension in between: never torn.
+    /// In-flight flight handle (round-3 item 7 + fix-round N1): the TRUE
+    /// invariants, stated exactly —
+    /// - SINGLE-LAUNCHER: only the `inFlight == nil` branch creates a
+    ///   flight, and the check-and-set is suspension-free on the
+    ///   MainActor, so at most one flight exists. Ever.
+    /// - ALWAYS-CLEARED: the launcher awaits the flight, then nils the
+    ///   slot; the flight body (performLoad) has no non-terminating
+    ///   path — every arm assigns a terminal state.
+    /// - UNSTRUCTURED-BUT-OUTCOME-EQUIVALENT: `Task {}` propagates no
+    ///   cancellation (empirically proven both ways: the detached
+    ///   capture compiles, and awaiting another task's value does NOT
+    ///   unwind a cancelled waiter), which is precisely why settlement
+    ///   always arrives — and no caller consumes a return value, so
+    ///   shared settlement is behaviorally identical to blocking.
+    /// Concurrent callers join (`await inFlight?.value`) instead of
+    /// duplicating the fetch or spinning on the MainActor (the 50Hz
+    /// `waitForSettle` poll is deleted). A cancelled joiner lingers
+    /// until settlement, then adopts it like everyone else: no spinner
+    /// strands, ever.
     private var inFlight: Task<Void, Never>?
 
     /// Coalescing loader, final form (round-3 items 7+8+14): straight
@@ -211,9 +220,9 @@ final class TipStore {
             loadState = .loaded
         } catch {
             // Round-3 items 7+8 SUPERSEDE the round-2 cancel→idle arm
-            // (deleted): the fetch runs detached, so caller cancellation
-            // never reaches it — there is no cancel state left to read,
-            // and a cancelled live fetch surfaces as URLError /
+            // (deleted): the flight is unstructured, so caller
+            // cancellation never reaches it — there is no cancel state
+            // left to read, and a cancelled live fetch surfaces as URLError /
             // StoreKitError.networkError, indistinguishable from
             // offline. EVERY error therefore settles `.failed` with
             // previously loaded products preserved (assignment happens
