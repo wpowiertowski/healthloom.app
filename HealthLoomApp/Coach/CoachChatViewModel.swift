@@ -61,7 +61,7 @@ final class CoachChatViewModel {
     /// throttle every bounce would re-run the HealthKit + profile pipeline.
     static let warmupRefreshInterval: TimeInterval = 3600
 
-    private static let logger = Logger(subsystem: "com.healthloom.app", category: "Coach")
+    private static let logger = Logger(subsystem: "app.healthloom", category: "Coach")
 
     private let deps: Dependencies
     /// The view model's one `ModelContext` for its whole lifetime (round-2

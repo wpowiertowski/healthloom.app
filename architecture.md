@@ -21,7 +21,7 @@ Companion docs:
 - [Design/healthloom-final-yachtclub.html](Design/healthloom-final-yachtclub.html), [Design/HealthLoomTodayView-YachtClub.swift](Design/HealthLoomTodayView-YachtClub.swift) — final "Today" screen design (Yacht club palette).
 
 **Naming:** the product, app target, and module prefix are all **HealthLoom**
-(`HealthLoom` target, `healthloom.*` metadata keys, `com.healthloom.*` identifiers).
+(`HealthLoom` target, `healthloom.*` metadata keys, `com.healthloom.*` legacy identifiers; bundle ID itself is `app.healthloom`).
 
 ---
 

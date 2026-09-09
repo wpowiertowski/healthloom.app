@@ -7,7 +7,7 @@
 // **Consistency check performed before adding these (per the brief's own
 // instruction to check for and not duplicate WP-16's existing usage):**
 // `HealthLoomApp.swift`'s `HealthLoomBackgroundSync` enum already declares
-// `Logger(subsystem: "com.healthloom.app", category: "BackgroundSync")` --
+// `Logger(subsystem: "app.healthloom", category: "BackgroundSync")` --
 // that file is fenced off (WP-16's territory) and its `logger` constant is
 // `private`, so it can't literally be shared/imported from this package
 // (different module entirely; SyncKit is compiled and linked independently
@@ -28,7 +28,7 @@
 // session -- see progress.md's WP-18 entry for why backfill-chunk logging
 // specifically was not wired in here.
 //
-// Every category shares one subsystem, `"com.healthloom.app"` -- the app's
+// Every category shares one subsystem, `"app.healthloom"` -- the app's
 // own bundle ID (matching WP-16's exact string), not a SyncKit-specific
 // identifier, so every log line from this app (regardless of which module
 // emitted it) groups under one subsystem in Console.app.
@@ -44,19 +44,19 @@ import os
 nonisolated public enum DiagnosticsLog {
     /// Per-type incremental sync run completions (`SyncEngine.sync(type:)`
     /// via `SyncEngineLogRecorder`, this WP's own hook).
-    public static let sync = Logger(subsystem: "com.healthloom.app", category: "Sync")
+    public static let sync = Logger(subsystem: "app.healthloom", category: "Sync")
     /// Reserved for historical-backfill chunk events (WP-15's
     /// `BackfillCoordinator`) -- no call site in this WP; see this file's
     /// header.
-    public static let backfill = Logger(subsystem: "com.healthloom.app", category: "Backfill")
+    public static let backfill = Logger(subsystem: "app.healthloom", category: "Backfill")
     /// Matches `HealthLoomApp.swift`'s existing `BackgroundSync` category name
     /// exactly (see this file's header) -- reserved here for any future
     /// SyncKit-side background-sync logging; WP-16's own app-target logger
     /// remains the active emitter for that category today.
-    public static let background = Logger(subsystem: "com.healthloom.app", category: "BackgroundSync")
+    public static let background = Logger(subsystem: "app.healthloom", category: "BackgroundSync")
     /// Reserved for `GoogleAuthManager`/consent-flow events
     /// (GoogleHealthClient) -- no call site added in this WP (that package
     /// is read-only per this WP's scope fence); declared for the same
     /// forward-consistency reason as `.backfill`.
-    public static let auth = Logger(subsystem: "com.healthloom.app", category: "Auth")
+    public static let auth = Logger(subsystem: "app.healthloom", category: "Auth")
 }

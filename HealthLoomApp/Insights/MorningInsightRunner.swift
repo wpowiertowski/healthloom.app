@@ -37,7 +37,7 @@ struct MorningInsightRunner {
     // so both discarding call sites (the host and the scene-phase hook)
     // stay thin. The message is the failure case — static reasons, counts,
     // typed model errors — never insight text or health values.
-    private static let logger = Logger(subsystem: "com.healthloom.app", category: "MorningInsight")
+    private static let logger = Logger(subsystem: "app.healthloom", category: "MorningInsight")
     /// `sourceProvider` stamped on persisted insights. A namespace, not a
     /// `ProviderID`: these rows are insight deliveries, and the tier that
     /// served is in the trace (WP-30 reads `ChatTurn`, not this).

@@ -5027,3 +5027,7 @@ GoogleHealthClient: `revokeRefreshToken()` (RFC 7009 POST to `oauth2.googleapis.
 **Carryovers closed:** WP-31 L6 (could-narrowing), WP-33 N2/N3/snapshot-docs, WP-35 F9 (gate-cache reset + explicit swipe acceptance), F10 (shared authorizedShareTypes), F11 (genuine seeding), N2 (zero `!`).
 
 **Counts:** unit 143→145 (locale + prewarm); UI 23 (hit-region audits on Today/Coach/Dashboard/Activities/PromptEditor; toggle screens documented out); CoachKit 191+29 beta / 219 stable; snapshots 36. Full matrix green under global strictness, zero-warning grep.
+
+## Bundle-ID rename · com.healthloom.app → app.healthloom
+
+Owner directive, post-WP-38. project.yml PRODUCT_BUNDLE_IDENTIFIER → app.healthloom (+ regenerated project), Makefile simctl line, all os.Logger subsystems (app/Coach/MorningInsight + SyncKit DiagnosticsLog 4x). DELIBERATELY UNCHANGED: OAuth custom URL scheme (com.healthloom.app — independent of bundle ID; rotating it would force Google-console churn for nothing), BG task ID (com.healthloom.sync.refresh — declared ID, works regardless), all persisted com.healthloom.* keys (keychain service, UserDefaults, backfill markers). Human follow-up: the Google Cloud iOS OAuth client is bundle-bound — if one was already created with com.healthloom.app it must be updated to app.healthloom in the console.

@@ -48,7 +48,7 @@ clean:
 	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
 		(cd Packages/$$pkg && swift package clean); \
 	done
-	xcrun simctl uninstall booted com.healthloom.app 2>/dev/null || true
+	xcrun simctl uninstall booted app.healthloom 2>/dev/null || true
 
 prune-branches:
 	@git fetch --prune origin
