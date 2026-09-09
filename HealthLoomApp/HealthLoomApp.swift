@@ -81,34 +81,22 @@ struct HealthLoomApp: App {
                 .environment(appEnvironment)
                 .modelContainer(appEnvironment.modelContainer)
         }
-        // WP-34: foreground half of the morning-insight trigger. The
-        // runner's once-daily + after-5am + fresh-sync gates decide; the
-        // BG-sync completion path below calls the same entry, so a
-        // background run and a foreground activation can never
-        // double-generate.
-        .onChange(of: scenePhase) { _, phase in
+        // Single scenePhase dispatcher (was three modifiers — third-party
+        // item 14). `initial: true` covers launch; the inactive attach
+        // fires nothing (guard). Arms: WP-34's morning-insight trigger
+        // (own once-daily gate; the BG path below shares the entry so a
+        // double-generate is impossible), the tip listener (no-op
+        // re-entry; idles without transactions, so no UITest gate), and
+        // iCloud sync (UITest-gated here — hermetic launches must never
+        // reach CloudKit; the engine degrades to silent local-only).
+        .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active else { return }
             Task {
                 await InsightRunnerHost.runIfDue()
             }
-        }
-        // Tip jar lifetime: transaction listener + unfinished completion.
-        // Ungated by UITest flags — the listener idles without
-        // transactions, and no UI test purchases. `initial: true` covers
-        // launch; later foregrounds re-enter harmlessly (no-op guard).
-        .onChange(of: scenePhase, initial: true) { _, phase in
-            guard phase == .active else { return }
             Task {
                 await appEnvironment.tipStore.begin()
             }
-        }
-        // iCloud sync on launch, every foreground, and on demand
-        // (Settings). Gated out of UI tests (hermetic launches must never
-        // reach CloudKit); the engine itself degrades to silent
-        // local-only without an iCloud account. `initial: true` covers
-        // launch; the runner's own once-daily gate is unrelated.
-        .onChange(of: scenePhase, initial: true) { _, phase in
-            guard phase == .active else { return }
             if !appEnvironment.launchConfiguration.isUITest {
                 Task {
                     await appEnvironment.cloudSync.syncNow()
