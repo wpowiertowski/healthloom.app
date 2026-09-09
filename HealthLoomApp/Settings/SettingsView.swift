@@ -328,7 +328,7 @@ struct SettingsView: View {
             // network (round-2 item 7).
             .task {
                 let config = appEnvironment.launchConfiguration
-                if config.tipsStub != nil || !config.isUITest {
+                if !config.tipsStub.isEmpty || !config.isUITest {
                     await appEnvironment.tipStore.loadProducts()
                 }
             }

@@ -63,11 +63,11 @@ final class TipStoreFixture {
 
     init(
         fetchProducts: (([String]) async throws -> [Product])? = nil,
-        uiTestStub: TipUITestStub? = nil
+        uiTestStubs: [TipUITestStub] = []
     ) throws {
         let ephemeral = try EphemeralDefaults(prefix: "tips")
         self.ephemeral = ephemeral
-        self.store = TipStore(defaults: ephemeral.defaults, fetchProducts: fetchProducts, uiTestStub: uiTestStub)
+        self.store = TipStore(defaults: ephemeral.defaults, fetchProducts: fetchProducts, uiTestStubs: uiTestStubs)
     }
 
     /// Same-suite access for the persistence round-trip (new store, same
@@ -325,6 +325,21 @@ struct TipStoreTests {
         // fetched its own. Either way two fetches, one settled store.
         #expect(script.calls == 2)
         #expect(store.loadState == .loaded)
+    }
+
+    @Test("stub sequence settles retry without the network")
+    func stubSequence() async throws {
+        // Fix-round F1: FIFO stub values — the failed first load and the
+        // retry that settles it both resolve inside the sequence, so the
+        // UI retry flow is hermetic end to end.
+        let fixture = try TipStoreFixture(uiTestStubs: [.failed, .emptyProducts])
+        defer { withExtendedLifetime(fixture) {} }
+        let store = fixture.store
+        await store.loadProducts()
+        #expect(store.loadState == .failed)
+        await store.loadProducts()
+        #expect(store.loadState == .loaded)
+        #expect(store.products.isEmpty)
     }
 
     @Test("tip count persists across instances")

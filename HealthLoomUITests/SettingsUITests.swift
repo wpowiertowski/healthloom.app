@@ -50,7 +50,7 @@ final class SettingsUITests: XCTestCase {
     @MainActor
     func testTipsFailedRetrySettles() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-UITestSeedData", "-UITestTipsStub=failed"]
+        app.launchArguments = ["-UITestSeedData", "-UITestTipsStub=failed,empty"]
         app.launch()
 
         let settingsTab = app.descendants(matching: .any)["tabbar.settings"]
@@ -60,10 +60,11 @@ final class SettingsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["settings.tips.loadError"].waitForExistence(timeout: 10))
         let retry = app.buttons["settings.tips.retry"]
         XCTAssertTrue(retry.waitForExistence(timeout: 10))
-        // The stub is one-shot: Retry exercises the REAL fetch path and
-        // settles (unknown product IDs resolve empty — needs network;
-        // documents the same assumption every StoreKit UI test makes).
+        // Fix-round F1: the stub is a SEQUENCE (`failed,empty`), so
+        // Retry consumes the next stubbed value and settles to
+        // coming-soon with zero network involved — no network-flaky UI
+        // test ships.
         retry.tap()
-        XCTAssertTrue(app.staticTexts["settings.tips.status"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["settings.tips.status"].waitForExistence(timeout: 10))
     }
 }

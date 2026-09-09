@@ -82,12 +82,14 @@ enum TipLoadState: Equatable, Sendable {
     case failed
 }
 
-/// UI-test catalogue stub (round-2 item 7): launch-arg-driven, ONE-SHOT
-/// (consumed by the first `loadProducts`, so a Retry tap exercises the
-/// real fetch path). Covers the settled UI states that need no StoreKit
-/// session — coming-soon and failed+retry. Tier buttons need real
-/// `Product` instances, which only a StoreKit session can mint (see the
-/// F1 TODO in TipStoreTests); they stay manual-QA until then.
+/// UI-test catalogue stub (round-2 item 7): launch-arg-driven, consumed
+/// FIFO — `-UITestTipsStub=failed,empty` fails the first load and settles
+/// the retry, so multi-arm UI flows stay hermetic end to end (fix-round
+/// F1: Retry must never touch the live fetch). Covers the settled UI
+/// states that need no StoreKit session — coming-soon and failed+retry.
+/// Tier buttons need real `Product` instances, which only a StoreKit
+/// session can mint (see the F1 TODO in TipStoreTests); they stay
+/// manual-QA until then.
 enum TipUITestStub: Sendable {
     case emptyProducts
     case failed
@@ -118,17 +120,18 @@ final class TipStore {
     /// real catalogue fetch. Tests inject suspenders/failures to pin the
     /// cancellation and offline arms deterministically.
     let fetchProducts: ([String]) async throws -> [Product]
-    /// One-shot UI-test stub (round-2 item 7); nil in production.
-    private var uiTestStub: TipUITestStub?
+    /// UI-test stub queue (round-2 item 7 + fix-round F1); empty in
+    /// production.
+    private var uiTestStubs: [TipUITestStub]
 
     init(
         defaults: UserDefaults = .standard,
         fetchProducts: (([String]) async throws -> [Product])? = nil,
-        uiTestStub: TipUITestStub? = nil
+        uiTestStubs: [TipUITestStub] = []
     ) {
         self.defaults = defaults
         self.fetchProducts = fetchProducts ?? { ids in try await Product.products(for: ids) }
-        self.uiTestStub = uiTestStub
+        self.uiTestStubs = uiTestStubs
         self.tipCount = defaults.integer(forKey: Self.tipCountKey)
     }
 
@@ -175,12 +178,12 @@ final class TipStore {
     }
 
     private func performLoad() async {
-        // One-shot UI-test stub (round-2 item 7): apply, consume, return.
-        // Consuming BEFORE applying matters — Retry then exercises the
-        // real fetch path.
-        if let stub = uiTestStub {
-            uiTestStub = nil
-            switch stub {
+        // UI-test stub queue (round-2 item 7 + fix-round F1): apply the
+        // head, consume it, return — never touching the network. Retry
+        // consumes the NEXT value, so stubbed UI flows settle entirely
+        // inside the stub sequence.
+        if !uiTestStubs.isEmpty {
+            switch uiTestStubs.removeFirst() {
             case .emptyProducts:
                 products = []
                 loadState = .loaded
@@ -314,7 +317,9 @@ final class TipStore {
     /// through the gate (Ask-to-Buy approvals and re-deliveries land
     /// here, not in `purchase()`); verified refunds clear sticky UI;
     /// unverified stays unfinished (N2 posture: never acknowledge).
-    /// Setting `lastResult` here clears the sticky pending state (item 8).
+    /// Setting `lastResult` here clears the sticky pending state
+    /// (round-1 item 8 — the sticky-`lastResult` fix; NOT round-2 item 8,
+    /// which renamed the counting gate).
     private func handle(_ update: VerificationResult<Transaction>) async {
         switch update {
         case .verified(let transaction):
@@ -355,9 +360,10 @@ final class TipStore {
     }
 
     /// Records one completed tip. Internal (not private) so tests pin
-    /// persistence without a purchase; production calls it only after
-    /// `finish()` (see ordering invariant). Grows the PurchaseDriver seam
-    /// (fast-follow F1) instead if that lands.
+    /// persistence without a purchase; production reaches it ONLY
+    /// through `countTipIfNew` (which runs after `finish()` — see
+    /// ordering invariant), never directly. Grows the PurchaseDriver
+    /// seam (fast-follow F1) instead if that lands.
     func recordTip() {
         tipCount += 1
         defaults.set(tipCount, forKey: Self.tipCountKey)
