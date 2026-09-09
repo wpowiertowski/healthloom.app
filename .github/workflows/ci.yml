@@ -49,23 +49,47 @@ jobs:
         # The Fitbit Web API sunsets September 2026; all traffic must go
         # through the Google Health Connect REST API (health.googleapis.com).
         # Excludes Tests (a test may name the legacy host to assert against
-        # it) and markdown (changelog/progress history).
+        # it) and markdown (changelog/progress history). Matches any
+        # fitbit.com host (third-party F9): the legacy OAuth dance lived on
+        # www.fitbit.com, not just api.fitbit.com.
+        #
+        # Non-vacuous by construction (third-party F2): `grep` exits 2 on
+        # a missing path, which `if` treats as false and would pass an
+        # empty tree — so the scope dirs are asserted to exist first, and
+        # any rc >= 1 fails the step (1 = match found, 2+ = grep error).
         run: |
           set -euo pipefail
-          if grep -rn "api\.fitbit\.com" --include='*.swift' Packages/*/Sources HealthLoomApp; then
-            echo "legacy Fitbit Web API reference found" >&2
+          for dir in Packages/CoreModel/Sources Packages/Secrets/Sources Packages/GoogleHealthClient/Sources Packages/SyncKit/Sources Packages/CoachKit/Sources HealthLoomApp; do
+            test -d "$dir" || { echo "guard scope dir missing: $dir" >&2; exit 1; }
+          done
+          # grep rc: 0 = match, 1 = clean, 2+ = error — only 1 passes.
+          rc=0
+          grep -rn -E "fitbit\\.com" --include='*.swift' Packages/*/Sources HealthLoomApp || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "legacy Fitbit reference found (or grep failed: rc=$rc)" >&2
             exit 1
           fi
-          echo "no legacy Fitbit Web API references"
+          echo "no legacy Fitbit references"
 
       - name: No Claude server tools in any code path
         # BYO-key tiers are chat-only with no tool use; server-side tool
         # execution must never appear (both known spellings). Same
-        # production-only scope as above.
+        # production-only scope as above. Non-vacuous guard: same
+        # dir-exists + rc>=1 pattern as the Fitbit step (third-party F2).
+        # Structural companion (third-party F10): the Claude ping body is
+        # built by `ClaudeMessageRequest`, whose type admits no tools
+        # field — see CloudKeyValidatorTests' wire-format test, which is
+        # the assertion with teeth; this grep is the tripwire.
         run: |
           set -euo pipefail
-          if grep -rn -E "serverTools|server_tools" --include='*.swift' Packages/*/Sources HealthLoomApp; then
-            echo "Claude server-tools reference found" >&2
+          for dir in Packages/CoreModel/Sources Packages/Secrets/Sources Packages/GoogleHealthClient/Sources Packages/SyncKit/Sources Packages/CoachKit/Sources HealthLoomApp; do
+            test -d "$dir" || { echo "guard scope dir missing: $dir" >&2; exit 1; }
+          done
+          # grep rc: 0 = match, 1 = clean, 2+ = error — only 1 passes.
+          rc=0
+          grep -rn -E "serverTools|server_tools" --include='*.swift' Packages/*/Sources HealthLoomApp || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "Claude server-tools reference found (or grep failed: rc=$rc)" >&2
             exit 1
           fi
           echo "no Claude server-tools references"
@@ -74,9 +98,16 @@ jobs:
         # The HealthKit source attribution derives from the bundle display
         # name; a rename here silently rebrands every sample the app wrote.
         # (App Store Connect listing itself is a human checklist item.)
+        # Anchored extraction (third-party F4): an unanchored substring
+        # grep would pass on a comment mentioning the name. python3 +
+        # plistlib because this job runs on ubuntu (no plutil there).
         run: |
           set -euo pipefail
-          grep -q '<string>HealthLoom</string>' HealthLoomApp/Info.plist
+          name=$(python3 -c "import plistlib; print(plistlib.load(open('HealthLoomApp/Info.plist','rb'))['CFBundleDisplayName'])")
+          if [ "$name" != "HealthLoom" ]; then
+            echo "CFBundleDisplayName is '$name', expected 'HealthLoom'" >&2
+            exit 1
+          fi
           grep -q 'CFBundleDisplayName: HealthLoom' project.yml
           echo "display name consistent"
 

@@ -86,6 +86,37 @@ struct StubCloudKeyValidator: CloudKeyValidating {
     }
 }
 
+/// The Claude key-validation ping body as a type, not a dictionary
+/// (third-party F10, structural rule): the ping is chat-only with no tool
+/// use, and a `[String: Any]` body would admit a `"tools"` entry without
+/// the compiler noticing. With this struct the server-side tool wire
+/// types (`web_search_20250305`, `code_execution_*`, …) are
+/// unrepresentable — there is no field for them to live in, and the
+/// wire-format test below fails on any extra key.
+struct ClaudeMessageRequest: Encodable, Sendable {
+    struct Message: Encodable, Sendable {
+        var role: String
+        var content: String
+    }
+
+    var model: String
+    var messages: [Message]
+    var maxTokens: Int
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case messages
+        case maxTokens = "max_tokens"
+    }
+
+    /// The 1-token ping: cheapest authenticated call, fixed shape.
+    static let ping = ClaudeMessageRequest(
+        model: CloudModelOptions.claudeDefault,
+        messages: [Message(role: "user", content: "ok")],
+        maxTokens: 1
+    )
+}
+
 struct LiveCloudKeyValidator: CloudKeyValidating {
     private let session: URLSession
 
@@ -118,12 +149,7 @@ struct LiveCloudKeyValidator: CloudKeyValidating {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.timeoutInterval = 15
-        let body: [String: Any] = [
-            "model": CloudModelOptions.claudeDefault,
-            "max_tokens": 1,
-            "messages": [["role": "user", "content": "ok"]],
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try? JSONEncoder().encode(ClaudeMessageRequest.ping)
         return await perform(request, invalidStatusCodes: [401], invalidBodyMarker: nil)
     }
 

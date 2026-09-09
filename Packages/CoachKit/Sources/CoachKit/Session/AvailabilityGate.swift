@@ -17,7 +17,10 @@ import FoundationModels
 /// UI-facing coach availability. Today this covers the on-device model only;
 /// WP-28a extends it with PCC states (see the `pccNotes` extension point below)
 /// without reshaping call sites.
-public enum CoachAvailability: Equatable, Sendable {
+/// `CaseIterable` (third-party F7): the degradation-matrix test iterates
+/// `allCases` minus `.available`, so a future case is covered by default
+/// instead of silently untested.
+public enum CoachAvailability: Equatable, Sendable, CaseIterable {
     case available
     case deviceNotEligible
     case appleIntelligenceNotEnabled

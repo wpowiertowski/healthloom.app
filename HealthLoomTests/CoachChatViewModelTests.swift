@@ -140,23 +140,23 @@ struct CoachChatViewModelTests {
 
     @Test("send reports queuing failures without queueing")
     func sendReportsFailure() async throws {
-        let unavailable = try makeViewModel(
-            session: TestCoachSession(),
-            availability: .modelNotReady
-        )
-        unavailable.onAppear()
-        try await waitForCondition({ unavailable.availability != .available }, timeout: 2)
-        #expect(unavailable.send("hi") == false)
-        #expect(unavailable.turns.isEmpty)
-
+        // Third-party F15: the .modelNotReady leg lived here AND in the
+        // gate loop below — it belongs to the loop (allCases covers it),
+        // so this test keeps only the blank-input case it owns.
         let viewModel = try makeViewModel(session: TestCoachSession())
         #expect(viewModel.send("   ") == false)
         #expect(viewModel.turns.isEmpty)
     }
 
-    @Test("every non-available gate blocks sends with no turns (WP-38 degradation matrix)")
-    func allUnavailableGatesBlock() async throws {
-        for availability in [CoachAvailability.deviceNotEligible, .appleIntelligenceNotEnabled, .modelNotReady, .unavailable] {
+    // Third-party F8: named for the leg it covers — the no-Apple-
+    // Intelligence coach leg of the WP-38 degradation matrix. The other
+    // three legs live where their seams are: no-Google-account in
+    // DashboardSnapshotTests (nil-state row), HK-denied in
+    // TodayMetricsTests (nil readings for every kind), offline sync in
+    // SyncEngineTests (transport failure reports per-type error).
+    @Test("coach leg: every non-available gate blocks sends with no turns")
+    func unavailableGatesBlockCoachSends() async throws {
+        for availability in CoachAvailability.allCases.filter({ $0 != .available }) {
             let viewModel = try makeViewModel(session: TestCoachSession(), availability: availability)
             viewModel.onAppear()
             try await waitForCondition({ viewModel.availability != .available }, timeout: 2)
