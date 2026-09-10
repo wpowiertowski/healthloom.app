@@ -415,6 +415,60 @@ import Testing
         #expect(!uuids.contains("run-1"))
     }
 
+    // MARK: - Fix F1, split→unsplit flip-flop never duplicates
+
+    @Test func splitToUnsplitTransitionWritesNothingNew() async throws {
+        // Round-7 fix F1: run 1 WITH coverage stores split parts
+        // (`id#split-0/1`); run 2 WITHOUT coverage maps the same point
+        // direct (base `id`) and must SKIP via the split-bases prefix
+        // check — base-emit alongside stored parts duplicated
+        // permanently pre-fix. (Reverse was already safe via
+        // base-known.) Two engines sharing one container+store, exactly
+        // like a coverage flip-flop across runs.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        let point = TypeMapperFixtures.stepsPoint(
+            id: "steps-flip-1",
+            start: BackfillTestFixtures.date("2026-07-09T09:00:00Z"),
+            end: BackfillTestFixtures.date("2026-07-09T11:00:00Z"),
+            count: 1200
+        )
+        mock.setPage(type: .steps, pageToken: nil, page: Page(points: [point], nextPageToken: nil))
+        let store = MockHealthStore()
+        let writer = HealthKitWriter(store: store)
+        let coverage = StubWatchCoverageProvider()
+        coverage.windows = [WatchCoverageWindow(
+            workoutUUID: UUID(),
+            start: BackfillTestFixtures.date("2026-07-09T10:00:00Z"),
+            end: BackfillTestFixtures.date("2026-07-09T10:40:00Z")
+        )]
+        let splitting = SyncEngine(
+            client: mock,
+            writer: writer,
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow),
+            conflictFilter: WatchConflictResolver(
+                coverageProvider: coverage,
+                writer: writer,
+                preference: StubWatchPriorityPreference(enabled: true)
+            )
+        )
+        let first = await splitting.sync(type: .steps)
+        #expect(first.status == .ok)
+        #expect(store.savedBatches.flatMap { $0 }.count == 2)
+        // Coverage off (identity filter): the unsplit base emit.
+        let plain = SyncEngine(
+            client: mock,
+            writer: writer,
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let second = await plain.sync(type: .steps)
+        #expect(second.status == .ok)
+        #expect(second.itemCount == 0)
+        #expect(store.savedBatches.flatMap { $0 }.count == 2)
+    }
+
     // MARK: - Item 10, failed completion save surfaces
 
     struct SaveBoom: Error {}

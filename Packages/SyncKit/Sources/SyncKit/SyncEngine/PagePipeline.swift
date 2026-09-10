@@ -47,14 +47,31 @@ nonisolated struct PagePipeline: Sendable {
     /// window is pathological — stop with partial progress kept.
     static let maxPages = 100
 
-    /// Dedupe for one mapped arm (round-7 item 3): skip iff the
-    /// point's base ID is known (legacy pre-suffix rows carry the bare
-    /// point ID) or EVERY emitted UUID is known (re-syncs reproduce
-    /// expansion UUIDs exactly, so the full set matches). Partial
-    /// presence is unreachable — batch saves are atomic — so no
-    /// per-sample subset writes: a simple all-check suffices.
-    private static func isKnown(baseID: String, uuids: [String], in known: Set<String>) -> Bool {
-        known.contains(baseID) || uuids.allSatisfy(known.contains)
+    /// Dedupe for one mapped arm (round-7 item 3 + fix-round F1): skip
+    /// iff the point's base ID is known (legacy pre-suffix rows carry
+    /// the bare point ID), or EVERY emitted UUID is known (re-syncs
+    /// reproduce expansion UUIDs exactly), or the point's SPLIT PARTS
+    /// are known (the flip-flop direction: an unsplit base sample
+    /// arriving after its split parts stored must skip — the reverse
+    /// was already safe via base-known, but base-emit alongside stored
+    /// parts duplicated permanently). Partial presence is unreachable
+    /// — batch saves are atomic — so no per-sample subset writes.
+    ///
+    /// The `'#'` separator is reserved (round-7 fix F1): raw Google
+    /// point IDs are numeric wire IDs that never contain it, so a
+    /// `base#role` prefix test cannot misfire on unrelated rows.
+    /// `splitBases` is computed once per page from the queried set
+    /// (in-page inserts are base IDs, already covered by the base
+    /// leg) — not scanned per point.
+    private static func isKnown(
+        baseID: String,
+        uuids: [String],
+        splitBases: Set<String>,
+        in known: Set<String>
+    ) -> Bool {
+        known.contains(baseID)
+            || uuids.allSatisfy(known.contains)
+            || splitBases.contains(baseID)
     }
 
     private static func emittedUUID(of object: HKObject) -> String? {
@@ -86,7 +103,13 @@ nonisolated struct PagePipeline: Sendable {
         knownExternalIDs: Set<String>,
         fetch: @Sendable (String?) async throws -> Page
     ) async throws -> (total: Int, localOnly: [GoogleDataPoint], hitPageCap: Bool) {
+        // Round-7 fix F1: base IDs with STORED split parts, derived
+        // once from the queried set (in-page inserts are base IDs,
+        // already covered by the base leg — see `isKnown`).
         var known = knownExternalIDs
+        let splitBases: Set<String> = Set(knownExternalIDs.compactMap { uuid in
+            uuid.firstIndex(of: "#").map { String(uuid[..<$0]) }
+        })
         var total = 0
         var localOnly: [GoogleDataPoint] = []
         var token: String? = nil
@@ -100,7 +123,7 @@ nonisolated struct PagePipeline: Sendable {
             }
             do {
                 let page = try await fetch(token)
-                let processed = try await processPage(page.points, knownExternalIDs: &known)
+                let processed = try await processPage(page.points, knownExternalIDs: &known, splitBases: splitBases)
                 total += processed.itemCount
                 localOnly += processed.localOnlyPoints
                 pages += 1
@@ -134,7 +157,8 @@ nonisolated struct PagePipeline: Sendable {
     /// the retry's fresh existence query finds it, same as before.)
     func processPage(
         _ points: [GoogleDataPoint],
-        knownExternalIDs: inout Set<String>
+        knownExternalIDs: inout Set<String>,
+        splitBases: Set<String> = []
     ) async throws -> PageProcessing {
         var known = knownExternalIDs
         var batch: [HKObject] = []
@@ -150,7 +174,7 @@ nonisolated struct PagePipeline: Sendable {
             let mapped = await conflictFilter.resolve(await TypeMapper.map(point), for: point)
             switch mapped {
             case .quantity(let sample):
-                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: sample)].compactMap({ $0 }), in: known) else { continue }
+                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: sample)].compactMap({ $0 }), splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(sample)
                 writtenCount += 1
@@ -159,12 +183,12 @@ nonisolated struct PagePipeline: Sendable {
                 // (architecture.md D13.3) — N part samples for one point,
                 // each with its own derived UUID (round-7 item 3). One
                 // point, one itemCount contribution.
-                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), in: known) else { continue }
+                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(contentsOf: samples)
                 writtenCount += 1
             case .category(let samples):
-                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), in: known) else { continue }
+                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(contentsOf: samples)
                 writtenCount += 1
@@ -173,7 +197,7 @@ nonisolated struct PagePipeline: Sendable {
                 // `HKObject`/`HKSample` built synchronously by
                 // `TypeMapper.map(_:)` — same batch/existence-diff path
                 // as every other arm, no parallel mechanism.
-                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: correlation)].compactMap({ $0 }), in: known) else { continue }
+                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: correlation)].compactMap({ $0 }), splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(correlation)
                 writtenCount += 1

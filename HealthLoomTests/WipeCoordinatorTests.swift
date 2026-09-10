@@ -261,6 +261,25 @@ struct StoreDeleterTests {
         #expect(try StoreDeleter.deleteStoreFiles(in: [journal]).count == 1)
         #expect(!FileManager.default.fileExists(atPath: journal.path))
     }
+
+    @Test("enumeration cross-check names future files loudly")
+    func uncoveredFilesTripwire() throws {
+        // Round-7 fix N1: a directory holding exactly the inventory
+        // reports nothing; one extra (future) file is named. The
+        // production full-inventory path throws on a non-empty answer
+        // (fail the step, never escape silently); explicit-subset
+        // deletes stay quiet (their siblings are not their scope).
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let covered = dir.appending(path: "CoreModel.store")
+        try Data("x".utf8).write(to: covered)
+        #expect(try StoreDeleter.uncoveredFiles(in: dir, coveredBy: [covered]).isEmpty)
+        let future = dir.appending(path: "FutureSidecar.db")
+        try Data("x".utf8).write(to: future)
+        #expect(try StoreDeleter.uncoveredFiles(in: dir, coveredBy: [covered]) == ["FutureSidecar.db"])
+        // Explicit-subset deletes do not trip on siblings.
+        #expect(try StoreDeleter.deleteStoreFiles(in: [covered]).count == 1)
+    }
 }
 
 // MARK: - Full wipe (scripted doubles)

@@ -187,8 +187,14 @@ public actor WatchConflictResolver: ConflictFiltering {
                 // Round-7 item 3: per-part UUIDs — shared `point.id`
                 // across split parts made HealthKit reject the batch.
                 // Suffixed only when actually split (a lone part keeps
-                // the base UUID, consistent with the unsplit path, so
-                // coverage flip-flops don't duplicate).
+                // the base UUID, consistent with the unsplit path).
+                // Coverage flip-flops, stated exactly (round-7 fix F1):
+                // unsplit→split is safe via base-known (the base row
+                // already stored skips the split point); split→unsplit
+                // is safe via the split-bases prefix check in the
+                // pipeline guard (stored parts skip the base emit).
+                // Same-run coverage is stable (no flip-flop within a
+                // run at all).
                 let suffixed = slices.count > 1
                 for (index, slice) in slices.enumerated() {
                     var part = pure
