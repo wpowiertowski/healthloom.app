@@ -497,9 +497,12 @@ struct CloudSyncTests {
 
     @Test("multi-page server turns are all pulled")
     func pagedServerTurnsAllPulled() async throws {
-        // Round-6 item 4: the stub models a 2-per-page server; the
-        // engine must follow the cursor until nil (5 turns, 3 pages).
-        // Pre-fix only the first page arrived.
+        // Round-6 item 4 + fix-round N1 (history stated exactly):
+        // pre-fix there was NO paging at all — one single-shot fetch
+        // whose cursor was discarded, so past CloudKit's page limit
+        // only an arbitrary first fragment arrived. The stub models a
+        // 2-per-page server; the engine must walk all 3 pages for the
+        // 5 turns (a single fetch could return at most 2).
         let harness = try CloudSyncHarness.make()
         await harness.db.setTurnPageSize(2)
         let base = harness.now.addingTimeInterval(-5000)

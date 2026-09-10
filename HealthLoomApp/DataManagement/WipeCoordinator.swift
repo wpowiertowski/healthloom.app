@@ -145,9 +145,12 @@ final class WipeCoordinator {
         // (the engine's `deleteAllCloudData` orders it) — without this
         // the wiped transcript/settings pull straight back on relaunch,
         // breaking the alert's "cannot be undone" promise.
+        // "Cleared", not "deleted" (fix-round N2): the count is
+        // attempted names, each ending absent (deleted or already
+        // missing) — the function cannot tell which.
         await perform(.cloudKit) {
-            let deleted = try await self.deps.deleteCloudKit()
-            return "\(deleted) iCloud record(s) deleted"
+            let cleared = try await self.deps.deleteCloudKit()
+            return "\(cleared) iCloud record(s) cleared"
         }
 
         // 5. Store files (container invalid afterwards by design).

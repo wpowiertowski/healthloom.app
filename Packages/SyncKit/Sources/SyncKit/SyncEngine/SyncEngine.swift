@@ -266,6 +266,16 @@ public actor SyncEngine {
                     PagePipeline.upsertLocalSample(for: point, context: context)
                 }
                 totalItemCount += walked.total
+                // Fix-round N3: a cap-hit still advances the cursor
+                // with a partial `.ok` — log it loudly. Anything past
+                // the cap in this window is recovered only through
+                // lookback overlap on later runs, so silence here would
+                // read as full success.
+                if walked.hitPageCap {
+                    DiagnosticsLog.sync.notice(
+                        "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial window committed; remainder beyond lookback overlap will not be revisited."
+                    )
+                }
             } catch let walk as PageWalkPartial {
                 totalItemCount += walk.total
                 throw walk.underlying

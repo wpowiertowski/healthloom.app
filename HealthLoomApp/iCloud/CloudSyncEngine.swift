@@ -468,10 +468,12 @@ final class CloudSyncEngine {
         // the push window's newest-500 — server turns older than the
         // window (a second device's history, or >500 arrivals between
         // syncs) re-inserted EVERY sync, growing the store without
-        // bound. Cost, stated: one uncapped fetch of tiny rows per
-        // sync — strictly cheaper than the unbounded duplicate growth
-        // it replaces (which also re-pushes later). The push window
-        // itself stays capped (upload bound, unchanged).
+        // bound. Cost, stated: one uncapped fetch of whole (small)
+        // `ChatTurn` rows per sync — SwiftData offers no keys-only
+        // fetch, so these are full rows, not projections — strictly
+        // cheaper than the unbounded duplicate growth this replaces
+        // (which also re-pushes later). The push window itself stays
+        // capped (upload bound, unchanged).
         let local = try localTurnKeys()
         let context = ModelContext(container)
         var inserted = false
@@ -498,7 +500,13 @@ final class CloudSyncEngine {
     /// stale watermarks (next sync re-pushes local state — fail-safe);
     /// watermarks-first would repull deleted data on relaunch,
     /// breaking the alert's "cannot be undone" promise.
-    /// Returns the deleted-record count for the wipe ledger.
+    /// Returns the ATTEMPTED-record count for the wipe ledger
+    /// (fix-round N2 — semantics stated exactly: a non-throwing
+    /// delete is server-confirmed gone, and a missing record was
+    /// already gone, so every counted name ends absent; but the
+    /// function cannot distinguish "deleted" from "already
+    /// missing", hence "cleared", not "deleted" — a throw fails
+    /// the step loudly instead of short-counting).
     func deleteAllCloudData() async throws(CloudSyncError) -> Int {
         var names = [
             CloudRecordType.settingsRecordName,
@@ -561,7 +569,11 @@ final class CloudSyncEngine {
     }
 
     /// Full local dedupe-key set for pull (round-6 item 5) — uncapped
-    /// (see `pullMissingTurns` for the cost reasoning).
+    /// full-row fetch (fix-round N4: stated exactly — SwiftData offers
+    /// no keys-only fetch, so these are whole `ChatTurn` rows, not
+    /// projections; they are small (role/content/date) and the
+    /// unbounded-duplicate growth this replaces is strictly worse).
+    /// See `pullMissingTurns` for the cost reasoning.
     private func localTurnKeys() throws(CloudSyncError) -> Set<String> {
         Set(try localTurnRows(limit: nil).map {
             Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt)

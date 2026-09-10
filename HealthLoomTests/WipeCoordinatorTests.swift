@@ -160,27 +160,32 @@ struct HealthKitSourceDeleterLiveTests {
         #expect(progress.map(\.1) == [10_000, 42])
     }
 
-    @Test("revoked type with silent zero fails loud, never silent")
-    func revokedSilentZeroFailsLoud() async throws {
-        // Round-6 item 14: a revoked grant makes success-0
-        // unverifiable ("nothing there" vs "denied") — it must land
-        // a failure row (ledger/partial path), never a silent success.
-        // A real deletion count still succeeds even when revoked.
+    @Test("denied silent zero fails loud; undetermined zero is provably empty")
+    func wipeStatusTable() async throws {
+        // Fix-round F1: the full authorization-status table. Denied +
+        // silent zero is unverifiable → failure row (ledger/partial).
+        // Never-granted (.notDetermined) + zero is PROVABLY empty →
+        // success (the old Bool seam failed the step here). A real
+        // deletion count succeeds under any status; both types attempt.
         let store = RecordingWipeStore()
         let stepsType = try StubSource.stepsType()
         let sleepType = try #require(HKObjectType.categoryType(forIdentifier: .sleepAnalysis))
+        let restType = try #require(HKObjectType.quantityType(forIdentifier: .restingHeartRate))
         store.cannedCounts = [sleepType.identifier: 7]
         let outcomes = await HealthKitSourceDeleter.deleteAppWrittenLive(
-            types: [stepsType, sleepType],
+            types: [stepsType, sleepType, restType],
             writer: HealthKitWriter(store: store),
-            isAuthorized: { _ in false }
+            authorizationStatus: { type in
+                type == stepsType ? .sharingDenied : .notDetermined
+            }
         )
         guard case .failure = try #require(outcomes[stepsType]) else {
-            Issue.record("revoked silent zero should fail")
+            Issue.record("denied silent zero should fail")
             return
         }
         #expect(try outcomes[sleepType]?.get() == 7)
-        #expect(store.deleteAllAppDataCalls == [stepsType, sleepType]) // both ATTEMPTED
+        #expect(try outcomes[restType]?.get() == 0) // never granted: provably empty
+        #expect(store.deleteAllAppDataCalls == [stepsType, sleepType, restType]) // all ATTEMPTED
     }
 
     @Test("live wipe isolates per-type failures")

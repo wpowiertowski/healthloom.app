@@ -235,6 +235,38 @@ import Testing
         #expect(mock.callCount(type: .steps, pageToken: "echo") == 1)
     }
 
+    // MARK: - N3, page cap terminates deep walks
+
+    @Test func pageCapTerminatesDeepWalks() async throws {
+        // Fix-round N3: 150 chained pages must stop at the 100-page
+        // cap (100 fetches, 100 counted) — the walk terminates with
+        // partial progress instead of spinning, and the cap-hit log
+        // path above executes.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        for i in 0..<150 {
+            let token: String? = i == 0 ? nil : "t\(i)"
+            mock.setPage(
+                type: .steps,
+                pageToken: token,
+                page: Page(
+                    points: [BackfillTestFixtures.stepsPoint(id: "cap-\(i)", start: Self.fixedNow, end: Self.fixedNow.addingTimeInterval(60))],
+                    nextPageToken: "t\(i + 1)"
+                )
+            )
+        }
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .steps)
+        #expect(outcome.status == .ok)
+        #expect(outcome.itemCount == PagePipeline.maxPages)
+        #expect(mock.calls.count == PagePipeline.maxPages)
+    }
+
     // MARK: - Item 11, duplicated localOnly point writes+counts once
 
     @Test func duplicateLocalOnlyPointWritesAndCountsOnce() async throws {

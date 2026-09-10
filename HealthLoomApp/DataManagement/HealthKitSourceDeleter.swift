@@ -62,10 +62,10 @@ struct HealthKitSourceDeleter {
     /// preserved for the ledger rows, one denied/unavailable type still
     /// can't strand the rest. The seam-based `deleteAppWritten` above
     /// stays as the tested policy core; production enters here.
-    /// A revoked grant the wipe cannot verify (round-6 item 14):
-    /// success-0 under revocation may mean "nothing there" or
-    /// "denied" — claiming success would be the lie, so it fails
-    /// loud into the ledger/partial path instead.
+    /// A denied grant the wipe cannot verify (round-6 item 14 +
+    /// fix-round F1): success-0 under `.sharingDenied` may mean
+    /// "nothing there" or "denied" — claiming success would be the
+    /// lie, so it fails loud into the ledger/partial path instead.
     struct WipeRevokedUnverifiable: Error, CustomStringConvertible {
         var typeIdentifier: String
         var description: String {
@@ -76,24 +76,32 @@ struct HealthKitSourceDeleter {
     static func deleteAppWrittenLive(
         types: [HKObjectType],
         writer: HealthKitWriter,
-        isAuthorized: (HKObjectType) -> Bool = { type in
+        authorizationStatus: (HKObjectType) -> HKAuthorizationStatus = { type in
             (type as? HKSampleType).map {
-                HKHealthStore().authorizationStatus(for: $0) == .sharingAuthorized
-            } ?? false
+                HKHealthStore().authorizationStatus(for: $0)
+            } ?? .notDetermined
         },
         onProgress: (HKObjectType, Int) -> Void = { _, _ in }
     ) async -> [HKObjectType: Result<Int, Error>] {
         var outcomes: [HKObjectType: Result<Int, Error>] = [:]
         for type in types {
-            // Round-6 item 14: revoked types are NOT excluded pre-loop
-            // — every type attempts and lands a ledger row. A revoked
-            // success-0 is unverifiable (see `WipeRevokedUnverifiable`);
-            // a real deletion count, or a throw, speaks for itself.
-            let wasRevoked = !isAuthorized(type)
+            // Round-6 item 14 + fix-round F1: denied types are NOT
+            // excluded pre-loop — every type attempts and lands a
+            // ledger row. The status table, stated exactly:
+            // - `.sharingAuthorized`: the delete speaks for itself
+            //   (count or throw).
+            // - `.notDetermined`: never requested → never written →
+            //   a success-0 is PROVABLY empty, not merely hopeful.
+            //   (The old Bool seam lumped this with denied and failed
+            //   the wipe step for never-granted floor types.)
+            // - `.sharingDenied` + success-0: unverifiable ("nothing
+            //   there" vs "denied") → fail loud. A real count, or a
+            //   throw, still speaks for itself.
+            let status = authorizationStatus(type)
             do {
                 let report = try await writer.deleteAllAppData(types: [type])
                 let count = report.deletedCounts[type.identifier] ?? 0
-                if count == 0, wasRevoked {
+                if count == 0, status == .sharingDenied {
                     outcomes[type] = .failure(WipeRevokedUnverifiable(typeIdentifier: type.identifier))
                 } else {
                     onProgress(type, count)

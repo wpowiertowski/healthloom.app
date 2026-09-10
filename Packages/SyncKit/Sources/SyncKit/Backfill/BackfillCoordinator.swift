@@ -497,6 +497,14 @@ public actor BackfillCoordinator {
                 PagePipeline.upsertLocalSample(for: point, context: context)
             }
             totalItemCount += walked.total
+            // Fix-round N3: see SyncEngine's identical log — a cap-hit
+            // commits partial progress, and the remainder is
+            // lookback-bound.
+            if walked.hitPageCap {
+                DiagnosticsLog.backfill.notice(
+                    "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial chunk committed; remainder beyond lookback overlap will not be revisited."
+                )
+            }
         } catch let walk as PageWalkPartial {
             totalItemCount += walk.total
             throw walk.underlying

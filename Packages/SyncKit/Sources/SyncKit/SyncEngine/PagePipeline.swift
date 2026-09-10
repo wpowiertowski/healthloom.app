@@ -71,15 +71,19 @@ nonisolated struct PagePipeline: Sendable {
     func processPages(
         knownExternalIDs: Set<String>,
         fetch: @Sendable (String?) async throws -> Page
-    ) async throws -> (total: Int, localOnly: [GoogleDataPoint]) {
+    ) async throws -> (total: Int, localOnly: [GoogleDataPoint], hitPageCap: Bool) {
         var known = knownExternalIDs
         var total = 0
         var localOnly: [GoogleDataPoint] = []
         var token: String? = nil
         var pages = 0
+        var hitPageCap = false
         while true {
             try Task.checkCancellation()
-            guard pages < Self.maxPages else { break }
+            if pages >= Self.maxPages {
+                hitPageCap = true
+                break
+            }
             do {
                 let page = try await fetch(token)
                 let processed = try await processPage(page.points, knownExternalIDs: &known)
@@ -92,7 +96,7 @@ nonisolated struct PagePipeline: Sendable {
                 throw PageWalkPartial(total: total, underlying: error)
             }
         }
-        return (total, localOnly)
+        return (total, localOnly, hitPageCap)
     }
 
     /// Maps, conflict-filters, batches, and writes/upserts every point in
