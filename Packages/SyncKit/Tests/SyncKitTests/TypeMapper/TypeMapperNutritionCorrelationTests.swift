@@ -34,7 +34,7 @@ import Testing
         #expect(meal.start == TypeMapperFixtures.date("2026-07-01T12:15:00Z"))
         #expect(meal.end == TypeMapperFixtures.date("2026-07-01T12:15:00Z"))
         #expect(meal.constituents.count == 4)
-        #expect(meal.metadata.externalUUID == "nutrition-0001")
+        #expect(meal.metadata.externalUUID == "nutrition-0001#meal") // round-7 item 3: derived UUID
         #expect(meal.metadata.externalID == "nutrition-0001")
         #expect(meal.metadata.sourceDevice == "Fitbit Air")
 
@@ -58,12 +58,13 @@ import Testing
         #expect(fat?.unit == .gram)
         #expect(fat?.value == 22)
 
-        // Every constituent is independently stamped with the meal's own
-        // metadata (this file's header / MappedNutritionCorrelation's doc
-        // comment: "both the correlation and its constituents get the same
-        // stamp").
+        // Every constituent carries its own field-named UUID (round-7
+        // item 3) — sharing one UUID across the meal made HealthKit
+        // reject the batch.
+        let uuids = Set(meal.constituents.map(\.metadata.externalUUID))
+        #expect(uuids.count == meal.constituents.count)
         for sample in meal.constituents {
-            #expect(sample.metadata.externalUUID == "nutrition-0001")
+            #expect(sample.metadata.externalUUID.hasPrefix("nutrition-0001#"))
             #expect(sample.start == meal.start)
             #expect(sample.end == meal.end)
         }

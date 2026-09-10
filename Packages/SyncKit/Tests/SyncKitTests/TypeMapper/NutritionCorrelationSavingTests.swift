@@ -72,7 +72,7 @@ import Testing
             start: correlation.startDate.addingTimeInterval(-60),
             end: correlation.endDate.addingTimeInterval(60)
         )
-        #expect(existing == ["nutrition-0001"])
+        #expect(existing == ["nutrition-0001#meal"]) // round-7 item 3: the correlation's own derived UUID
     }
 
     /// A partial-macro meal (two constituents, not four) dedupes through
@@ -95,7 +95,7 @@ import Testing
             start: correlation.startDate.addingTimeInterval(-60),
             end: correlation.endDate.addingTimeInterval(60)
         )
-        #expect(existing == ["nutrition-0002"])
+        #expect(existing == ["nutrition-0002#meal"]) // round-7 item 3: derived UUID, not the bare point ID
     }
 
     /// The caller's expected discipline (`SyncEngine.processPage`'s own
@@ -128,7 +128,7 @@ import Testing
             start: correlation.startDate.addingTimeInterval(-60),
             end: correlation.endDate.addingTimeInterval(60)
         )
-        #expect(existingBeforeSecondSave.contains("nutrition-0001"))
+        #expect(existingBeforeSecondSave.contains("nutrition-0001#meal")) // round-7 item 3: derived UUID
         // A correct caller (SyncEngine.processPage's `.correlation` arm)
         // would skip re-saving here, exactly like it does for `.quantity`.
     }

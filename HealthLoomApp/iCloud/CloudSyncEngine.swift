@@ -392,10 +392,56 @@ final class CloudSyncEngine {
         return SingletonPushDecision(push: differs, newSeen: newSeen)
     }
 
+    /// Oldest 500 UNPUSHED turns (round-7 item 4): the watermark goes
+    /// INTO the query predicate (not a post-fetch filter), so the batch
+    /// is always the oldest unpushed prefix — the watermark covers a
+    /// CONTIGUOUS pushed range by construction. The old newest-500
+    /// window filtered post-fetch: a 900-turn offline accumulation
+    /// pushed the newest 500, jumped the watermark past the oldest
+    /// 400, and never pushed them — silent unrecoverable loss under a
+    /// `.synced` status. Pacing preserved (500/sync); the remainder is
+    /// strictly NEWER and goes next sync — delayed, never lost.
+    private func unpushedTurnBatch(limit: Int) throws(CloudSyncError) -> [CoachTurnSnapshot] {
+        let context = ModelContext(container)
+        var descriptor: FetchDescriptor<ChatTurn>
+        if let watermark = pushedTurnsThrough {
+            descriptor = FetchDescriptor<ChatTurn>(
+                predicate: #Predicate { $0.createdAt > watermark },
+                sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+            )
+        } else {
+            descriptor = FetchDescriptor<ChatTurn>(
+                sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+            )
+        }
+        descriptor.fetchLimit = limit
+        let rows: [ChatTurn]
+        do {
+            rows = try context.fetch(descriptor)
+        } catch {
+            throw CloudSyncError.failed(error.localizedDescription)
+        }
+        return rows.map {
+            // Synthetic turnID, kept deliberately (third-party N1): a
+            // content hash would survive clock changes, but renaming
+            // the scheme later orphans already-pushed records
+            // (save-if-absent keys on the name — orphans re-push as
+            // server-side duplicates). Fractional-second timestamps
+            // make collisions negligible, and readable names are
+            // debuggable in the CloudKit dashboard. Revisit only with
+            // a tombstone pass.
+            CoachTurnSnapshot(
+                turnID: "\($0.createdAt.timeIntervalSince1970)-\($0.role)",
+                role: $0.role,
+                content: $0.content,
+                createdAt: $0.createdAt
+            )
+        }
+    }
+
     private func pushNewTurns() async throws(CloudSyncError) {
-        let watermark = pushedTurnsThrough
-        let turns = try localTurns().filter { watermark == nil || $0.createdAt > watermark! }
-        var latest = watermark
+        let turns = try unpushedTurnBatch(limit: 500)
+        var latest: Date?
         for turn in turns {
             let recordName = CloudRecordType.turnRecordName(for: turn.turnID)
             if try await database.fetchRecord(recordName: recordName) == nil {
@@ -441,17 +487,30 @@ final class CloudSyncEngine {
         }
     }
 
+    /// Page cap mirroring `PagePipeline.maxPages` (round-7 item 5 —
+    /// SyncKit's type is internal, so the value is repeated here with
+    /// the reference; drift intentionally impossible to miss).
+    private static let turnPageCap = 100
+
     /// Every server turn, following the query cursor until nil
-    /// (round-6 item 4): the old single-page fetch pulled an arbitrary
-    /// unordered fragment that varied run to run.
+    /// (round-6 item 4): the old single-shot fetch pulled an arbitrary
+    /// unordered fragment that varied run to run. Bounded (round-7
+    /// item 5): page cap + same-token break, mirroring PagePipeline —
+    /// an echoing cursor otherwise spins to OOM, reachable from every
+    /// scene activation AND from `deleteAllCloudData` mid-wipe (a hung
+    /// wipe with no timeout).
     private func pullAllTurnRecords() async throws(CloudSyncError) -> [CKRecord] {
         var all: [CKRecord] = []
         var cursor: Data? = nil
-        repeat {
+        var pages = 0
+        while true {
+            guard pages < Self.turnPageCap else { break }
             let page = try await database.turnPage(cursor: cursor)
             all.append(contentsOf: page.records)
-            cursor = page.nextCursor
-        } while cursor != nil
+            pages += 1
+            guard let next = page.nextCursor, next != cursor else { break }
+            cursor = next
+        }
         return all
     }
 
@@ -474,14 +533,21 @@ final class CloudSyncEngine {
         // cheaper than the unbounded duplicate growth this replaces
         // (which also re-pushes later). The push window itself stays
         // capped (upload bound, unchanged).
-        let local = try localTurnKeys()
+        var seen = try localTurnKeys()
         let context = ModelContext(container)
         var inserted = false
         for record in serverTurns {
             guard let snap = try? CloudRecordDecoder.turn(from: record) else {
                 continue // malformed turn: skip, never crash the sync
             }
-            guard !local.contains(Self.turnDedupeKey(role: snap.role, content: snap.content, createdAt: snap.createdAt)) else { continue }
+            // Round-7 item 10: insert-into-set as you go — the pre-loop
+            // snapshot alone let duplicate server records in ONE page
+            // both insert (a second `ModelContext` can't catch what
+            // the first hasn't saved; and turnRecordName omits content,
+            // so cross-device key collisions are real).
+            let key = Self.turnDedupeKey(role: snap.role, content: snap.content, createdAt: snap.createdAt)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
             context.insert(ChatTurn(role: snap.role, content: snap.content, createdAt: snap.createdAt))
             inserted = true
         }
@@ -580,8 +646,10 @@ final class CloudSyncEngine {
         })
     }
 
-    /// Newest-first local rows, optionally capped (round-4-sync item 1:
-    /// `order:` spelled explicitly like every other site).
+    /// Local rows, optionally capped, newest-first (`order:` spelled
+    /// explicitly like every other site). Serves the pull key set —
+    /// the push window moved to its own oldest-first query (round-7
+    /// item 4).
     private func localTurnRows(limit: Int?) throws(CloudSyncError) -> [ChatTurn] {
         let context = ModelContext(container)
         var descriptor = FetchDescriptor<ChatTurn>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
@@ -590,27 +658,6 @@ final class CloudSyncEngine {
             return try context.fetch(descriptor)
         } catch {
             throw CloudSyncError.failed(error.localizedDescription)
-        }
-    }
-
-    private func localTurns() throws(CloudSyncError) -> [CoachTurnSnapshot] {
-        // Cap the replay window: history sync is a convenience, not an
-        // archive migration — 500 most recent turns bound the upload.
-        let rows = try localTurnRows(limit: 500)
-        // Synthetic turnID, kept deliberately (third-party N1): a content
-        // hash would survive clock changes, but renaming the scheme later
-        // orphans already-pushed records (save-if-absent keys on the name
-        // — orphans re-push as server-side duplicates). Fractional-second
-        // timestamps make collisions negligible, and readable names are
-        // debuggable in the CloudKit dashboard. Revisit only with a
-        // tombstone pass.
-        return rows.map {
-            CoachTurnSnapshot(
-                turnID: "\($0.createdAt.timeIntervalSince1970)-\($0.role)",
-                role: $0.role,
-                content: $0.content,
-                createdAt: $0.createdAt
-            )
         }
     }
 

@@ -175,5 +175,73 @@ import Testing
         #expect(fourthWindow.upperBound != Self.fixedNow)
         #expect(mock.calls.count == 4)
     }
+
+    // MARK: - No-progress loop exit (round-7 item 9)
+
+    /// Mutable disabled-set behind the coordinator's per-chunk provider.
+    final class MutableDisabledTypes: @unchecked Sendable {
+        private let lock = NSLock()
+        private var disabled: Set<GoogleDataType>
+        init(disabled: Set<GoogleDataType>) { self.disabled = disabled }
+        func get() -> Set<GoogleDataType> { lock.withLock { disabled } }
+        func set(_ value: Set<GoogleDataType>) { lock.withLock { disabled = value } }
+    }
+
+    @Test func allDisabledRoundSuspendsEveryType() async throws {
+        // The deterministic half: an all-disabled round reports
+        // `.suspendedDisabled` per type with zero client calls and
+        // zero writes (no timing involved).
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        let coordinator = BackfillCoordinator(
+            types: [.steps],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            disabledTypes: { [.steps] },
+            horizon: .days90
+        )
+        #expect(await coordinator.runRound() == [.steps: .suspendedDisabled])
+        #expect(mock.calls.isEmpty)
+    }
+
+    @Test func allDisabledLoopExitsAndRestartsOnReenable() async throws {
+        // Round-7 item 9: an all-disabled loop EXITS (no 2s-delay spin
+        // for process lifetime) and restarts when the type is
+        // re-enabled (the view polls `isLoopRunning` for exactly this).
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        mock.setPage(type: .steps, pageToken: nil, page: Page(points: [], nextPageToken: nil))
+        let gate = MutableDisabledTypes(disabled: [.steps])
+        let coordinator = BackfillCoordinator(
+            types: [.steps],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            disabledTypes: { gate.get() },
+            horizon: .days90
+        )
+        await coordinator.start()
+        let start = Date.now
+        while await coordinator.isLoopRunning {
+            await Task.yield()
+            if Date.now.timeIntervalSince(start) > 10 {
+                Issue.record("disabled loop never exited")
+                break
+            }
+        }
+        #expect(!(await coordinator.isLoopRunning))
+        // Re-enable: the type runs again (restart path the view drives).
+        gate.set([])
+        let outcome = await coordinator.runNextChunk(for: .steps)
+        guard case .processedChunk = outcome else {
+            Issue.record("expected re-enabled type to process, got \(outcome)")
+            return
+        }
+    }
 }
 #endif

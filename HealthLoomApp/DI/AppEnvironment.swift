@@ -477,6 +477,9 @@ final class AppEnvironment {
             catalog: modelCatalog,
             routeTier: {
                 InsightTierRouter.route(
+                    // Round-7 item 2: AND the AI-Models row toggle —
+                    // catalog-only input served PCC after switch-off.
+                    pccRowOn: tierSettings.isTurnedOn(.privateCloudCompute),
                     pccTierEnabled: modelCatalog.isEnabled(.privateCloudCompute),
                     viaCloudOptIn: insightPrefs.insightsViaCloud,
                     onDeviceAvailable: await availabilityChecker.current() == .available

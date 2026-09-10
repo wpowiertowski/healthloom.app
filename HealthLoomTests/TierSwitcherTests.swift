@@ -23,7 +23,9 @@ private struct SwitchTimeout: Error {}
 struct TierSwitcherTests {
     /// Captured factory instructions across builds (lock-guarded: the
     /// build closure is `@Sendable`, the assertions read post-send).
-    private final class InstructionLog: Sendable {
+    /// Factory-instruction log (internal so the fixture can hold it;
+    /// same-file test helper otherwise).
+    final class InstructionLog: Sendable {
         private let lock = NSLock()
         private var values: [String] = []
 
@@ -46,17 +48,44 @@ struct TierSwitcherTests {
         let viewModel: CoachChatViewModel
         let settings: TierSettingsStore
         let gates: CloudGateCache
+        /// Factory-build log (round-7 item 13): proves whether a turn
+        /// built a session at all (offers must not). Outside `.values`
+        /// so existing destructuring is untouched. Private (file-scoped
+        /// visibility covers the same-file tests).
+        let log: InstructionLog
+
+        /// Log reader for the orchestrator tests (the property stays
+        /// private — `InstructionLog` is private to this file).
+        func factoryBuilds() -> [String] { log.all }
         private let ephemeral: EphemeralDefaults
 
         var values: (CoachChatViewModel, TierSettingsStore, CloudGateCache) {
             (viewModel, settings, gates)
         }
 
-        init(viewModel: CoachChatViewModel, settings: TierSettingsStore, gates: CloudGateCache, ephemeral: EphemeralDefaults) {
+        init(viewModel: CoachChatViewModel, settings: TierSettingsStore, gates: CloudGateCache, log: InstructionLog, ephemeral: EphemeralDefaults) {
             self.viewModel = viewModel
             self.settings = settings
             self.gates = gates
+            self.log = log
             self.ephemeral = ephemeral
+        }
+    }
+
+    /// Call-counted key gate for the TOCTOU defense test (round-7 item
+    /// 13): file scope because local types cannot carry Sendable
+    /// conformance. Answers true for the first N calls, then false —
+    /// modeling a key deleted between the send-guard and dispatch.
+    private final class FlipFlopKeyGate: @unchecked Sendable {
+        private let lock = NSLock()
+        nonisolated(unsafe) private var calls = 0
+        private let trueForFirstCalls: Int
+        init(trueForFirstCalls: Int) { self.trueForFirstCalls = trueForFirstCalls }
+        nonisolated func hasKey(_ tier: ModelTier) -> Bool {
+            lock.withLock {
+                calls += 1
+                return calls <= trueForFirstCalls
+            }
         }
     }
 
@@ -67,7 +96,11 @@ struct TierSwitcherTests {
         // identical doubles — enough for slot segregation, blind to model
         // identity. A non-nil mapping builds tier-tagged doubles, proving
         // which model served, not just which slot was picked.
-        chunks: ((ModelTier) -> [String])? = nil
+        chunks: ((ModelTier) -> [String])? = nil,
+        // Round-7 item 13: scripted quota + key presence for the
+        // fallback/defense tests (defaults mirror production setup).
+        pccQuota: PCCQuota = .ok,
+        keyPresent: (@Sendable (ModelTier) -> Bool)? = nil
     ) throws -> TierSwitcherFixture {
         let container = try CoreModel.makeContainer(inMemory: true)
         // Round-3 item 12: the holder rides in the fixture (same commit
@@ -83,9 +116,9 @@ struct TierSwitcherTests {
         let catalog = ModelCatalog(
             onDeviceAvailable: { true },
             hasConsent: { gates.hasConsent($0) },
-            hasKey: { gates.hasKey($0) },
+            hasKey: keyPresent ?? { gates.hasKey($0) },
             pccAvailable: { true },
-            pccQuota: { .ok },
+            pccQuota: { pccQuota },
             liveTiers: liveTiers
         )
         let store = KnowledgeStore(
@@ -110,7 +143,7 @@ struct TierSwitcherTests {
             tierSettings: settings,
             tierCatalog: catalog
         ))
-        return TierSwitcherFixture(viewModel: viewModel, settings: settings, gates: gates, ephemeral: ephemeral)
+        return TierSwitcherFixture(viewModel: viewModel, settings: settings, gates: gates, log: log, ephemeral: ephemeral)
     }
 
     /// Enables a tier the way production does: consent + key presence in
@@ -306,5 +339,62 @@ struct TierSwitcherTests {
         gates.setConsent(false, for: .privateCloudCompute)
         viewModel.onAppear()
         #expect(viewModel.selectedTier == .onDevice)
+    }
+
+    // MARK: - Orchestrator on the real path (round-7 item 13)
+
+    @Test("exhausted PCC quota falls back to on-device on the real path")
+    func quotaFallbackFiresOnRealPath() async throws {
+        // Round-7 item 13: PCC selected, quota exhausted — the turn
+        // must be SERVED on-device (not blocked, not died) with the
+        // provider stamp telling the truth. Pre-routing, quota never
+        // ran for real turns (the orchestrator had no caller).
+        let fixture = try makeViewModel(pccQuota: .exhausted(resetDate: nil))
+        let (viewModel, settings, gates) = fixture.values
+        enable(.privateCloudCompute, settings: settings, gates: gates)
+        #expect(viewModel.selectTier(.privateCloudCompute) == true)
+        #expect(viewModel.send("hi") == true)
+        try await waitForCondition({ !viewModel.isResponding })
+        #expect(viewModel.turns.count == 2)
+        #expect(viewModel.turns[1].content == "Hello world.")
+        #expect(viewModel.turns[1].provider == ModelTier.onDevice.rawValue)
+        #expect(viewModel.errorMessage == nil)
+    }
+
+    @Test("deeper-analysis ask renders an offer row, streams nothing")
+    func escalationOfferFiresOnRealPath() async throws {
+        // Round-7 item 13: an explicit deeper-analysis ask on-device
+        // renders an offer row (with trace snapshot) instead of an
+        // answer — and builds no session at all.
+        let fixture = try makeViewModel()
+        let viewModel = fixture.viewModel
+        #expect(viewModel.send("please go deeper into this") == true)
+        try await waitForCondition({ !viewModel.isResponding })
+        #expect(viewModel.turns.count == 2)
+        #expect(viewModel.turns[1].content == CoachChatViewModel.offerMessage(for: .deeperAnalysisRequested, tier: .onDevice))
+        #expect(viewModel.turns[1].contextSnapshotID != nil)
+        #expect(viewModel.draft.isEmpty)
+        #expect(fixture.factoryBuilds().isEmpty)
+        #expect(viewModel.errorMessage == nil)
+    }
+
+    @Test("key deleted mid-flight fails named, never dispatches keyless")
+    func keylessDefenseFiresOnRealPath() async throws {
+        // Round-7 item 13: the TOCTOU key deletion between the
+        // send-guard (call 2: still present) and dispatch (call 3:
+        // gone) must throw before any session build — named error, no
+        // reply, no keyless dispatch. The flip-flop models the race
+        // deterministically (gated on the current call-count contract
+        // of `isEnabled`: one `hasKey` read per evaluation).
+        let gate = FlipFlopKeyGate(trueForFirstCalls: 2)
+        let fixture = try makeViewModel(keyPresent: gate.hasKey)
+        let (viewModel, settings, gates) = fixture.values
+        enable(.claude, settings: settings, gates: gates)
+        #expect(viewModel.selectTier(.claude) == true)
+        #expect(viewModel.send("hi") == true)
+        try await waitForCondition({ !viewModel.isResponding })
+        #expect(viewModel.turns.count == 1) // user turn only — nothing answered
+        #expect(viewModel.errorMessage?.contains("API key") == true)
+        #expect(fixture.factoryBuilds().isEmpty)
     }
 }

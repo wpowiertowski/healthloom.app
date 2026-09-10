@@ -184,11 +184,20 @@ public actor WatchConflictResolver: ConflictFiltering {
                     return .skip
                 }
                 var parts: [HKQuantitySample] = []
-                for slice in slices {
+                // Round-7 item 3: per-part UUIDs — shared `point.id`
+                // across split parts made HealthKit reject the batch.
+                // Suffixed only when actually split (a lone part keeps
+                // the base UUID, consistent with the unsplit path, so
+                // coverage flip-flops don't duplicate).
+                let suffixed = slices.count > 1
+                for (index, slice) in slices.enumerated() {
                     var part = pure
                     part.start = slice.start
                     part.end = slice.end
                     part.value = pure.value * (slice.duration / totalDuration)
+                    if suffixed {
+                        part.metadata = part.metadata.derivedUUID(role: "split-\(index)")
+                    }
                     if let hkSample = part.makeHKQuantitySample() {
                         parts.append(hkSample)
                     }
@@ -212,6 +221,11 @@ public actor WatchConflictResolver: ConflictFiltering {
     /// concurrently-running types, and a stale conformer implementing only
     /// a typeless drain must fail to compile rather than silently drop
     /// every link and count.
+    /// Test hook: run entries currently tracked (round-7 item 14 —
+    /// proves drains free the entry instead of leaving a permanent
+    /// shell per type).
+    func trackedRunCount() async -> Int { runs.count }
+
     public func drainDeferredSessionLinks(for type: GoogleDataType) async -> [String: UUID] {
         let links = runs[type]?.deferredSessionLinks ?? [:]
         runs[type]?.deferredSessionLinks = [:]
@@ -227,8 +241,13 @@ public actor WatchConflictResolver: ConflictFiltering {
 
     public func drainSuppressedCount(for type: GoogleDataType) async -> Int {
         let count = runs[type]?.suppressedCount ?? 0
-        runs[type]?.suppressedCount = 0
-        runs[type]?.index = nil
+        // Round-7 item 14: free the run entry — the drains' stated
+        // purpose is end-of-run cleanup, but nil-ing the index left a
+        // permanent shell per type (26 entries × 2 resolvers for app
+        // lifetime). This drain is every run's last filter call (links
+        // drain first at every call site — order pinned by test), so
+        // freeing here breaks nothing downstream.
+        runs.removeValue(forKey: type)
         return count
     }
 

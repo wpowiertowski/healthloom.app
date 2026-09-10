@@ -12,13 +12,23 @@ import CoreModel
 import Foundation
 
 enum StoreDeleter {
-    /// All files comprising the store (main + SQLite sidecars).
+    /// Every file the wipe must remove for the store step (round-6
+    /// item 6): the main store, EVERY SQLite sidecar the store can
+    /// run under (`-wal`/`-shm` in WAL mode, `-journal` in rollback
+    /// mode — CoreModel's own comment says either is possible, so the
+    /// old list's missing `-journal` left newest rows behind), plus
+    /// `SyncLog.json` (SyncKit's on-disk sync log lives in this same
+    /// directory — health-adjacent history that must not survive a
+    /// "cannot be undone" wipe; owned explicitly here since no other
+    /// wipe step covers it).
     static func storeFileURLs() throws -> [URL] {
         let main = try CoreModel.productionStoreURL()
         return [
             main,
             URL(fileURLWithPath: main.path + "-wal"),
             URL(fileURLWithPath: main.path + "-shm"),
+            URL(fileURLWithPath: main.path + "-journal"),
+            main.deletingLastPathComponent().appending(path: "SyncLog.json", directoryHint: .notDirectory),
         ]
     }
 

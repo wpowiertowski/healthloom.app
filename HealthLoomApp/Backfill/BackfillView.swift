@@ -144,6 +144,14 @@ struct BackfillView: View {
         statuses = await coordinator.statuses()
         isPaused = await coordinator.isPausedNow
         horizon = await coordinator.currentHorizon()
+        // Round-7 item 9: restart a loop that exited on no-progress
+        // (e.g. the user re-enabled a type) — `start()` no-ops when
+        // running or paused, so this is cheap. Idle rounds then run at
+        // poll cadence while this view is open only (not process-
+        // lifetime like the old spin).
+        if !(await coordinator.isFullyDone()), !(await coordinator.isLoopRunning) {
+            await coordinator.start()
+        }
     }
 }
 

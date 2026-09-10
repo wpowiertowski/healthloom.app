@@ -115,6 +115,34 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
         return try context.fetch(FetchDescriptor<LocalSample>())
     }
 
+    // MARK: - Drain frees the run entry (round-7 item 14)
+
+    @Test func drainsFreeTheRunEntry() async throws {
+        // The drains' stated purpose is end-of-run cleanup, but they
+        // only nilled the index — leaving a permanent shell per type
+        // (26 entries × 2 resolvers for app lifetime). After both
+        // drains the entry must be gone. Order pinned too: links drain
+        // first at every call site, so the recorded link survives;
+        // draining count first would drop it (nil entry → [:]).
+        let coverage = StubWatchCoverageProvider()
+        coverage.windows = [Self.morningRunWindow()]
+        let resolver = WatchConflictResolver(
+            coverageProvider: coverage,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            preference: StubWatchPriorityPreference(enabled: true)
+        )
+        let point = TypeMapperFixtures.exercisePoint(
+            id: "fitbit-run-1", start: Self.at("10:02:00"), end: Self.at("10:43:00")
+        )
+        try await resolver.beginRun(type: .exercise, windowStart: Self.at("10:00:00"), windowEnd: Self.at("11:00:00"))
+        #expect(await resolver.trackedRunCount() == 1)
+        _ = await resolver.resolve(TypeMapper.map(point), for: point)
+        let links = await resolver.drainDeferredSessionLinks(for: .exercise)
+        #expect(links.count == 1)
+        _ = await resolver.drainSuppressedCount(for: .exercise)
+        #expect(await resolver.trackedRunCount() == 0)
+    }
+
     // MARK: - Session deferral (D13.2)
 
     @Test func overlappingExerciseSessionDefersToLocalSampleWithWatchLink() async throws {

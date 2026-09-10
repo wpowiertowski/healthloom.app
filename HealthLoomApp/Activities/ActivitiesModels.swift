@@ -166,7 +166,15 @@ enum ActivityConsolidator {
             )
         })
 
-        return entries.sorted { $0.start > $1.start }
+        // Round-7 item 12: deterministic tiebreak. `supplementsByWorkoutUUID`
+        // iterates in per-process hash order, so equal-start entries
+        // reordered across launches (snapshot flake — the same
+        // nondeterminism `KnowledgeStore` sorted away at :359-361).
+        // Start dominates; external ID breaks ties, deterministically.
+        return entries.sorted {
+            if $0.start != $1.start { return $0.start > $1.start }
+            return $0.id > $1.id
+        }
     }
 
     /// Chronological day grouping for the view's sections (D13.2's

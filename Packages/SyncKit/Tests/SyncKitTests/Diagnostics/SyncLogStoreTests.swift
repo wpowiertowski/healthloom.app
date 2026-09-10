@@ -61,6 +61,22 @@ import Testing
         #expect(last3.map(\.itemCount) == [7, 8, 9])
     }
 
+    @Test func nonPositiveLimitReturnsEmptyNeverTraps() async {
+        // Round-7 item 11: `suffix(-1)` traps (process crash) — a
+        // non-positive window is empty, never the whole log (same
+        // contract as `PromptManager.history(limit:)`).
+        let store = SyncLogStore(capacity: 100, persistence: NullSyncLogPersistence())
+        let base = Date(timeIntervalSince1970: 0)
+        for index in 0..<5 {
+            await store.append(Self.entry(index, at: base.addingTimeInterval(Double(index))))
+        }
+        #expect(await store.recentEntries(limit: 0).isEmpty)
+        #expect(await store.recentEntries(limit: -1).isEmpty)
+        #expect(await store.recentEntries(limit: -10_000).isEmpty)
+        #expect(await store.recentEntries(limit: nil).count == 5)
+        #expect(await store.recentEntries(limit: 99).count == 5)
+    }
+
     @Test func clearRemovesEveryEntry() async {
         let store = SyncLogStore(capacity: 10, persistence: NullSyncLogPersistence())
         await store.append(Self.entry(0, at: Date()))

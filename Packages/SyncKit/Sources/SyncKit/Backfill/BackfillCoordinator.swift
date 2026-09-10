@@ -431,12 +431,28 @@ public actor BackfillCoordinator {
 
     // MARK: - Background driver
 
+    /// Whether the background walk loop is currently running (round-7
+    /// item 9): lets the UI restart a loop that exited on no-progress
+    /// (e.g. after re-enabling a type) — `start()` itself is a safe
+    /// no-op when already running, so polling this is cheap.
+    public var isLoopRunning: Bool { runLoopTask != nil }
+
     private func runLoop(generation: Int) async {
         while !Task.isCancelled, !isPaused {
             if await isFullyDone() { break }
-            _ = await runRound()
+            let results = await runRound()
             if Task.isCancelled || isPaused { break }
             if await isFullyDone() { break }
+            // Round-7 item 9: no-progress exit. All-disabled (or
+            // all-complete-but-unrecorded) rounds otherwise spin
+            // forever at the inter-chunk delay — ModelContexts, fetches,
+            // and MainActor hops every 2s for process lifetime, with no
+            // UI surface. Transient states (busy, failed, cancelled,
+            // fresh chunks) keep retrying; only the STABLE no-work
+            // outcomes — done or disabled — exit. Re-enabling restarts
+            // via `start()` (the view polls `isLoopRunning`).
+            let idle = results.values.allSatisfy { $0 == .alreadyDone || $0 == .suspendedDisabled }
+            if idle { break }
             try? await sleeper.sleep(seconds: configuration.interChunkDelay)
         }
         // Identity-checked: only the current generation clears the handle.

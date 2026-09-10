@@ -106,6 +106,38 @@ struct ResilienceTests {
         #expect(durations == [30.0])
     }
 
+    @Test("a giant Retry-After is clamped to the cap, never a day-long park")
+    func retryAfterClampedToCap() async throws {
+        // Round-7 item 8: Retry-After: 86400 must sleep 60s (capDelay),
+        // not park foreground Sync Now for a day.
+        let sleeper = RecordingSleeper()
+        let http = RecordingHTTPSession { request, allRequests in
+            if TestClientFactory.isTokenRequest(request) {
+                return (TestClientFactory.tokenJSON(), httpResponse(statusCode: 200))
+            }
+            let dataCallIndex = allRequests.filter { !TestClientFactory.isTokenRequest($0) }.count
+            if dataCallIndex == 1 {
+                return (await Fixture.data("error-429"), httpResponse(statusCode: 429, headers: ["Retry-After": "86400"]))
+            }
+            return (await Fixture.data("steps"), httpResponse(statusCode: 200))
+        }
+        let client = TestClientFactory.client(http: http, sleeper: sleeper, jitter: ZeroJitterSource())
+        _ = try await client.reconcile(type: .steps, since: Date(), until: Date())
+        #expect(await sleeper.recordedDurations == [60.0])
+    }
+
+    @Test("retry-after clamp is exact at the boundary")
+    func retryAfterClampBoundary() {
+        // Pure-function pin: within-cap wins verbatim, over-cap
+        // clamps, negatives floor at zero.
+        let policy = BackoffPolicy()
+        #expect(policy.delay(forAttempt: 1, retryAfter: 30, jitterFraction: 0) == 30.0)
+        #expect(policy.delay(forAttempt: 1, retryAfter: 60, jitterFraction: 0) == 60.0)
+        #expect(policy.delay(forAttempt: 1, retryAfter: 86400, jitterFraction: 0) == 60.0)
+        #expect(policy.delay(forAttempt: 1, retryAfter: -5, jitterFraction: 0) == 0.0)
+        #expect(policy.delay(forAttempt: 1, retryAfter: nil, jitterFraction: 0) == 1.0)
+    }
+
     @Test("5xx also backs off and eventually throws .server with the last status code")
     func backoffScheduleOn5xx() async throws {
         let sleeper = RecordingSleeper()
