@@ -65,13 +65,22 @@ nonisolated struct PagePipeline: Sendable {
     /// `splitBases` is computed once per page from the queried set
     /// (in-page inserts are base IDs, already covered by the base
     /// leg) — not scanned per point.
-    private static func isKnown(
+    /// Dedupe decision (round-8 fix N1: internal so tests pin the
+    /// table directly). An EMPTY uuid set is NOT known — `allSatisfy`
+    /// on `[]` is vacuously true, which silently dropped metadata-less
+    /// samples (counted 0, cursor advanced past the window). The base
+    /// and split legs still apply (a legacy bare row may match by
+    /// base string).
+    static func isKnown(
         baseID: String,
         uuids: [String],
         splitBases: Set<String>,
         in known: Set<String>
     ) -> Bool {
-        known.contains(baseID)
+        if uuids.isEmpty {
+            return known.contains(baseID) || splitBases.contains(baseID)
+        }
+        return known.contains(baseID)
             || uuids.allSatisfy(known.contains)
             || splitBases.contains(baseID)
     }

@@ -613,6 +613,20 @@ import Testing
         #expect(state.lastSyncedAt == nil) // cursor unmoved
     }
 
+    // MARK: - Fix N1, empty UUID set is not known
+
+    @Test func emptyUUIDSetIsNotKnown() {
+        // Round-8 fix N1: pins `isKnown`'s table directly — an empty
+        // emitted-UUID set must take the write path (only base/split
+        // legs can still skip it), never the vacuous allSatisfy.
+        let known: Set<String> = ["other"]
+        #expect(PagePipeline.isKnown(baseID: "p", uuids: [], splitBases: [], in: known) == false)
+        #expect(PagePipeline.isKnown(baseID: "other", uuids: [], splitBases: [], in: known) == true)
+        #expect(PagePipeline.isKnown(baseID: "p", uuids: [], splitBases: ["p"], in: known) == true)
+        #expect(PagePipeline.isKnown(baseID: "p", uuids: ["p#0", "p#1"], splitBases: [], in: ["p#0", "p#1"]) == true)
+        #expect(PagePipeline.isKnown(baseID: "p", uuids: ["p#0", "p#1"], splitBases: [], in: ["p#0"]) == false)
+    }
+
     // MARK: - Item 10, failed completion save surfaces
 
     struct SaveBoom: Error {}

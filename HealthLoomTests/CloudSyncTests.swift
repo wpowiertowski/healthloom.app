@@ -785,6 +785,22 @@ struct CloudSyncTests {
         }
     }
 
+    @Test("prefs push advances seen past its own write")
+    func prefsPushAdvancesSeenWatermark() async throws {
+        // Round-8 fix N2: the prefs mirror of pushAdvancesSeenWatermark
+        // — without the advance, the next sync misreads our own write
+        // as foreign-newer and suppresses the change one sync late.
+        let harness = try CloudSyncHarness.make()
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.insightPrefs).count == 1)
+        InsightPreferences(defaults: harness.defaults).insightsViaCloud = true
+        await harness.engine().syncNow()
+        let saved = await harness.db.saved(ofType: CloudRecordType.insightPrefs)
+        #expect(saved.count == 2)
+        let snap = try CloudRecordDecoder.prefs(from: saved[1])
+        #expect(snap.insightsViaCloud == true)
+    }
+
     @Test("missing scan root fails loudly, not green")
     func missingScanRootThrows() throws {
         // Round-4 item 1: a renamed root must FAIL, never pass over
