@@ -47,10 +47,39 @@ actor StubCloudDatabase: CloudDatabase {
         records[record.recordID.recordName] = record
     }
 
-    func accountState() async -> CloudAccountState { account }
+    /// Gate rendezvous for the TOCTOU test (round-4-sync fix round F1):
+    /// when `holdAccountState` is set, callers park here instead of
+    /// returning — letting the test hold task 1 between `syncNow`'s
+    /// guard and its claim while task 2 runs the guard. Call counting
+    /// (`accountStateCalls`, `fetchCalls`) distinguishes one full
+    /// push/pull from two (save counts cannot — the second push
+    /// collapses via content-equality, which is exactly what made the
+    /// first version of the test TOCTOU-blind).
+    private(set) var accountStateCalls = 0
+    private(set) var fetchCalls: [String: Int] = [:]
+    var holdAccountState = false
+    private var accountStateHolds: [CheckedContinuation<CloudAccountState, Never>] = []
+
+    func accountState() async -> CloudAccountState {
+        accountStateCalls += 1
+        if holdAccountState {
+            return await withCheckedContinuation { accountStateHolds.append($0) }
+        }
+        return account
+    }
+
+    func setHoldAccountState(_ hold: Bool) { holdAccountState = hold }
+
+    func releaseAccountState() {
+        holdAccountState = false
+        let held = accountStateHolds
+        accountStateHolds = []
+        for continuation in held { continuation.resume(returning: account) }
+    }
 
     func fetchRecord(recordName: String) async throws(CloudSyncError) -> CKRecord? {
         if let error = fetchErrors[recordName] { throw error }
+        fetchCalls[recordName, default: 0] += 1
         return records[recordName]
     }
 
@@ -287,24 +316,44 @@ struct CloudSyncTests {
 
     @Test("concurrent syncNow calls run exactly one full push/pull")
     func concurrentSyncNowRunsOnce() async throws {
-        // Round-4-sync item 3: the second caller must observe the
-        // synchronously-claimed `.syncing` and return — one settings
-        // save total, not two. Deterministic: the spin observes the
-        // claim before the second call starts.
+        // Round-4-sync item 3 + fix-round F1: the test constructs the
+        // ACTUAL guard→await→set interleaving — task 1 parks inside
+        // the account gate (past the guard, before any claim) while
+        // task 2 runs the guard — instead of keying on the new shape's
+        // early `.syncing` claim (which the old shape never makes,
+        // stranding task 2 until after the claim: serial, green,
+        // blind). Call counts, not save counts: a duplicate push
+        // collapses via content-equality (one save either way), but
+        // the duplicate FETCH is observable. Against the old shape
+        // (guard, await, claim) both tasks park in the gate and both
+        // fetch → red; against the fix, task 2 turns away at the
+        // guard → one fetch → green.
         let harness = try CloudSyncHarness.make()
         let engine = harness.engine()
+        await harness.db.setHoldAccountState(true)
         let first = Task { await engine.syncNow() }
         let start = Date.now
-        while engine.status != .syncing {
+        while await harness.db.accountStateCalls != 1 {
             await Task.yield()
             if Date.now.timeIntervalSince(start) > 5 {
-                Issue.record("first sync never claimed .syncing")
+                Issue.record("first sync never reached the account gate")
                 break
             }
         }
         let second = Task { await engine.syncNow() }
+        // Give task 2 every chance to reach the gate too (old shape)
+        // or turn away (new shape): settle, then release.
+        try await Task.sleep(for: .milliseconds(200))
+        let parked = await harness.db.accountStateCalls
+        await harness.db.releaseAccountState()
         await first.value
         await second.value
+        #expect(parked == 1)
+        // One full sync fetches the settings record TWICE (push
+        // decision + pull read-back); a duplicate run would fetch
+        // four times. (Against the old shape this reads 4 — verified
+        // by temporary revert during development.)
+        #expect(await harness.db.fetchCalls[CloudRecordType.settingsRecordName] == 2)
         #expect(await harness.db.saved(ofType: CloudRecordType.settings).count == 1)
         if case .synced(_, let pending) = engine.status {
             #expect(pending == 0)
