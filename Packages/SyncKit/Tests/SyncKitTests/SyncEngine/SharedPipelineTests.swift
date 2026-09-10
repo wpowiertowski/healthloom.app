@@ -171,6 +171,137 @@ import Testing
         #expect(mock.calls.count == 1)
     }
 
+    // MARK: - Item 8, echoing server terminates (both engines)
+
+    @Test func constantTokenServerTerminates() async throws {
+        // Round-6 item 8: a server that echoes the requested token
+        // forever must terminate via the same-token break — never spin
+        // burning quota (foreground Sync Now was unstoppable).
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        mock.setPage(
+            type: .steps,
+            pageToken: nil,
+            page: Page(points: [Self.stepsPoint(id: "echo-1")], nextPageToken: "echo")
+        )
+        mock.setPage(
+            type: .steps,
+            pageToken: "echo",
+            page: Page(points: [Self.stepsPoint(id: "echo-1")], nextPageToken: "echo")
+        )
+        let store = MockHealthStore()
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: store),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .steps)
+        #expect(outcome.status == .ok)
+        #expect(outcome.itemCount == 1) // second echo dedupes via the shared set
+        #expect(mock.callCount(type: .steps, pageToken: nil) == 1)
+        #expect(mock.callCount(type: .steps, pageToken: "echo") == 1)
+    }
+
+    @Test func constantTokenServerTerminatesBackfill() async throws {
+        // Round-6 item 8, backfill half: same echo, same termination.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        mock.setPage(
+            type: .steps,
+            pageToken: nil,
+            page: Page(points: [Self.stepsPoint(id: "echo-1")], nextPageToken: "echo")
+        )
+        mock.setPage(
+            type: .steps,
+            pageToken: "echo",
+            page: Page(points: [Self.stepsPoint(id: "echo-1")], nextPageToken: "echo")
+        )
+        let coordinator = BackfillCoordinator(
+            types: [.steps],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow),
+            horizon: .days90
+        )
+        let outcome = await coordinator.runNextChunk(for: .steps)
+        guard case .processedChunk(_, let itemCount) = outcome else {
+            Issue.record("expected processedChunk, got \(outcome)")
+            return
+        }
+        #expect(itemCount == 1)
+        #expect(mock.callCount(type: .steps, pageToken: nil) == 1)
+        #expect(mock.callCount(type: .steps, pageToken: "echo") == 1)
+    }
+
+    // MARK: - N3, page cap terminates deep walks
+
+    @Test func pageCapTerminatesDeepWalks() async throws {
+        // Fix-round N3: 150 chained pages must stop at the 100-page
+        // cap (100 fetches, 100 counted) — the walk terminates with
+        // partial progress instead of spinning, and the cap-hit log
+        // path above executes.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        for i in 0..<150 {
+            let token: String? = i == 0 ? nil : "t\(i)"
+            mock.setPage(
+                type: .steps,
+                pageToken: token,
+                page: Page(
+                    points: [BackfillTestFixtures.stepsPoint(id: "cap-\(i)", start: Self.fixedNow, end: Self.fixedNow.addingTimeInterval(60))],
+                    nextPageToken: "t\(i + 1)"
+                )
+            )
+        }
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .steps)
+        #expect(outcome.status == .ok)
+        #expect(outcome.itemCount == PagePipeline.maxPages)
+        #expect(mock.calls.count == PagePipeline.maxPages)
+    }
+
+    // MARK: - Item 11, duplicated localOnly point writes+counts once
+
+    @Test func duplicateLocalOnlyPointWritesAndCountsOnce() async throws {
+        // Round-6 item 11: the same `.localOnly` point twice in one
+        // page must upsert once and count once (exactly-once). The
+        // upsert itself is idempotent (one row either way), so the
+        // count is the contract observable — pre-fix it read 2.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        let start = Self.fixedNow.addingTimeInterval(-3600)
+        // `.electrocardiogram` is `.localOnly`-writability: maps
+        // unconditionally, regardless of values (same shape as
+        // SyncEngineTests' own ecgPoint helper).
+        let point = GoogleDataPoint(
+            id: "ecg-dup",
+            dataType: .electrocardiogram,
+            start: start,
+            end: start.addingTimeInterval(30),
+            source: DataSource(platform: "IOS", deviceDisplayName: "Apple Watch", recordingMethod: "AUTOMATICALLY_RECORDED"),
+            values: [:]
+        )
+        mock.setPage(type: .electrocardiogram, pageToken: nil, page: Page(points: [point, point], nextPageToken: nil))
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .electrocardiogram)
+        #expect(outcome.status == .ok)
+        #expect(outcome.itemCount == 1)
+        let context = ModelContext(container)
+        #expect(try context.fetch(FetchDescriptor<LocalSample>()).count == 1)
+    }
+
     // MARK: - Item 10, failed completion save surfaces
 
     struct SaveBoom: Error {}

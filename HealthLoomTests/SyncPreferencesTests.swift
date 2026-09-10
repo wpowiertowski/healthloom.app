@@ -191,3 +191,31 @@ struct SyncPreferencesInstanceTests {
         #expect(b.isEnabled(.steps))
     }
 }
+
+@Suite("SyncPreferences manual sync list")
+@MainActor
+struct ManualSyncTypesTests {
+    @Test func manualListCoversEnabledNonP0AndDropsDisabled() async throws {
+        // Round-6 item 9: manual Sync Now covers every SYNCABLE type
+        // (not just P0) minus disabled. Borrows the real standard key
+        // with save/restore (see BackgroundSyncTests' header — nothing
+        // else in this target touches it).
+        let saved = SyncPreferences().disabledTypes
+        defer {
+            let restore = SyncPreferences()
+            for type in GoogleDataType.allCases {
+                restore.setEnabled(!saved.contains(type), for: type)
+            }
+        }
+        // All enabled: a non-P0 syncable row is present…
+        var list = SyncPreferences.manualSyncTypes()
+        #expect(list.contains(.bodyFat))
+        #expect(list.contains(.steps))
+        #expect(list == SyncPreferences.filterEnabled(list, disabled: []))
+        // …disabling it drops exactly it.
+        SyncPreferences().setEnabled(false, for: .bodyFat)
+        list = SyncPreferences.manualSyncTypes()
+        #expect(!list.contains(.bodyFat))
+        #expect(list.contains(.steps))
+    }
+}

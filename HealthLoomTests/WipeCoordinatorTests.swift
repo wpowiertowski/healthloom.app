@@ -160,6 +160,34 @@ struct HealthKitSourceDeleterLiveTests {
         #expect(progress.map(\.1) == [10_000, 42])
     }
 
+    @Test("denied silent zero fails loud; undetermined zero is provably empty")
+    func wipeStatusTable() async throws {
+        // Fix-round F1: the full authorization-status table. Denied +
+        // silent zero is unverifiable → failure row (ledger/partial).
+        // Never-granted (.notDetermined) + zero is PROVABLY empty →
+        // success (the old Bool seam failed the step here). A real
+        // deletion count succeeds under any status; both types attempt.
+        let store = RecordingWipeStore()
+        let stepsType = try StubSource.stepsType()
+        let sleepType = try #require(HKObjectType.categoryType(forIdentifier: .sleepAnalysis))
+        let restType = try #require(HKObjectType.quantityType(forIdentifier: .restingHeartRate))
+        store.cannedCounts = [sleepType.identifier: 7]
+        let outcomes = await HealthKitSourceDeleter.deleteAppWrittenLive(
+            types: [stepsType, sleepType, restType],
+            writer: HealthKitWriter(store: store),
+            authorizationStatus: { type in
+                type == stepsType ? .sharingDenied : .notDetermined
+            }
+        )
+        guard case .failure = try #require(outcomes[stepsType]) else {
+            Issue.record("denied silent zero should fail")
+            return
+        }
+        #expect(try outcomes[sleepType]?.get() == 7)
+        #expect(try outcomes[restType]?.get() == 0) // never granted: provably empty
+        #expect(store.deleteAllAppDataCalls == [stepsType, sleepType, restType]) // all ATTEMPTED
+    }
+
     @Test("live wipe isolates per-type failures")
     func liveWipePerTypeIsolation() async throws {
         // One failing type neither throws nor strands the other — same
@@ -238,6 +266,7 @@ struct WipeCoordinatorTests {
 
         var revoked = false
         var hkCalls = 0
+        var cloudCalls = 0
         let coordinator = WipeCoordinator(
             deps: WipeCoordinator.Dependencies(
                 revokeGoogle: {
@@ -257,6 +286,10 @@ struct WipeCoordinatorTests {
                         throw WipeBoom()
                     }
                     return [steps: .success(3)]
+                },
+                deleteCloudKit: {
+                    cloudCalls += 1
+                    return 5
                 },
                 deleteStore: {
                     try StoreDeleter.deleteStoreFiles(in: [storeFile])
@@ -288,6 +321,13 @@ struct WipeCoordinatorTests {
         #expect(!FileManager.default.fileExists(atPath: storeFile.path))
         #expect(defaults.object(forKey: "someKey") == nil)
         #expect(hkCalls == 1)
+        // Round-6 item 1: the iCloud step ran with its ledger row.
+        #expect(cloudCalls == 1)
+        guard case .done(let cloudDetail) = coordinator.states[.cloudKit] else {
+            Issue.record("cloudKit should be done")
+            return
+        }
+        #expect(cloudDetail.contains("5"))
     }
 
     @Test("one failure never strands the rest")
@@ -298,6 +338,7 @@ struct WipeCoordinatorTests {
                 revokeGoogle: { throw WipeBoom() },
                 deleteAllKeys: {},
                 deleteHealthKit: { [:] },
+                deleteCloudKit: { 0 },
                 deleteStore: { [] },
                 resetDefaults: {}
             ),
@@ -327,6 +368,7 @@ struct WipeCoordinatorTests {
                     hkCalls += 1
                     return [:]
                 },
+                deleteCloudKit: { 0 },
                 deleteStore: { [] },
                 resetDefaults: {}
             ),
@@ -362,6 +404,24 @@ struct WipeableTypesTests {
         for identifier in HealthKitWriter.distanceIdentifiersForCleanup {
             let distance = try #require(HKObjectType.quantityType(forIdentifier: identifier))
             #expect(wipeable.contains(distance))
+        }
+    }
+
+    @Test("narrowed request still wipes the historical floor")
+    func narrowedRequestKeepsHistory() throws {
+        // Round-6 item 14: if `p0Types` ever narrows (or a grant is
+        // revoked), previously-written types stay in the wipe — a
+        // narrowed request of just sleep must still wipe steps (and
+        // the workout/energy/table types, which never depended on the
+        // request list at all).
+        let narrowed = try HealthKitSourceDeleter.wipeableTypes(requesting: [.sleep])
+        let steps = try #require(HKObjectType.quantityType(forIdentifier: .stepCount))
+        let sleep = try #require(HKObjectType.categoryType(forIdentifier: .sleepAnalysis))
+        #expect(narrowed.contains(steps))
+        #expect(narrowed.contains(sleep))
+        #expect(narrowed.contains(HKObjectType.workoutType()))
+        if let energy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
+            #expect(narrowed.contains(energy))
         }
     }
 }

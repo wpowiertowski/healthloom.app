@@ -17,6 +17,7 @@
 // the others); the coordinator turns them into step rows.
 
 import Foundation
+import CoreModel
 import HealthKit
 import SyncKit
 
@@ -61,18 +62,51 @@ struct HealthKitSourceDeleter {
     /// preserved for the ledger rows, one denied/unavailable type still
     /// can't strand the rest. The seam-based `deleteAppWritten` above
     /// stays as the tested policy core; production enters here.
+    /// A denied grant the wipe cannot verify (round-6 item 14 +
+    /// fix-round F1): success-0 under `.sharingDenied` may mean
+    /// "nothing there" or "denied" — claiming success would be the
+    /// lie, so it fails loud into the ledger/partial path instead.
+    struct WipeRevokedUnverifiable: Error, CustomStringConvertible {
+        var typeIdentifier: String
+        var description: String {
+            "HealthKit access for \(typeIdentifier) was revoked — deletion could not be verified. Re-enable access and run again."
+        }
+    }
+
     static func deleteAppWrittenLive(
         types: [HKObjectType],
         writer: HealthKitWriter,
+        authorizationStatus: (HKObjectType) -> HKAuthorizationStatus = { type in
+            (type as? HKSampleType).map {
+                HKHealthStore().authorizationStatus(for: $0)
+            } ?? .notDetermined
+        },
         onProgress: (HKObjectType, Int) -> Void = { _, _ in }
     ) async -> [HKObjectType: Result<Int, Error>] {
         var outcomes: [HKObjectType: Result<Int, Error>] = [:]
         for type in types {
+            // Round-6 item 14 + fix-round F1: denied types are NOT
+            // excluded pre-loop — every type attempts and lands a
+            // ledger row. The status table, stated exactly:
+            // - `.sharingAuthorized`: the delete speaks for itself
+            //   (count or throw).
+            // - `.notDetermined`: never requested → never written →
+            //   a success-0 is PROVABLY empty, not merely hopeful.
+            //   (The old Bool seam lumped this with denied and failed
+            //   the wipe step for never-granted floor types.)
+            // - `.sharingDenied` + success-0: unverifiable ("nothing
+            //   there" vs "denied") → fail loud. A real count, or a
+            //   throw, still speaks for itself.
+            let status = authorizationStatus(type)
             do {
                 let report = try await writer.deleteAllAppData(types: [type])
                 let count = report.deletedCounts[type.identifier] ?? 0
-                onProgress(type, count)
-                outcomes[type] = .success(count)
+                if count == 0, status == .sharingDenied {
+                    outcomes[type] = .failure(WipeRevokedUnverifiable(typeIdentifier: type.identifier))
+                } else {
+                    onProgress(type, count)
+                    outcomes[type] = .success(count)
+                }
             } catch {
                 outcomes[type] = .failure(error)
             }
@@ -138,24 +172,41 @@ extension HealthKitSourceDeleter {
     /// future P0 addition or distance bucket lands in both the share
     /// sheet and the wipe, or neither. Deterministic order (never a Set
     /// round-trip): progress rows and tests read this sequence.
-    static func wipeableTypes() throws -> [HKSampleType] {
+    /// Types this app has EVER requested share for (round-6 item 14) —
+    /// frozen at the v1 request set. The wipe covers request ∪ history:
+    /// narrowing `p0Types` later (or a revoked grant today) can never
+    /// strand previously-written samples outside the wipe with no
+    /// ledger row. Pass a narrowed `requesting` list to prove it (the
+    /// historical floor still wipes); production uses the default.
+    static let historicalRequestTypes: [GoogleDataType] = [.steps, .heartRate, .weight, .sleep]
+
+    static func wipeableTypes(requesting: [GoogleDataType] = AppEnvironment.p0Types) throws -> [HKSampleType] {
         // Membership comes from the shared share-set computation (F10):
         // whatever onboarding authorizes, the wipe covers — no parallel
-        // source to drift. Order is imposed here (P0 order, then the
-        // writer-table order) because neither source promises sequence.
-        let shared = try HealthKitAuth().authorizedShareTypes(
-            sharing: AppEnvironment.p0Types,
+        // source to drift. Order is imposed here (request order, then
+        // historical, then the writer-table order) because no source
+        // promises sequence.
+        let auth = HealthKitAuth()
+        let current = try auth.authorizedShareTypes(
+            sharing: requesting,
             includingWorkoutShare: true
         )
-        let auth = HealthKitAuth()
+        let historical = try auth.authorizedShareTypes(
+            sharing: historicalRequestTypes,
+            includingWorkoutShare: true
+        )
+        let allowed = current.union(historical)
         var ordered: [HKSampleType] = []
         var seen = Set<HKSampleType>()
         func take(_ type: HKSampleType) {
-            if shared.contains(type), seen.insert(type).inserted {
+            if allowed.contains(type), seen.insert(type).inserted {
                 ordered.append(type)
             }
         }
-        for dataType in AppEnvironment.p0Types {
+        for dataType in requesting {
+            take(try auth.resolveSampleType(for: dataType))
+        }
+        for dataType in historicalRequestTypes {
             take(try auth.resolveSampleType(for: dataType))
         }
         take(HKObjectType.workoutType())

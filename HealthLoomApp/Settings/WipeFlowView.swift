@@ -269,6 +269,11 @@ struct WipeFlowView: View {
                     writer: HealthKitWriter(healthStore: HKHealthStore())
                 )
             },
+            // Round-6 item 1: server records first (the alert promises
+            // "cannot be undone" — wiped data must not pull back).
+            deleteCloudKit: {
+                try await appEnvironment.cloudSync.deleteAllCloudData()
+            },
             deleteStore: {
                 var removed = try StoreDeleter.deleteStoreFiles()
                 // F3: staged export files are health data too — sweep

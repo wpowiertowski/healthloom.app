@@ -30,6 +30,18 @@ public enum CoreModel {
     ///   under Application Support/HealthLoom, with `NSFileProtectionComplete` applied
     ///   to the store file (architecture.md D11 — the store holds `LocalSample`
     ///   clinical events and chat history, nothing more sensitive belongs in it per D2).
+    ///
+    ///   Round-6 item 12 (SQLite-correct reasoning): stamping ONLY the
+    ///   `.store` file leaves SQLite's `-wal`/`-shm` sidecars at the
+    ///   default class — and pre-creating + stamping them is fragile
+    ///   (SQLite deletes and recreates sidecars across checkpoint
+    ///   restarts, dropping the class). So protection is THREE layers:
+    ///   (1) the DIRECTORY is stamped — files SQLite creates inside it
+    ///   later inherit the class (iOS inheritance rule), covering all
+    ///   future sidecars; (2) the store file itself is stamped
+    ///   explicitly; (3) EXISTING sidecars are stamped if present —
+    ///   layer (1) cannot retroactively cover sidecars created before
+    ///   an upgrade stamped the directory.
     public static func makeContainer(inMemory: Bool) throws -> ModelContainer {
         let schema = Schema(modelTypes)
 
@@ -57,7 +69,16 @@ public enum CoreModel {
         let container = try ModelContainer(for: schema, configurations: [configuration])
 
         if let onDiskURL {
+            // The store file itself, plus any sidecars SQLite already
+            // created (round-6 item 12 — see below for why the directory
+            // stamp alone is not enough on upgrade).
             try applyCompleteFileProtection(at: onDiskURL)
+            // Sidecars, present or not (WAL pair + rollback journal —
+            // whichever journal mode the store runs under, the
+            // newest-rows file gets the class; absence is success).
+            for suffix in ["-wal", "-shm", "-journal"] {
+                try applyCompleteFileProtectionIfPresent(at: URL(fileURLWithPath: onDiskURL.path + suffix))
+            }
         }
 
         return container
@@ -75,8 +96,18 @@ public enum CoreModel {
         )
         let directory = base.appending(path: "HealthLoom", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Round-6 item 12: stamp the DIRECTORY (SQLite-correct — see
+        // `makeContainer`'s doc): files SQLite creates later inside it
+        // (-wal/-shm on checkpoint restarts) INHERIT this class.
+        try applyCompleteFileProtectionIfPresent(at: directory)
         return directory.appending(path: "CoreModel.store", directoryHint: .notDirectory)
     }
+
+    /// The protection class every store file gets (round-6 item 12):
+    /// a named constant so tests pin the DECISION anywhere — actual
+    /// enforcement is iOS-only (see below), so no test can observe the
+    /// class on macOS or (empirically) the simulator; devices enforce.
+    static let completeProtection = FileProtectionType.complete
 
     /// Applies `NSFileProtectionComplete` (architecture.md D11) to the on-disk store.
     ///
@@ -90,10 +121,17 @@ public enum CoreModel {
     private static func applyCompleteFileProtection(at url: URL) throws {
         #if os(iOS)
         try FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.complete],
+            [.protectionKey: completeProtection],
             ofItemAtPath: url.path
         )
         #endif
+    }
+
+    /// Same stamp, skipping absent paths (sidecars and just-created
+    /// directories may not exist yet — absence is success, not failure).
+    private static func applyCompleteFileProtectionIfPresent(at url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try applyCompleteFileProtection(at: url)
     }
 }
 

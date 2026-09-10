@@ -81,4 +81,27 @@ enum ExportBuilder {
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         return try encoder.encode(document)
     }
+
+    /// Write options for staged exports (round-6 item 13): atomic +
+    /// Complete protection, as a named constant so tests pin the
+    /// decision anywhere (enforcement itself is iOS-only, like the
+    /// store files — simulators and macOS do not enforce).
+    static let stagedWriteOptions: Data.WritingOptions = [.atomic, .completeFileProtection]
+
+    /// Stages encoded export JSON for the share sheet (round-6 item
+    /// 13): sweeps previous staged files first (F3 — so a stale
+    /// UNPROTECTED export from an older build never lingers past the
+    /// next export or wipe), then writes with `stagedWriteOptions`
+    /// (the staged copy is a weaker tmp copy of Complete-protected
+    /// store data — while staged it carries the same class). Returns
+    /// the staged URL.
+    static func stageForSharing(_ data: Data) throws -> URL {
+        try StoreDeleter.deleteExportFiles()
+        let url = FileManager.default.temporaryDirectory.appending(
+            path: "healthloom-export-\(Int(Date().timeIntervalSince1970)).json",
+            directoryHint: .notDirectory
+        )
+        try data.write(to: url, options: Self.stagedWriteOptions)
+        return url
+    }
 }

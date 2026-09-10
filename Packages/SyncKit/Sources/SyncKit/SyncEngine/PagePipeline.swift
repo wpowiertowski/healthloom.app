@@ -42,8 +42,62 @@ nonisolated struct PageProcessing: Sendable {
 }
 
 nonisolated struct PagePipeline: Sendable {
+    /// Maximum pages per walk (round-6 item 8): a legitimate window
+    /// never approaches this; beyond it the server is echoing or the
+    /// window is pathological — stop with partial progress kept.
+    static let maxPages = 100
+
     let conflictFilter: any ConflictFiltering
     let writer: HealthKitWriter
+
+    /// Bounded multi-page walk over a page fetcher (round-6 item 8):
+    /// BOTH engines' repeat-while-pageToken loops route through here.
+    /// Same-token-break (an echoing server returning its own token
+    /// forever spins burning quota — foreground Sync Now was
+    /// unstoppable), the page cap above, and a cancellation probe per
+    /// page (a cancelled walk throws into the callers' existing
+    /// stop-not-failure catches). The existence set threads through
+    /// the walk internally and never escapes: a throwing page
+    /// discards it exactly like the old per-page commit (which never
+    /// escaped a failed run either — retries re-query fresh).
+    /// `.localOnly` points accumulate for the CALLER to upsert on its
+    /// own executor. On a throwing page, throws `PageWalkPartial`
+    /// (instead of the raw page error) carrying whatever was processed
+    /// before the failure — the runs' informational-count contract
+    /// (partial progress reported on failed runs) survives the
+    /// extraction. Callers add `partial.total` to their count and
+    /// rethrow `partial.underlying` (which preserves cancellation
+    /// identity for the stop-not-failure branches).
+    func processPages(
+        knownExternalIDs: Set<String>,
+        fetch: @Sendable (String?) async throws -> Page
+    ) async throws -> (total: Int, localOnly: [GoogleDataPoint], hitPageCap: Bool) {
+        var known = knownExternalIDs
+        var total = 0
+        var localOnly: [GoogleDataPoint] = []
+        var token: String? = nil
+        var pages = 0
+        var hitPageCap = false
+        while true {
+            try Task.checkCancellation()
+            if pages >= Self.maxPages {
+                hitPageCap = true
+                break
+            }
+            do {
+                let page = try await fetch(token)
+                let processed = try await processPage(page.points, knownExternalIDs: &known)
+                total += processed.itemCount
+                localOnly += processed.localOnlyPoints
+                pages += 1
+                guard let next = page.nextPageToken, next != token else { break }
+                token = next
+            } catch {
+                throw PageWalkPartial(total: total, underlying: error)
+            }
+        }
+        return (total, localOnly, hitPageCap)
+    }
 
     /// Maps, conflict-filters, batches, and writes/upserts every point in
     /// one page. `knownExternalIDs` is the per-(type, window) existence
@@ -121,6 +175,14 @@ nonisolated struct PagePipeline: Sendable {
                 known.insert(point.id)
                 workoutCount += 1
             case .localOnly:
+                // Round-6 item 11: the same within-page gate as every
+                // other arm — the old unconditional append upserted
+                // twice and counted twice for a duplicated point,
+                // contradicting this file's exactly-once contract
+                // (the upsert itself is idempotent, so no corruption —
+                // but the count lied and the write was wasted).
+                guard !known.contains(point.id) else { continue }
+                known.insert(point.id)
                 localOnlyPoints.append(point)
             case .skip:
                 skipCount += 1
@@ -188,6 +250,15 @@ nonisolated struct PagePipeline: Sendable {
             }
         }
     }
+}
+
+/// Partial progress from an interrupted page walk: the count processed
+/// before the throwing page, plus the underlying error (rethrow target —
+/// preserves cancellation identity and the redacted error row). Never
+/// constructed outside `PagePipeline.processPages`.
+struct PageWalkPartial: Error {
+    var total: Int
+    var underlying: any Error
 }
 
 /// Minimal, self-contained JSON shape for `LocalSample.payloadJSON` — the

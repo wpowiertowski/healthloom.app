@@ -74,7 +74,16 @@ final class InsightPreferences {
     /// instance than the runner, and the runner's copy lives for days —
     /// without this, an enable-toggle would read as `.disabled` until
     /// force-quit. Defaults stay the single source; instances are views.
+    /// Round-6 item 2: `suppressPersist` guards the whole read — the
+    /// same toolchain hazard `init` documents. Without it, assigning
+    /// `morningInsightsEnabled` fires `didSet→persist()`, writing the
+    /// STALE in-memory details/viaCloud/lastRun OVER the stored values
+    /// before they are read back (only `morningInsightsEnabled` ever
+    /// actually reloaded — concretely broke lock-screen redaction and
+    /// duped insights after cloud pulls).
     func reload() {
+        suppressPersist = true
+        defer { suppressPersist = false }
         morningInsightsEnabled = defaults.bool(forKey: Self.enabledKey)
         lockScreenDetails = defaults.bool(forKey: Self.detailsKey)
         insightsViaCloud = defaults.bool(forKey: Self.viaCloudKey)

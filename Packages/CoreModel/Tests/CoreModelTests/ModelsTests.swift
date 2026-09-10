@@ -135,3 +135,14 @@ struct ContainerRoundTripTests {
         #expect(try contextB.fetch(FetchDescriptor<SyncState>()).count == 0)
     }
 }
+
+@Suite("Store file protection decision")
+struct StoreProtectionDecisionTests {
+    @Test("store files are stamped Complete")
+    func completeProtectionPinned() {
+        // Round-6 item 12: pins the DECISION (named constant) anywhere —
+        // enforcement itself is iOS-only, unobservable on macOS and
+        // (empirically) the simulator, enforced on device.
+        #expect(CoreModel.completeProtection == FileProtectionType.complete)
+    }
+}

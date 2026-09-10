@@ -15,11 +15,13 @@ xcode:
 	xcodegen generate
 	open HealthLoom.xcodeproj
 
-XCODE_BETA := /Applications/Xcode-beta.app/Contents/Developer
+# Xcode 27 graduated from beta: /Applications/Xcode.app IS 27.0.
+# (Variable keeps its name so CI/local scripts referencing it survive.)
+XCODE_BETA := /Applications/Xcode.app/Contents/Developer
 
 test:
 	@test -d "$(XCODE_BETA)" || { \
-		echo "error: $(XCODE_BETA) not found -- the app target needs the iOS 27 SDK from the Xcode 27 beta. Install the Xcode 27 beta." >&2; \
+		echo "error: $(XCODE_BETA) not found -- the app target needs the iOS 27 SDK from Xcode 27. Install Xcode 27." >&2; \
 		exit 1; \
 	}
 	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \

@@ -207,10 +207,14 @@ struct SettingsView: View {
             }
             .padding(.top, 20)
             // A pull applied server state through the engine's own owner
-            // instances — this screen's instances re-read the same keys.
+            // instances — this screen's instances re-read the same keys
+            // (round-6 item 10: watchPriority included — without it the
+            // toggle stays stale after a pull and confusingly writes
+            // back over the pulled value).
             .onReceive(NotificationCenter.default.publisher(for: .cloudSyncDidApply)) { _ in
                 preferences.reload()
                 insightPrefs.reload()
+                watchPriority.reload()
             }
 
             // Tip jar (StoreKit 2 consumables). Graceful empty state:
@@ -554,14 +558,9 @@ struct SettingsView: View {
                     now: Date()
                 )
                 let data = try ExportBuilder.encode(document)
-                // Sweep previous staged exports before writing (F3).
-                try StoreDeleter.deleteExportFiles()
-                let url = FileManager.default.temporaryDirectory.appending(
-                    path: "healthloom-export-\(Int(Date().timeIntervalSince1970)).json",
-                    directoryHint: .notDirectory
-                )
-                try data.write(to: url, options: .atomic)
-                exportURL = url
+                // Round-6 item 13: staged WITH Complete protection
+                // (sweep included — stale unprotected copies go here).
+                exportURL = try ExportBuilder.stageForSharing(data)
             } catch {
                 exportError = "Couldn't prepare the export file."
             }

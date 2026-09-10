@@ -1,0 +1,69 @@
+# CodeQL advanced setup (Swift + Actions).
+#
+# WHY THIS FILE EXISTS (round-6 CI fix): CodeQL *default* setup runs on
+# macos-latest, whose image rotated post-GA (Xcode 27 beta removed; the
+# default is now Xcode_26.6). Our deployment target is iOS 27.0, so
+# default setup's autobuild drove Xcode_26.6's iPhoneOS26.5 SDK at an
+# arm64-apple-ios27.0 target and failed environmentally ("no such module
+# CoreModel", manifest minimum-target noise) — not a code finding. This
+# advanced setup pins the same `xcode-27` preview image + explicit
+# xcode-select the app job in ci.yml uses, so analysis builds with the
+# Xcode that can actually target iOS 27.
+#
+# Coverage parity with the default setup it replaces: languages
+# swift+actions, default query suite (no `queries:` override), weekly
+# scheduled run plus push/PR. The coordinator disables default setup via
+# API AFTER this file lands (sequencing: advanced must exist first).
+#
+# TOOLCHAIN NOTE (carried from ci.yml): once Xcode 27 GA lands on the
+# regular macos-26 image, move this job back to macos-26 (WP-38
+# toolchain-finalization checklist item).
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+  schedule:
+    # Weekly, matching the default-setup cadence this replaces.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (swift, actions)
+    # Same preview image as ci.yml's app job: the only image whose Xcode
+    # targets iOS 27. See the toolchain note at the top of this file.
+    runs-on: xcode-27
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Select Xcode 27
+        # Select explicitly (same rationale as ci.yml's app job): the
+        # image default could bump and silently change what we analyze.
+        run: sudo xcode-select -s /Applications/Xcode_27.0.app
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: swift, actions
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3

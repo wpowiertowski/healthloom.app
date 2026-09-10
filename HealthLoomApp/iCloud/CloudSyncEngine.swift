@@ -54,11 +54,29 @@ nonisolated enum CloudAccountState: Sendable, Equatable {
 /// Seam for tests: the engine never touches `CKContainer`/`CKDatabase`
 /// directly. Typed throws keep CloudKit out of the engine's vocabulary —
 /// the live adapter maps `CKError`, the stub throws `CloudSyncError`.
+/// One page of turn records: materialized records plus the opaque
+/// cursor for the next page (`nil` = exhausted). `Sendable` so the
+/// engine's cursor loop can hold it across awaits.
+nonisolated struct CloudTurnPage: Sendable {
+    var records: [CKRecord]
+    var nextCursor: Data?
+}
+
 nonisolated protocol CloudDatabase: Sendable {
     nonisolated    func accountState() async -> CloudAccountState
     nonisolated    func fetchRecord(recordName: String) async throws(CloudSyncError) -> CKRecord?
     nonisolated    func saveRecord(_ record: CKRecord) async throws(CloudSyncError) -> CKRecord
-    nonisolated    func allTurnRecords() async throws(CloudSyncError) -> [CKRecord]
+    /// One page of turn records (round-6 item 4): the engine follows
+    /// `nextCursor` until nil. `cursor` is an opaque token minted by a
+    /// previous page (`nil` = first page) — Live archives the real
+    /// `CKQueryCursor` (`NSSecureCoding`) into it; the stub uses page
+    /// indexes. Never persisted: a token is valid only within the walk
+    /// that minted it.
+    nonisolated    func turnPage(cursor: Data?) async throws(CloudSyncError) -> CloudTurnPage
+    /// Deletes one record by name; missing is success (idempotent —
+    /// the wipe deletes by enumerated names, and a concurrent device
+    /// may have removed one first).
+    nonisolated    func deleteRecord(recordName: String) async throws(CloudSyncError)
 }
 
 nonisolated struct LiveCloudDatabase: CloudDatabase {
@@ -101,11 +119,23 @@ nonisolated struct LiveCloudDatabase: CloudDatabase {
         }
     }
 
-    func allTurnRecords() async throws(CloudSyncError) -> [CKRecord] {
-        let query = CKQuery(recordType: CloudRecordType.coachTurn, predicate: NSPredicate(value: true))
+    func turnPage(cursor: Data?) async throws(CloudSyncError) -> CloudTurnPage {
+        // Page size bounds one round trip, not the walk: the engine
+        // follows `nextCursor` until nil (round-6 item 4), so any
+        // finite size is correct — 200 keeps single pages small
+        // without chattering on large transcripts.
+        let pageSize = 200
         let matches: [(CKRecord.ID, Result<CKRecord, Error>)]
+        let queryCursor: CKQueryOperation.Cursor?
         do {
-            (matches, _) = try await database.records(matching: query)
+            if let cursor,
+               let resumed = try NSKeyedUnarchiver.unarchivedObject(ofClass: CKQueryOperation.Cursor.self, from: cursor)
+            {
+                (matches, queryCursor) = try await database.records(continuingMatchFrom: resumed, resultsLimit: pageSize)
+            } else {
+                let query = CKQuery(recordType: CloudRecordType.coachTurn, predicate: NSPredicate(value: true))
+                (matches, queryCursor) = try await database.records(matching: query, resultsLimit: pageSize)
+            }
         } catch {
             throw mapError(error)
         }
@@ -121,7 +151,29 @@ nonisolated struct LiveCloudDatabase: CloudDatabase {
             case .failure(let error): throw mapError(error)
             }
         }
-        return records
+        let nextCursor: Data?
+        do {
+            nextCursor = try queryCursor.map {
+                try NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true)
+            }
+        } catch {
+            // A cursor that cannot round-trip must fail LOUDLY, never
+            // restart the walk from scratch (which would re-pull and
+            // re-process every page already consumed — and, worse, look
+            // exactly like success).
+            throw CloudSyncError.failed("turn pagination cursor could not be encoded")
+        }
+        return CloudTurnPage(records: records, nextCursor: nextCursor)
+    }
+
+    func deleteRecord(recordName: String) async throws(CloudSyncError) {
+        do {
+            try await database.deleteRecord(withID: CKRecord.ID(recordName: recordName))
+        } catch {
+            // Missing is success (idempotent wipe — see the protocol).
+            if (error as? CKError)?.code == .unknownItem { return }
+            throw mapError(error)
+        }
     }
 
     private func mapError(_ error: Error) -> CloudSyncError {
@@ -238,6 +290,14 @@ final class CloudSyncEngine {
         case .available:
             break
         }
+        // Round-6 item 6: the owner instances are built once in `init`
+        // but Settings writes through its OWN instances — re-read live
+        // before every sync or post-launch toggles stay invisible to
+        // push until cold launch (and lose LWW races against a second
+        // device that did push). Defaults stay the single source;
+        // instances are views (same F1 posture as the insight runner).
+        syncPreferences.reload()
+        insightPrefs.reload()
         do {
             try await pushSingletons()
             try await pushNewTurns()
@@ -381,17 +441,47 @@ final class CloudSyncEngine {
         }
     }
 
+    /// Every server turn, following the query cursor until nil
+    /// (round-6 item 4): the old single-page fetch pulled an arbitrary
+    /// unordered fragment that varied run to run.
+    private func pullAllTurnRecords() async throws(CloudSyncError) -> [CKRecord] {
+        var all: [CKRecord] = []
+        var cursor: Data? = nil
+        repeat {
+            let page = try await database.turnPage(cursor: cursor)
+            all.append(contentsOf: page.records)
+            cursor = page.nextCursor
+        } while cursor != nil
+        return all
+    }
+
+    /// Dedupe key shared by the pull set and the server side: role +
+    /// content + fractional-second timestamp (same components as the
+    /// synthetic turnID, minus readability).
+    nonisolated static func turnDedupeKey(role: String, content: String, createdAt: Date) -> String {
+        "\(role)|\(content)|\(createdAt.timeIntervalSince1970)"
+    }
+
     private func pullMissingTurns() async throws(CloudSyncError) {
-        let serverTurns = try await database.allTurnRecords()
-        let local = Set(try localTurns().map { "\($0.role)|\($0.content)|\($0.createdAt.timeIntervalSince1970)" })
+        let serverTurns = try await pullAllTurnRecords()
+        // Round-6 item 5: dedupe against the FULL local key set, not
+        // the push window's newest-500 — server turns older than the
+        // window (a second device's history, or >500 arrivals between
+        // syncs) re-inserted EVERY sync, growing the store without
+        // bound. Cost, stated: one uncapped fetch of whole (small)
+        // `ChatTurn` rows per sync — SwiftData offers no keys-only
+        // fetch, so these are full rows, not projections — strictly
+        // cheaper than the unbounded duplicate growth this replaces
+        // (which also re-pushes later). The push window itself stays
+        // capped (upload bound, unchanged).
+        let local = try localTurnKeys()
         let context = ModelContext(container)
         var inserted = false
         for record in serverTurns {
             guard let snap = try? CloudRecordDecoder.turn(from: record) else {
                 continue // malformed turn: skip, never crash the sync
             }
-            let key = "\(snap.role)|\(snap.content)|\(snap.createdAt.timeIntervalSince1970)"
-            guard !local.contains(key) else { continue }
+            guard !local.contains(Self.turnDedupeKey(role: snap.role, content: snap.content, createdAt: snap.createdAt)) else { continue }
             context.insert(ChatTurn(role: snap.role, content: snap.content, createdAt: snap.createdAt))
             inserted = true
         }
@@ -402,6 +492,46 @@ final class CloudSyncEngine {
                 throw CloudSyncError.failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Wipe step (round-6 item 1): deletes every app-owned server
+    /// record, THEN resets local sync state. Order is load-bearing:
+    /// server-first means a crash between leaves data deleted with
+    /// stale watermarks (next sync re-pushes local state — fail-safe);
+    /// watermarks-first would repull deleted data on relaunch,
+    /// breaking the alert's "cannot be undone" promise.
+    /// Returns the ATTEMPTED-record count for the wipe ledger
+    /// (fix-round N2 — semantics stated exactly: a non-throwing
+    /// delete is server-confirmed gone, and a missing record was
+    /// already gone, so every counted name ends absent; but the
+    /// function cannot distinguish "deleted" from "already
+    /// missing", hence "cleared", not "deleted" — a throw fails
+    /// the step loudly instead of short-counting).
+    func deleteAllCloudData() async throws(CloudSyncError) -> Int {
+        var names = [
+            CloudRecordType.settingsRecordName,
+            CloudRecordType.insightPrefsRecordName,
+        ]
+        names += try await pullAllTurnRecords().map { $0.recordID.recordName }
+        for name in names {
+            try await database.deleteRecord(recordName: name)
+        }
+        resetSyncState()
+        return names.count
+    }
+
+    /// Clears every persisted sync marker (watermarks, outbox, last
+    /// sync) after a wipe. Private to the wipe path — normal syncs
+    /// advance these, never clear them.
+    private func resetSyncState() {
+        outbox = []
+        lastSync = nil
+        seenSettingsAt = Date(timeIntervalSince1970: 0)
+        seenPrefsAt = Date(timeIntervalSince1970: 0)
+        appliedSettingsAt = Date(timeIntervalSince1970: 0)
+        appliedPrefsAt = Date(timeIntervalSince1970: 0)
+        pushedTurnsThrough = nil
+        status = .synced(at: nil, pending: 0)
     }
 
     // MARK: - Local reads/writes (app-owned types only)
@@ -438,25 +568,35 @@ final class CloudSyncEngine {
         NotificationCenter.default.post(name: .cloudSyncDidApply, object: nil)
     }
 
-    private func localTurns() throws(CloudSyncError) -> [CoachTurnSnapshot] {
+    /// Full local dedupe-key set for pull (round-6 item 5) — uncapped
+    /// full-row fetch (fix-round N4: stated exactly — SwiftData offers
+    /// no keys-only fetch, so these are whole `ChatTurn` rows, not
+    /// projections; they are small (role/content/date) and the
+    /// unbounded-duplicate growth this replaces is strictly worse).
+    /// See `pullMissingTurns` for the cost reasoning.
+    private func localTurnKeys() throws(CloudSyncError) -> Set<String> {
+        Set(try localTurnRows(limit: nil).map {
+            Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt)
+        })
+    }
+
+    /// Newest-first local rows, optionally capped (round-4-sync item 1:
+    /// `order:` spelled explicitly like every other site).
+    private func localTurnRows(limit: Int?) throws(CloudSyncError) -> [ChatTurn] {
         let context = ModelContext(container)
-        // Round-4-sync item 1: NEWEST-first, `order:` spelled explicitly
-        // like every other site. The old ascending default + fetchLimit
-        // paged the OLDEST 500: the watermark then passed turn 500 and
-        // pushes stopped forever, while the pull dedupe (built from the
-        // same oldest-500) re-inserted everything newer as duplicates,
-        // unboundedly. Newest-first keeps pushed turns inside the
-        // dedupe window by construction.
         var descriptor = FetchDescriptor<ChatTurn>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        // Cap the replay window: history sync is a convenience, not an
-        // archive migration — 500 most recent turns bound the upload.
-        descriptor.fetchLimit = 500
-        let rows: [ChatTurn]
+        descriptor.fetchLimit = limit
         do {
-            rows = try context.fetch(descriptor)
+            return try context.fetch(descriptor)
         } catch {
             throw CloudSyncError.failed(error.localizedDescription)
         }
+    }
+
+    private func localTurns() throws(CloudSyncError) -> [CoachTurnSnapshot] {
+        // Cap the replay window: history sync is a convenience, not an
+        // archive migration — 500 most recent turns bound the upload.
+        let rows = try localTurnRows(limit: 500)
         // Synthetic turnID, kept deliberately (third-party N1): a content
         // hash would survive clock changes, but renaming the scheme later
         // orphans already-pushed records (save-if-absent keys on the name
