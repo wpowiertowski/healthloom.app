@@ -62,8 +62,13 @@ public actor SyncLogStore {
     /// order (the Settings viewer, `SyncLogView.swift`) reverse this
     /// themselves -- kept in insertion order here so capping/ordering
     /// assertions in tests read naturally ("last element is the newest").
+    /// A non-positive `limit` returns `[]` (round-7 item 11): `suffix`
+    /// traps on negatives, and an empty window is empty — never the
+    /// whole log (same contract as `PromptManager.history(limit:)`).
     public func recentEntries(limit: Int? = nil) -> [SyncLogEntry] {
-        guard let limit, limit < entries.count else { return entries }
+        guard let limit else { return entries }
+        guard limit > 0 else { return [] }
+        guard limit < entries.count else { return entries }
         return Array(entries.suffix(limit))
     }
 

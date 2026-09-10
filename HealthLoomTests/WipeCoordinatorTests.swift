@@ -241,6 +241,45 @@ struct StoreDeleterTests {
         // Second run: nothing there, still success.
         #expect(try StoreDeleter.deleteStoreFiles(in: urls).isEmpty)
     }
+
+    @Test("wipe inventory covers journal mode and the sync log")
+    func wipeInventoryComplete() throws {
+        // Round-7 item 6: the wipe LIST (not just the loop) must name
+        // `-journal` (rollback-mode sidecar) and `SyncLog.json` —
+        // both survived the old list past a "cannot be undone" wipe.
+        let names = try StoreDeleter.storeFileURLs().map(\.lastPathComponent)
+        #expect(names.contains("CoreModel.store"))
+        #expect(names.contains("CoreModel.store-wal"))
+        #expect(names.contains("CoreModel.store-shm"))
+        #expect(names.contains("CoreModel.store-journal"))
+        #expect(names.contains("SyncLog.json"))
+        // And the loop removes a journal file like any other entry.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let journal = dir.appending(path: "CoreModel.store-journal")
+        try Data("x".utf8).write(to: journal)
+        #expect(try StoreDeleter.deleteStoreFiles(in: [journal]).count == 1)
+        #expect(!FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    @Test("enumeration cross-check names future files loudly")
+    func uncoveredFilesTripwire() throws {
+        // Round-7 fix N1: a directory holding exactly the inventory
+        // reports nothing; one extra (future) file is named. The
+        // production full-inventory path throws on a non-empty answer
+        // (fail the step, never escape silently); explicit-subset
+        // deletes stay quiet (their siblings are not their scope).
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let covered = dir.appending(path: "CoreModel.store")
+        try Data("x".utf8).write(to: covered)
+        #expect(try StoreDeleter.uncoveredFiles(in: dir, coveredBy: [covered]).isEmpty)
+        let future = dir.appending(path: "FutureSidecar.db")
+        try Data("x".utf8).write(to: future)
+        #expect(try StoreDeleter.uncoveredFiles(in: dir, coveredBy: [covered]) == ["FutureSidecar.db"])
+        // Explicit-subset deletes do not trip on siblings.
+        #expect(try StoreDeleter.deleteStoreFiles(in: [covered]).count == 1)
+    }
 }
 
 // MARK: - Full wipe (scripted doubles)

@@ -91,12 +91,14 @@ import Testing
             (.asleepREM, "2026-07-09T02:00:00Z", "2026-07-09T03:30:00Z"),
             (.asleepCore, "2026-07-09T03:30:00Z", "2026-07-09T06:45:00Z"),
         ]
-        for (segment, (stage, start, end)) in zip(segments, expected) {
+        for (index, (segment, (stage, start, end))) in zip(segments, expected).enumerated() {
             #expect(segment.healthKitIdentifier == "HKCategoryTypeIdentifierSleepAnalysis")
             #expect(segment.stage == stage)
             #expect(segment.start == TypeMapperFixtures.date(start))
             #expect(segment.end == TypeMapperFixtures.date(end))
-            #expect(segment.metadata.externalUUID == "sleep-0001")
+            // Round-7 item 3: per-segment derived UUIDs (stable index
+            // roles); the bare point ID survives as externalID.
+            #expect(segment.metadata.externalUUID == "sleep-0001#sleep-\(index)")
             #expect(segment.metadata.externalID == "sleep-0001")
             #expect(segment.metadata.sourceDevice == "Fitbit Air")
         }

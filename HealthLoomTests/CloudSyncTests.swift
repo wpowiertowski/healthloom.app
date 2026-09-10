@@ -38,6 +38,7 @@ actor StubCloudDatabase: CloudDatabase {
     var saveError: CloudSyncError?
     var queryError: CloudSyncError?
     func setTurnPageSize(_ size: Int?) { turnPageSize = size }
+    func setTurnLoopCursor(_ cursor: Data?) { turnLoopCursor = cursor }
 
     func setAccount(_ state: CloudAccountState) { account = state }
     func setSaveError(_ error: CloudSyncError?) { saveError = error }
@@ -106,6 +107,10 @@ actor StubCloudDatabase: CloudDatabase {
     /// page, preserving every pre-existing test's shape; set to N to
     /// model a multi-page server.
     var turnPageSize: Int?
+    /// Echoing cursor (round-7 item 5): when set, every page returns
+    /// this same cursor forever — models a looping server so the test
+    /// proves the walk terminates instead of spinning to OOM.
+    var turnLoopCursor: Data?
     private(set) var deletedRecordNames: [String] = []
 
     func turnPage(cursor: Data?) async throws(CloudSyncError) -> CloudTurnPage {
@@ -113,12 +118,10 @@ actor StubCloudDatabase: CloudDatabase {
         let turns = records.values
             .filter { $0.recordType == CloudRecordType.coachTurn }
             .sorted { $0.recordID.recordName < $1.recordID.recordName }
-        guard let pageSize = turnPageSize else {
-            return CloudTurnPage(records: turns, nextCursor: nil)
-        }
         // Opaque cursor, integer-indexed (see the protocol: Live
         // archives the real CKQueryCursor; both are just "next page
         // please" tokens to the engine's loop).
+        let pageSize = turnPageSize ?? turns.count
         let index: Int
         if let cursor, let text = String(data: cursor, encoding: .utf8), let parsed = Int(text) {
             index = parsed
@@ -126,6 +129,9 @@ actor StubCloudDatabase: CloudDatabase {
             index = 0
         }
         let slice = Array(turns.dropFirst(index).prefix(pageSize))
+        if let loop = turnLoopCursor {
+            return CloudTurnPage(records: slice, nextCursor: loop)
+        }
         let next = index + slice.count < turns.count ? String(index + slice.count).data(using: .utf8) : nil
         return CloudTurnPage(records: slice, nextCursor: next)
     }
@@ -470,12 +476,12 @@ struct CloudSyncTests {
         }
     }
 
-    @Test("more than 500 turns push newest-first with no pull duplicates")
-    func overLimitTurnsPushNewestFirst() async throws {
-        // Round-4-sync item 1: 600 local turns — the pushed 500 must be
-        // the NEWEST, the watermark must cover them, and a second sync
-        // must insert ZERO duplicates (the old oldest-first window
-        // re-inserted everything past turn 500 on every run).
+    @Test("more than 500 turns push oldest-first with no pull duplicates")
+    func overLimitTurnsPushOldestFirst() async throws {
+        // Round-7 item 4 supersedes round-4-sync item 1's newest-first
+        // window: 600 local turns — the first sync pushes the OLDEST
+        // 500 (watermark covers a contiguous prefix), the second sync
+        // pushes the rest and inserts ZERO duplicates.
         let harness = try CloudSyncHarness.make()
         let base = harness.now.addingTimeInterval(-10_000)
         let context = ModelContext(harness.container)
@@ -488,11 +494,11 @@ struct CloudSyncTests {
         let saved = await harness.db.saved(ofType: CloudRecordType.coachTurn)
         #expect(saved.count == 500)
         let pushedDates = try saved.map { try CloudRecordDecoder.turn(from: $0).createdAt }.sorted()
-        #expect(pushedDates.first == base.addingTimeInterval(100))
-        #expect(pushedDates.last == base.addingTimeInterval(599))
+        #expect(pushedDates.first == base)
+        #expect(pushedDates.last == base.addingTimeInterval(499))
         await harness.engine().syncNow()
         #expect(try harness.localTurnCount() == 600)
-        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 500)
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 600)
     }
 
     @Test("multi-page server turns are all pulled")
@@ -586,6 +592,67 @@ struct CloudSyncTests {
         // The surviving local row re-pushes (correct — the store step,
         // not the engine, deletes local rows); nothing is repulled.
         #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 2)
+    }
+
+    @Test("900-turn offline accumulation uploads all, oldest first")
+    func offlineAccumulationUploadsAll() async throws {
+        // Round-7 item 4: 900 local turns, watermark nil — the old
+        // newest-500 window pushed turns 400-899 and jumped the
+        // watermark past 0-399 forever (silent loss under `.synced`).
+        // Oldest-first pages upload everything: 500, then 400.
+        let harness = try CloudSyncHarness.make()
+        let base = harness.now.addingTimeInterval(-100_000)
+        let context = ModelContext(harness.container)
+        for i in 0..<900 {
+            context.insert(ChatTurn(role: "user", content: "offline \(i)", createdAt: base.addingTimeInterval(Double(i))))
+        }
+        try context.save()
+        await harness.engine().syncNow()
+        var saved = await harness.db.saved(ofType: CloudRecordType.coachTurn)
+        #expect(saved.count == 500)
+        let firstDates = try saved.map { try CloudRecordDecoder.turn(from: $0).createdAt }.sorted()
+        #expect(firstDates.first == base)
+        #expect(firstDates.last == base.addingTimeInterval(499))
+        await harness.engine().syncNow()
+        saved = await harness.db.saved(ofType: CloudRecordType.coachTurn)
+        #expect(saved.count == 900)
+    }
+
+    @Test("looping turn cursor terminates instead of spinning")
+    func loopingCursorTerminates() async throws {
+        // Round-7 item 5: an echoing cursor must hit the same-token
+        // break (mirroring PagePipeline) — reachable from every scene
+        // activation and mid-wipe, where a spin hangs with no timeout.
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "looped", at: harness.now)
+        await harness.db.setTurnLoopCursor(Data("loop".utf8))
+        let engine = harness.engine()
+        await engine.syncNow() // must return, not spin
+        #expect(try harness.localTurnCount() == 1)
+        if case .synced = engine.status {
+        } else {
+            Issue.record("expected synced status, got \(engine.status)")
+        }
+    }
+
+    @Test("same-key pair in one pull inserts once")
+    func sameKeyPairInsertsOnce() async throws {
+        // Round-7 item 10: two server records sharing a dedupe key
+        // (cross-device content collision — turnRecordName omits
+        // content) must insert once. Pre-fix the pre-loop snapshot let
+        // both through.
+        let harness = try CloudSyncHarness.make()
+        let at = harness.now.addingTimeInterval(-100)
+        for turnID in ["aaa", "bbb"] {
+            await harness.db.seedRecord(try CloudRecordBuilder.record(for: CoachTurnSnapshot(
+                turnID: turnID,
+                role: "user",
+                content: "same words",
+                createdAt: at
+            )))
+        }
+        await harness.engine().syncNow()
+        #expect(try harness.localTurnCount() == 1)
     }
 
     @Test("missing scan root fails loudly, not green")

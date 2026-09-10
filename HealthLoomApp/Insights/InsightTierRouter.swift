@@ -16,17 +16,23 @@ import Foundation
 
 enum InsightTierRouter {
     /// - Parameters:
+    ///   - pccRowOn: the AI-Models row toggle for PCC
+    ///     (`TierSettingsStore.isTurnedOn` — rule §15-19). Round-7 item
+    ///     2: the catalog input alone served PCC overnight after the
+    ///     user switched the row off — every other consumer (chat send)
+    ///     ANDs the toggle, and so does this.
     ///   - pccTierEnabled: `catalog.isEnabled(.privateCloudCompute)`
     ///     (consent + availability + live, per the WP-29 gates).
     ///   - viaCloudOptIn: the plan's separate `insightsViaCloud` toggle.
     ///   - onDeviceAvailable: live on-device availability.
     /// - Returns: the serving tier, or nil when nothing may serve.
     static func route(
+        pccRowOn: Bool,
         pccTierEnabled: Bool,
         viaCloudOptIn: Bool,
         onDeviceAvailable: Bool
     ) -> ModelTier? {
-        if pccTierEnabled && viaCloudOptIn {
+        if pccRowOn && pccTierEnabled && viaCloudOptIn {
             return .privateCloudCompute
         }
         if onDeviceAvailable {

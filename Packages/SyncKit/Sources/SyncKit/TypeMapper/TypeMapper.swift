@@ -698,9 +698,12 @@ public enum TypeMapper {
 
         let sampleMetadata = metadata(for: point)
 
-        func constituent(_ field: String, identifier: String, unit: MappedUnit) -> MappedQuantitySample? {
+        // Round-7 item 3: the correlation and each constituent carry
+        // distinct UUIDs (field-named roles — stable across runs). One
+        // shared UUID made HealthKit reject the meal batch.
+        func namedConstituent(_ field: String, identifier: String, unit: MappedUnit) -> MappedQuantitySample? {
             guard let raw = point.values[field], raw >= 0 else { return nil }
-            return MappedQuantitySample(
+            var sample = MappedQuantitySample(
                 healthKitIdentifier: identifier,
                 unit: unit,
                 value: raw,
@@ -708,13 +711,15 @@ public enum TypeMapper {
                 end: point.end,
                 metadata: sampleMetadata
             )
+            sample.metadata = sample.metadata.derivedUUID(role: field)
+            return sample
         }
 
         let constituents = [
-            constituent("energy_kcal", identifier: "HKQuantityTypeIdentifierDietaryEnergyConsumed", unit: .kilocalorie),
-            constituent("protein_g", identifier: "HKQuantityTypeIdentifierDietaryProtein", unit: .gram),
-            constituent("carbs_g", identifier: "HKQuantityTypeIdentifierDietaryCarbohydrates", unit: .gram),
-            constituent("fat_g", identifier: "HKQuantityTypeIdentifierDietaryFatTotal", unit: .gram),
+            namedConstituent("energy_kcal", identifier: "HKQuantityTypeIdentifierDietaryEnergyConsumed", unit: .kilocalorie),
+            namedConstituent("protein_g", identifier: "HKQuantityTypeIdentifierDietaryProtein", unit: .gram),
+            namedConstituent("carbs_g", identifier: "HKQuantityTypeIdentifierDietaryCarbohydrates", unit: .gram),
+            namedConstituent("fat_g", identifier: "HKQuantityTypeIdentifierDietaryFatTotal", unit: .gram),
         ].compactMap { $0 }
 
         guard !constituents.isEmpty else { return .skip }
@@ -725,7 +730,7 @@ public enum TypeMapper {
                 start: point.start,
                 end: point.end,
                 constituents: constituents,
-                metadata: sampleMetadata
+                metadata: sampleMetadata.derivedUUID(role: "meal")
             )
         )
     }
@@ -757,6 +762,11 @@ public enum TypeMapper {
         let ordered = wire.segments.sorted { $0.startTime < $1.startTime }
         var cursor = point.start
         var result: [MappedCategorySample] = []
+        // Round-7 item 3: per-segment UUIDs (`sleep-<index>`) — the
+        // pre-sort order is deterministic, so re-syncs reproduce them.
+        // Shared `point.id` across stages made HealthKit reject the
+        // whole batch, failing every sleep sync forever.
+        var emittedIndex = 0
         for segment in ordered {
             let clampedStart = Swift.max(segment.startTime, cursor, point.start)
             let clampedEnd = Swift.min(segment.endTime, point.end)
@@ -767,9 +777,10 @@ public enum TypeMapper {
                     stage: stage(for: segment.stage),
                     start: clampedStart,
                     end: clampedEnd,
-                    metadata: sampleMetadata
+                    metadata: sampleMetadata.derivedUUID(role: "sleep-\(emittedIndex)")
                 )
             )
+            emittedIndex += 1
             cursor = clampedEnd
         }
         guard !result.isEmpty else { return .skip }

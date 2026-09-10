@@ -137,6 +137,22 @@ struct ActivityConsolidatorTests {
         #expect(entries[1].supplement == nil)
     }
 
+    @Test func equalStartEntriesOrderDeterministicallyByID() {
+        // Round-7 item 12: two unlinked supplements sharing a start
+        // must order by ID — Dictionary iteration order is per-process,
+        // so start-only sorting reordered equal entries across launches
+        // (snapshot flake).
+        let atSame = Self.at(9)
+        let entries = ActivityConsolidator.consolidate(
+            workouts: [],
+            supplements: [
+                FitbitActivitySupplement(sample: Self.deferredSession(externalID: "aa", linkedTo: nil, start: atSame, end: atSame)),
+                FitbitActivitySupplement(sample: Self.deferredSession(externalID: "zz", linkedTo: nil, start: atSame, end: atSame)),
+            ]
+        )
+        #expect(entries.map(\.id) == ["zz", "aa"])
+    }
+
     @Test func groupedByDaySplitsAcrossCalendarDaysNewestDayFirst() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!

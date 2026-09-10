@@ -144,9 +144,30 @@ final class CoachChatViewModel {
     /// a literal deletes the key instead of caching the miss.
     private var contextCache: [UUID: [String]?] = [:]
 
+    /// The turn pipeline (round-7 item 13): the chat path routes
+    /// THROUGH the orchestrator instead of re-implementing its subset
+    /// inline — quota fallback, escalation offers, and keyless-tier
+    /// defense fire on real turns. Constructed from the same doubles
+    /// tests already inject (one shared factory serves every tier,
+    /// exactly like the old inline `chatSession` did), so existing
+    /// constructions are untouched. Streaming UX (draft deltas, stop,
+    /// partial persist, tab-switch survival) stays here — the
+    /// orchestrator decides and streams, this model owns the
+    /// transcript.
+    private let orchestrator: CoachOrchestrator
+
     init(deps: Dependencies) {
         self.deps = deps
         self.viewContext = ModelContext(deps.container)
+        self.orchestrator = CoachOrchestrator(
+            prompts: deps.prompts,
+            assembler: deps.assembler,
+            sessions: deps.factory,
+            providerFactories: Dictionary(
+                uniqueKeysWithValues: ModelTier.allCases.map { ($0, deps.factory) }
+            ),
+            catalog: deps.tierCatalog
+        )
     }
 
     /// History load + availability check + warm-up (prewarm + throttled
@@ -263,49 +284,72 @@ final class CoachChatViewModel {
                 errorMessage = "The coach isn't available right now. Try again later."
                 return
             }
-            var snapshotID: UUID?
             do {
-                // Effective prompt (user base + safety suffix) re-resolved
-                // per turn, so every tier swap re-applies it — the suffix
-                // property the switcher tests pin.
-                let instructions = try deps.prompts.effectivePrompt()
-                let session = chatSession(instructions: instructions, tier: servingTier)
-                let assembled = try deps.assembler.assemble(
-                    for: .chat,
-                    promptTokens: PromptManager.estimatedTokens(for: instructions)
+                // Round-7 item 13: the turn runs through the
+                // orchestrator — quota fallback, escalation offers, and
+                // keyless-tier defense fire here, on the real path.
+                // Streaming UX below is unchanged (deltas, stop,
+                // partial persist, tab-switch survival).
+                let turn = try await orchestrator.stream(
+                    to: trimmed,
+                    tier: servingTier,
+                    tools: CoachTools.all(store: deps.store),
+                    toolSetID: Self.chatToolSetID
                 )
-                snapshotID = assembled.snapshotID
-                let prompt = Self.chatPrompt(message: trimmed, context: assembled.context)
-                var streamError: Error?
-                do {
-                    for try await delta in session.stream(to: prompt) {
-                        draft += delta
-                    }
-                } catch is CancellationError {
-                    // Stop button / disappearance: fall through to the
-                    // partial persist below (a consumer-side cancel can also
-                    // end iteration without throwing -- either way, what
-                    // matters is the `Task.isCancelled` check after).
-                } catch {
-                    streamError = error
-                }
-                if !draft.isEmpty {
+                switch turn {
+                case .offer(let reason, let snapshotID):
+                    // An offer IS the turn (D14.2): render the row with
+                    // its trace snapshot — switching tiers stays a user
+                    // action via the existing tier menu (the row copy
+                    // says so). No model ran, nothing streams.
+                    let offer = ChatTurn(
+                        role: "assistant",
+                        content: Self.offerMessage(for: reason, tier: servingTier),
+                        provider: servingTier.rawValue,
+                        contextSnapshotID: snapshotID
+                    )
                     do {
-                        let reply = ChatTurn(
-                            role: "assistant",
-                            content: draft,
-                            provider: servingTier.rawValue,
-                            contextSnapshotID: snapshotID
-                        )
-                        try persist(reply)
-                        turns.append(reply)
+                        try persist(offer)
+                        turns.append(offer)
                         trimTurnsToCap()
                     } catch {
                         errorMessage = "Couldn't save the coach's reply. Try again."
                     }
-                }
-                if !Task.isCancelled, let streamError {
-                    errorMessage = Self.replyErrorMessage(streamError)
+                case .live(let deltas, let snapshotID, _, let serving):
+                    var streamError: Error?
+                    do {
+                        for try await delta in deltas {
+                            draft += delta
+                        }
+                    } catch is CancellationError {
+                        // Stop button / disappearance: fall through to the
+                        // partial persist below (a consumer-side cancel can also
+                        // end iteration without throwing -- either way, what
+                        // matters is the `Task.isCancelled` check after).
+                    } catch {
+                        streamError = error
+                    }
+                    if !draft.isEmpty {
+                        do {
+                            // Provider stamps the ACTUAL serving tier
+                            // (quota fallback answers on-device) — the
+                            // honest trace for fallback turns.
+                            let reply = ChatTurn(
+                                role: "assistant",
+                                content: draft,
+                                provider: serving.rawValue,
+                                contextSnapshotID: snapshotID
+                            )
+                            try persist(reply)
+                            turns.append(reply)
+                            trimTurnsToCap()
+                        } catch {
+                            errorMessage = "Couldn't save the coach's reply. Try again."
+                        }
+                    }
+                    if !Task.isCancelled, let streamError {
+                        errorMessage = Self.replyErrorMessage(streamError)
+                    }
                 }
             } catch {
                 errorMessage = Self.replyErrorMessage(error)
@@ -313,6 +357,20 @@ final class CoachChatViewModel {
             draft = ""
         }
         return true
+    }
+
+    /// Offer-row copy (round-7 item 13): the turn was offered, not
+    /// answered — the copy names the reason and points at the existing
+    /// tier menu (switching stays a user action; D14.2). Accept-flow
+    /// UI (one-tap switch + resend) is a follow-up, tracked, not silently
+    /// dropped: offers render and link snapshots today.
+    static func offerMessage(for reason: EscalationReason, tier: ModelTier) -> String {
+        switch reason {
+        case .contextOverBudget:
+            return "This needs more context than \(tier.displayName) can hold right now. Switch to a larger tier from the tier menu above to continue."
+        case .deeperAnalysisRequested:
+            return "Happy to take a deeper look — switch to a larger tier from the tier menu above and ask again."
+        }
     }
 
     /// Stop button: cancels the in-flight stream only (never warm-up); the
@@ -358,10 +416,17 @@ final class CoachChatViewModel {
     /// ("operation couldn't be completed") for a `CoachError` that
     /// carries its own UI copy.
     private static func replyErrorMessage(_ error: Error) -> String {
-        if let coachError = error as? CoachError,
-           case .tierUnavailable(let tier, let reason) = coachError
-        {
-            return "\(tier.displayName) isn't available right now (\(reason))."
+        if let coachError = error as? CoachError {
+            switch coachError {
+            case .tierUnavailable(let tier, let reason):
+                return "\(tier.displayName) isn't available right now (\(reason))."
+            case .missingCredential(let tier):
+                // Round-7 item 13: the keyless-tier defense firing on a
+                // real turn (TOCTOU key deletion) — named, not opaque.
+                return "\(tier.displayName) needs its API key again before it can reply. Re-enter it in Settings."
+            default:
+                break
+            }
         }
         return "The coach couldn't reply. \(error.localizedDescription)"
     }
@@ -390,14 +455,6 @@ final class CoachChatViewModel {
         let rows = (try? viewContext.fetch(descriptor)) ?? []
         turns = Array(rows.reversed())
     }
-
-    /// User message plus the assembled health context, framed as data --
-    /// delegates to the shared `HealthContext.promptBlock` composer (WP-27
-    /// review R1: one framing literal, owned by CoreModel, so a future
-    /// injection-hardening lands in the chat, orchestrator, and insight
-    /// prompts at once). Output is byte-identical to the inline version
-    /// this replaces.
-    static func chatPrompt(message: String, context: HealthContext) -> String {
-        context.promptBlock(message: message)
-    }
 }
+
+

@@ -68,11 +68,15 @@ nonisolated public struct BackoffPolicy: Sendable, Equatable {
     }
 
     /// Delay (seconds) before retrying after a failed `attempt` (1-based:
-    /// the attempt that just failed). `retryAfter`, when the server sent one,
-    /// is honored verbatim instead of the exponential schedule.
+    /// the attempt that just failed). `retryAfter`, when the server sent
+    /// one, wins over the exponential schedule — but CLAMPED to
+    /// `capDelay` (round-7 item 8): honored verbatim, a `Retry-After:
+    /// 86400` parks a foreground Sync Now for a day (stuck spinner,
+    /// kill-app-only recovery). The server's signal still wins WITHIN
+    /// the cap.
     public func delay(forAttempt attempt: Int, retryAfter: Double?, jitterFraction: Double) -> Double {
         if let retryAfter {
-            return max(0, retryAfter)
+            return min(max(0, retryAfter), capDelay)
         }
         let exponential = baseDelay * pow(2.0, Double(attempt - 1))
         let capped = min(exponential, capDelay)

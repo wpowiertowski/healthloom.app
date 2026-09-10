@@ -126,8 +126,15 @@ nonisolated public enum MappedSleepStage: Int, Sendable, Hashable, CaseIterable 
 /// pro-rated `MappedQuantitySample` copies, which requires synchronous
 /// member access from off the main actor.
 nonisolated public struct MappedMetadata: Sendable, Hashable {
-    /// `HKMetadataKeyExternalUUID` value -- the Google data-point ID
-    /// (`GoogleDataPoint.id`). This is the key `HealthKitWriter` (WP-08) will
+    /// `HKMetadataKeyExternalUUID` value — USUALLY the Google data-point
+    /// ID (`GoogleDataPoint.id`), but SUFFIXED per emitted sample
+    /// (`"<id>#<role>"`) wherever one point expands to many HealthKit
+    /// samples (round-7 item 3): HealthKit rejects duplicate-UUID
+    /// batches, so sharing one UUID across sleep stages / nutrition
+    /// constituents / split parts / workout attachments failed every
+    /// such sync forever. The suffix role is stable per expansion
+    /// (index or field name), so re-syncs reproduce the exact UUIDs —
+    /// idempotency-safe. This is the key `HealthKitWriter` (WP-08) will
     /// query against via `HKQuery.predicateForObjects(withMetadataKey:
     /// allowedValues:)` for idempotent re-sync (architecture.md D4).
     public var externalUUID: String
@@ -149,6 +156,18 @@ nonisolated public struct MappedMetadata: Sendable, Hashable {
         self.externalUUID = externalUUID
         self.externalID = externalID
         self.sourceDevice = sourceDevice
+    }
+
+    /// Derived per-sample UUID (round-7 item 3): `externalID` (the bare
+    /// point ID, kept as stable point identity) plus a stable role —
+    /// every HealthKit sample from one expansion carries a UNIQUE
+    /// external UUID while re-syncs reproduce them exactly.
+    public func derivedUUID(role: String) -> MappedMetadata {
+        MappedMetadata(
+            externalUUID: "\(externalID)#\(role)",
+            externalID: externalID,
+            sourceDevice: sourceDevice
+        )
     }
 }
 

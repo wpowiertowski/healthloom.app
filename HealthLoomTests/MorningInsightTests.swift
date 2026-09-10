@@ -126,23 +126,33 @@ struct InsightSchedulerTests {
 
 @Suite("InsightTierRouter")
 struct InsightTierRouterTests {
-    @Test("PCC needs tier, consent-gated enablement, and the separate opt-in")
-    func pccNeedsAllThree() {
-        #expect(InsightTierRouter.route(pccTierEnabled: true, viaCloudOptIn: true, onDeviceAvailable: true)
+    @Test("PCC needs row toggle, tier, consent-gated enablement, and the separate opt-in")
+    func pccNeedsAllFour() {
+        #expect(InsightTierRouter.route(pccRowOn: true, pccTierEnabled: true, viaCloudOptIn: true, onDeviceAvailable: true)
             == .privateCloudCompute)
         // Missing opt-in falls back to on-device — never widens silently.
-        #expect(InsightTierRouter.route(pccTierEnabled: true, viaCloudOptIn: false, onDeviceAvailable: true)
+        #expect(InsightTierRouter.route(pccRowOn: true, pccTierEnabled: true, viaCloudOptIn: false, onDeviceAvailable: true)
             == .onDevice)
-        #expect(InsightTierRouter.route(pccTierEnabled: false, viaCloudOptIn: true, onDeviceAvailable: true)
+        #expect(InsightTierRouter.route(pccRowOn: true, pccTierEnabled: false, viaCloudOptIn: true, onDeviceAvailable: true)
             == .onDevice)
+    }
+
+    @Test("row switched off routes away from PCC")
+    func rowOffRoutesAwayFromPCC() {
+        // Round-7 item 2: catalog + opt-in are not enough — a
+        // switched-off row serves on-device, never PCC overnight.
+        #expect(InsightTierRouter.route(pccRowOn: false, pccTierEnabled: true, viaCloudOptIn: true, onDeviceAvailable: true)
+            == .onDevice)
+        #expect(InsightTierRouter.route(pccRowOn: false, pccTierEnabled: true, viaCloudOptIn: true, onDeviceAvailable: false)
+            == nil)
     }
 
     @Test("nothing available routes nowhere")
     func noTier() {
-        #expect(InsightTierRouter.route(pccTierEnabled: false, viaCloudOptIn: false, onDeviceAvailable: false)
+        #expect(InsightTierRouter.route(pccRowOn: true, pccTierEnabled: false, viaCloudOptIn: false, onDeviceAvailable: false)
             == nil)
         // PCC alone still serves when on-device is down.
-        #expect(InsightTierRouter.route(pccTierEnabled: true, viaCloudOptIn: true, onDeviceAvailable: false)
+        #expect(InsightTierRouter.route(pccRowOn: true, pccTierEnabled: true, viaCloudOptIn: true, onDeviceAvailable: false)
             == .privateCloudCompute)
     }
 }
@@ -289,6 +299,24 @@ struct MorningInsightRunnerTests {
         return prefs
     }
 
+    /// One-shot rendezvous for overlap tests (round-7 item 1): file
+    /// scope like the session doubles above (local types cannot carry
+    /// protocol conformances; a bare actor needs none).
+    private actor InsightTestGate {
+        private var opened = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        func wait() async {
+            if opened { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+        func open() {
+            opened = true
+            let pending = waiters
+            waiters = []
+            for continuation in pending { continuation.resume() }
+        }
+    }
+
     private func makeRunner(
         container: ModelContainer,
         defaults: UserDefaults,
@@ -297,6 +325,7 @@ struct MorningInsightRunnerTests {
         notifier: StubInsightNotifier,
         tier: TierScript? = nil,
         inputs: ReadinessInputs? = nil,
+        readInputs: (() async -> ReadinessInputs)? = nil,
         factory: CoachSessionFactory? = nil,
         now: Date
     ) -> (MorningInsightRunner, InsightPreferences) {
@@ -319,8 +348,9 @@ struct MorningInsightRunnerTests {
                 return await tier.next()
             },
             // Nil inputs mean empty inputs (the `.noSignals` path) —
-            // tests wanting signals pass them explicitly.
-            readInputs: { await MainActor.run { inputs ?? ReadinessInputs() } },
+            // tests wanting signals pass them explicitly; a gated
+            // closure parks the run mid-flight for overlap tests.
+            readInputs: readInputs ?? { await MainActor.run { inputs ?? ReadinessInputs() } },
             now: { now },
             calendar: .current
         ))
@@ -510,6 +540,100 @@ struct MorningInsightRunnerTests {
         let b = try at(day: 8, hour: 1, minute: 0)
         #expect(MorningInsightRunner.isSameInsightDay(a, b, calendar: plus14))
         #expect(!MorningInsightRunner.isSameInsightDay(a, b, calendar: utc))
+    }
+
+    @Test("concurrent triggers coalesce into one inference and notify") func concurrentTriggersCoalesce() async throws {
+        // Round-7 item 1: two overlapping HOST triggers join one run —
+        // single inference, single notify. The readInputs gate parks
+        // run 1 mid-flight (the entry flag proves it before trigger 2
+        // starts, so trigger 2 deterministically joins instead of
+        // racing entry). Without coalescing, trigger 2 would start a
+        // second run (2 entries, 2 notifies).
+        let container = try CoreModel.makeContainer(inMemory: true)
+        try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
+        let ephemeralC = try Self.makeDefaults()
+        let defaults = ephemeralC.defaults
+        let now = try #require(Self.at("2026-09-08 08:00"))
+        let notifier = StubInsightNotifier(status: .authorized)
+        let signals = Self.signalInputs()
+        let gate = InsightTestGate()
+        var readEntries = 0
+        let (runner, _) = makeRunner(
+            container: container, defaults: defaults, enabled: true,
+            notifier: notifier, inputs: nil,
+            readInputs: {
+                readEntries += 1
+                await gate.wait()
+                return signals
+            },
+            now: now
+        )
+        let savedHost = InsightRunnerHost.runner
+        InsightRunnerHost.runner = runner
+        defer { InsightRunnerHost.runner = savedHost }
+        let first = Task { await InsightRunnerHost.runIfDue() }
+        let start = Date.now
+        while readEntries != 1 {
+            await Task.yield()
+            if Date.now.timeIntervalSince(start) > 5 {
+                Issue.record("first trigger never reached readInputs")
+                break
+            }
+        }
+        let second = Task { await InsightRunnerHost.runIfDue() }
+        try await Task.sleep(for: .milliseconds(300))
+        await gate.open()
+        await first.value
+        await second.value
+        #expect(readEntries == 1)
+        #expect(notifier.scheduled.count == 1)
+    }
+
+    @Test("dispatch re-check skips a run completed mid-flight") func dispatchRecheckSkips() async throws {
+        // Round-7 item 1, true-once half: runner S parks post-gate at
+        // readInputs; runner F (same defaults) completes fully, setting
+        // lastRun; S resumes into the set day and must SKIP at dispatch
+        // (no second persist/notify). Fully ordered (flags + awaits,
+        // no timing assumptions): entry flag → F awaited → gate opened.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
+        let ephemeralD = try Self.makeDefaults()
+        let defaults = ephemeralD.defaults
+        let now = try #require(Self.at("2026-09-08 08:00"))
+        let notifier = StubInsightNotifier(status: .authorized)
+        let signals = Self.signalInputs()
+        let gate = InsightTestGate()
+        var readEntries = 0
+        let (runnerS, _) = makeRunner(
+            container: container, defaults: defaults, enabled: true,
+            notifier: notifier, inputs: nil,
+            readInputs: {
+                readEntries += 1
+                await gate.wait()
+                return signals
+            },
+            now: now
+        )
+        let (runnerF, _) = makeRunner(
+            container: container, defaults: defaults, enabled: true,
+            notifier: notifier, inputs: signals, now: now
+        )
+        let slow = Task { await runnerS.runIfDue() }
+        let start = Date.now
+        while readEntries != 1 {
+            await Task.yield()
+            if Date.now.timeIntervalSince(start) > 5 {
+                Issue.record("slow run never reached readInputs")
+                break
+            }
+        }
+        #expect(await runnerF.runIfDue() == .ran(tier: .onDevice))
+        await gate.open()
+        let slowOutcome = await slow.value
+        #expect(slowOutcome == .skipped(.notDue))
+        #expect(notifier.scheduled.count == 1)
+        let context = ModelContext(container)
+        #expect(try context.fetch(FetchDescriptor<DerivedInsight>()).count == 1)
     }
 
     @Test("generation failure records nothing") func failure() async throws {

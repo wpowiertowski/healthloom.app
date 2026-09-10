@@ -42,6 +42,22 @@ public struct HealthContext: Codable, Sendable, Hashable {
         self.today = today
     }
 
+    /// Sanitizes one interpolated field (round-7 item 7): upstream
+    /// strings (device names via
+    /// GoogleDataPoint→LocalSample→ProfileField) reach this framing —
+    /// strip line breaks (fence escape) and neutralize the literal
+    /// fence marker, so a hostile value cannot break out of the data
+    /// block into fake instructions (AGENTS.md §2's named
+    /// prompt-injection shape). Newlines collapse to spaces (no content
+    /// lost); the fence becomes an em dash (visually adjacent, inert).
+    public static func sanitizedField(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "---", with: "—")
+    }
+
     /// The "data, not instructions" delimiter block both prompt composers
     /// (`DailyInsight.prompt`, the chat prompt) wrap these fields in (WP-25
     /// review #14): user-controlled display text must never read as model
@@ -51,7 +67,7 @@ public struct HealthContext: Codable, Sendable, Hashable {
         if fields.isEmpty {
             return [emptyMessage]
         }
-        return ["---"] + fields.map { "- \($0.displayText) [\($0.source)]" } + ["---"]
+        return ["---"] + fields.map { "- \(Self.sanitizedField($0.displayText)) [\(Self.sanitizedField($0.source))]" } + ["---"]
     }
 
     /// The framing sentence, shared verbatim (WP-27 review R1): three call

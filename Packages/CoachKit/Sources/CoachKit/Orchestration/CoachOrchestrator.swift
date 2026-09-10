@@ -125,6 +125,108 @@ public final class CoachOrchestrator: Sendable {
         toolSetID: String? = nil,
         tokenBudget: Int? = nil
     ) async throws(CoachError) -> OrchestratorTurn {
+        // Shared quota pre-dispatch (round-7 item 13 — same route
+        // `stream` takes). Availability stays green on fallback (the
+        // turn CAN run — via on-device) and the reply carries the
+        // fallback flag so the UI says so (D14.3). Offers are suppressed
+        // on fallback turns (round-2 F3): the offered rung would be the
+        // exhausted PCC tier itself — accept loops forever.
+        let route = try quotaRoute(for: tier)
+        let turn = try await runTurn(
+            to: message,
+            purpose: purpose,
+            tier: route.serving,
+            tools: tools,
+            toolSetID: toolSetID,
+            tokenBudget: route.fellBackFrom != nil ? nil : tokenBudget,
+            quotaWarning: route.quotaWarning,
+            quotaResetDate: route.quotaResetDate,
+            suppressOffers: route.suppressOffers
+        )
+        guard case .reply(let text, let snapshotID, var info) = turn else {
+            return turn
+        }
+        info.fellBackFromTier = route.fellBackFrom
+        return .reply(text: text, snapshotID: snapshotID, info: info)
+    }
+
+    /// One streaming turn (round-7 item 13): the chat path's shared
+    /// mechanism. Same prelude as `respond` (catalog gate, key defense,
+    /// quota pre-dispatch with fallback, prompt, assemble, offer
+    /// checks, provider resolution) — then the session's LIVE stream
+    /// instead of a one-shot answer, so streaming UX (draft deltas,
+    /// stop button, partial persist) is preserved while quota
+    /// fallback, escalation offers, and keyless-tier defense actually
+    /// fire on the real chat path. Either an offer (render, don't
+    /// answer) or a live stream with its snapshot ID + reply info +
+    /// the ACTUAL serving tier (quota fallback serves on-device).
+    /// MainActor-local (streams never cross isolation domains).
+    public enum StreamTurn {
+        case offer(reason: EscalationReason, snapshotID: UUID)
+        case live(
+            deltas: AsyncThrowingStream<String, Error>,
+            snapshotID: UUID,
+            info: TurnInfo,
+            servingTier: ModelTier
+        )
+    }
+
+    public func stream(
+        to message: String,
+        purpose: ContextAssembler.Purpose = .chat,
+        tier: ModelTier = .onDevice,
+        tools: [any Tool] = [],
+        toolSetID: String? = nil,
+        tokenBudget: Int? = nil
+    ) async throws(CoachError) -> StreamTurn {
+        let route = try quotaRoute(for: tier)
+        let planned = try await prepareTurn(
+            to: message,
+            purpose: purpose,
+            tier: route.serving,
+            tools: tools,
+            toolSetID: toolSetID,
+            tokenBudget: route.fellBackFrom != nil ? nil : tokenBudget,
+            suppressOffers: route.suppressOffers
+        )
+        switch planned {
+        case .offer(let reason, let snapshotID):
+            return .offer(reason: reason, snapshotID: snapshotID)
+        case .ready(_, let assembled, let session):
+            // The session's OWN stream, returned directly (not
+            // re-wrapped): stream failures stay raw Errors for the
+            // consumer's existing mapping — identical to today's VM
+            // behavior. Gates, defense, fallback, and offers all fired
+            // above; nothing below can add to them.
+            var info = TurnInfo(
+                didTrim: assembled.didTrim,
+                quotaWarning: route.quotaWarning,
+                quotaResetDate: route.quotaResetDate
+            )
+            info.fellBackFromTier = route.fellBackFrom
+            let prompt = assembled.context.promptBlock(message: message)
+            return .live(
+                deltas: session.stream(to: prompt),
+                snapshotID: assembled.snapshotID,
+                info: info,
+                servingTier: route.serving
+            )
+        }
+    }
+
+    /// Quota pre-dispatch shared by `respond` and `stream` (round-7
+    /// item 13): resolves the serving tier, warning bits, and whether
+    /// offers are suppressed — one decision point, not two parallel
+    /// quota arms.
+    private struct QuotaRoute {
+        var serving: ModelTier
+        var quotaWarning: Bool
+        var quotaResetDate: Date?
+        var suppressOffers: Bool
+        var fellBackFrom: ModelTier?
+    }
+
+    private func quotaRoute(for tier: ModelTier) throws(CoachError) -> QuotaRoute {
         guard catalog.isEnabled(tier) else {
             throw .tierUnavailable(tier: tier, reason: Self.unavailableReason(for: tier, in: catalog))
         }
@@ -135,64 +237,112 @@ public final class CoachOrchestrator: Sendable {
         guard !tier.requiresAPIKey || catalog.hasKey(tier) else {
             throw CoachError.missingCredential(tier: tier)
         }
-        // PCC quota pre-dispatch (D14.3): exhausted falls back to on-device
-        // (a fresh on-device turn -- budget reset to the tier default, so a
-        // 32K PCC budget can't suppress on-device escalation); near-limit
-        // dispatches with the warning bit the UI renders.
-        var quotaWarning = false
-        var quotaResetDate: Date? = nil
         if tier == .privateCloudCompute {
             switch catalog.pccQuota() {
             case .exhausted(let resetDate):
-                // Availability stays green (the turn CAN run -- via
-                // fallback) and the reply carries the fallback flag so the
-                // UI says so (D14.3). Gating availability red instead would
-                // block the fallback the plan requires. Offers are
-                // suppressed on the fallback turn (round-2 F3): the offered
-                // rung would be the exhausted PCC tier itself -- accept
-                // loops forever.
                 guard catalog.isEnabled(.onDevice) else {
-                    // The fallback is a real on-device turn, so it passes
-                    // the on-device gate: Apple Intelligence off/ineligible
-                    // reports `.tierUnavailable` with the documented copy
-                    // instead of dying opaque inside a session built over an
-                    // unavailable model.
                     throw .tierUnavailable(tier: .onDevice, reason: Self.unavailableReason(for: .onDevice, in: catalog))
                 }
-                let turn = try await runTurn(
-                    to: message,
-                    purpose: purpose,
-                    tier: .onDevice,
-                    tools: tools,
-                    toolSetID: toolSetID,
-                    tokenBudget: nil,
+                return QuotaRoute(
+                    serving: .onDevice,
                     quotaWarning: false,
                     quotaResetDate: resetDate,
-                    suppressOffers: true
+                    suppressOffers: true,
+                    fellBackFrom: .privateCloudCompute
                 )
-                guard case .reply(let text, let snapshotID, var info) = turn else {
-                    return turn
-                }
-                info.fellBackFromTier = .privateCloudCompute
-                return .reply(text: text, snapshotID: snapshotID, info: info)
             case .nearLimit(let resetDate):
-                quotaWarning = true
-                quotaResetDate = resetDate
+                return QuotaRoute(
+                    serving: tier, quotaWarning: true, quotaResetDate: resetDate,
+                    suppressOffers: false, fellBackFrom: nil
+                )
             case .ok:
                 break
             }
         }
-        return try await runTurn(
-            to: message,
-            purpose: purpose,
-            tier: tier,
-            tools: tools,
-            toolSetID: toolSetID,
-            tokenBudget: tokenBudget,
-            quotaWarning: quotaWarning,
-            quotaResetDate: quotaResetDate,
-            suppressOffers: false
+        return QuotaRoute(
+            serving: tier, quotaWarning: false, quotaResetDate: nil,
+            suppressOffers: false, fellBackFrom: nil
         )
+    }
+
+    /// Turn preparation shared by `runTurn` and `stream` (round-7 item
+    /// 13): prompt, assemble+snapshot, offer checks, provider
+    /// resolution. Offers and the ready-to-dispatch plan come from one
+    /// home — the chat path and the one-shot path can never disagree
+    /// on when to offer vs answer.
+    enum TurnPlan {
+        case offer(reason: EscalationReason, snapshotID: UUID)
+        case ready(instructions: String, assembled: ContextAssembler.AssembledContext, session: any CoachSession)
+    }
+
+    private func prepareTurn(
+        to message: String,
+        purpose: ContextAssembler.Purpose,
+        tier: ModelTier,
+        tools: [any Tool],
+        toolSetID: String?,
+        tokenBudget: Int?,
+        suppressOffers: Bool
+    ) async throws(CoachError) -> TurnPlan {
+        // PromptManager is the ONLY source of instructions (D10/D8): every
+        // tier, every turn, user base + immutable safety suffix. A store
+        // failure is a turn failure, not a silent suffix-less fallback.
+        let instructions: String
+        do {
+            instructions = try prompts.effectivePrompt()
+        } catch {
+            throw CoachError.underlying(CoachError.sanitizedSummary(String(describing: error)))
+        }
+        // Snapshot persists inside `assemble` (WP-20); the ID rides the
+        // result so chat turns link to it (WP-32 trace UI). Offer turns
+        // persist too, deliberately (WP-27 review §8).
+        let assembled: ContextAssembler.AssembledContext
+        do {
+            assembled = try assembler.assemble(
+                for: purpose,
+                tokenBudget: tokenBudget ?? catalog.tokenBudget(for: tier),
+                promptTokens: PromptManager.estimatedTokens(for: instructions)
+            )
+        } catch {
+            throw CoachError.underlying(CoachError.sanitizedSummary(String(describing: error)))
+        }
+        // D14.2 offers, in documented-trigger order: budget overflow first,
+        // then the explicit deeper-analysis ask. Either returns instead of
+        // dispatching: offering IS the turn. PCC is the offered tier today;
+        // only on-device turns can escalate.
+        if tier == .onDevice, assembled.promptOverBudget {
+            if suppressOffers {
+                throw CoachError.contextOverflow(offerEscalation: false)
+            }
+            return .offer(reason: .contextOverBudget, snapshotID: assembled.snapshotID)
+        }
+        if tier == .onDevice, !suppressOffers, Self.requestsDeeperAnalysis(message) {
+            return .offer(reason: .deeperAnalysisRequested, snapshotID: assembled.snapshotID)
+        }
+        // Provider resolution (F2 finding 2): on-device uses the
+        // shared factory; every other tier needs its wired entry.
+        let session: any CoachSession
+        if tier == .onDevice {
+            session = sessions.makeSession(
+                for: CoachSessionFactory.Purpose(purpose),
+                instructions: instructions,
+                tools: tools,
+                toolSetID: toolSetID,
+                tier: tier
+            )
+        } else {
+            guard let wired = providerFactories[tier] else {
+                throw CoachError.tierUnavailable(tier: tier, reason: UnwiredTierSession.unwiredReason)
+            }
+            session = wired.makeSession(
+                for: CoachSessionFactory.Purpose(purpose),
+                instructions: instructions,
+                tools: tools,
+                toolSetID: toolSetID,
+                tier: tier
+            )
+        }
+        return .ready(instructions: instructions, assembled: assembled, session: session)
     }
 
     /// The turn pipeline past quota pre-dispatch. `suppressOffers` is true
@@ -214,72 +364,25 @@ public final class CoachOrchestrator: Sendable {
         quotaResetDate: Date?,
         suppressOffers: Bool
     ) async throws(CoachError) -> OrchestratorTurn {
-        // PromptManager is the ONLY source of instructions (D10/D8): every
-        // tier, every turn, user base + immutable safety suffix. A store
-        // failure is a turn failure, not a silent suffix-less fallback.
-        let instructions: String
-        do {
-            instructions = try prompts.effectivePrompt()
-        } catch {
-            throw CoachError.underlying(CoachError.sanitizedSummary(String(describing: error)))
-        }
-        // Snapshot persists inside `assemble` (WP-20); the ID rides the
-        // result so chat turns link to it (WP-32 trace UI). Offer turns
-        // persist too, deliberately (WP-27 review §8): offers link like
-        // replies, retention is the shared `pruneSnapshots` cap, and
-        // skipping the write for deeper-analysis pokes would leave the
-        // accepted turn's snapshot unlinkable.
+        // Shared preparation (round-7 item 13 — same plan `stream`
+        // takes): prompt, assemble+snapshot, offer checks, provider.
+        let planned = try await prepareTurn(
+            to: message,
+            purpose: purpose,
+            tier: tier,
+            tools: tools,
+            toolSetID: toolSetID,
+            tokenBudget: tokenBudget,
+            suppressOffers: suppressOffers
+        )
         let assembled: ContextAssembler.AssembledContext
-        do {
-            assembled = try assembler.assemble(
-                for: purpose,
-                tokenBudget: tokenBudget ?? catalog.tokenBudget(for: tier),
-                promptTokens: PromptManager.estimatedTokens(for: instructions)
-            )
-        } catch {
-            throw CoachError.underlying(CoachError.sanitizedSummary(String(describing: error)))
-        }
-        // D14.2 offers, in documented-trigger order: budget overflow first
-        // (it dominates -- a deeper request inside an overflowed context
-        // still can't run on-device), then the explicit deeper-analysis
-        // ask. Either returns instead of dispatching: offering IS the turn.
-        // PCC is the offered tier today (first escalation rung, D14); only
-        // on-device turns can escalate (a bigger tier has nowhere to go).
-        if tier == .onDevice, assembled.promptOverBudget {
-            // Suppressed (fallback) overflow can't offer -- the rung is
-            // exhausted -- and can't run -- the prompt alone exceeds the
-            // window. A loud error beats either silent wrong turn.
-            if suppressOffers {
-                throw CoachError.contextOverflow(offerEscalation: false)
-            }
-            return .escalationOffer(reason: .contextOverBudget, snapshotID: assembled.snapshotID)
-        }
-        if tier == .onDevice, !suppressOffers, Self.requestsDeeperAnalysis(message) {
-            return .escalationOffer(reason: .deeperAnalysisRequested, snapshotID: assembled.snapshotID)
-        }
-        // Provider resolution (F2 finding 2): on-device uses the
-        // shared factory; every other tier needs its wired entry. No
-        // entry = loud miswiring error, never a silent wrong-provider turn.
         let session: any CoachSession
-        if tier == .onDevice {
-            session = sessions.makeSession(
-                for: CoachSessionFactory.Purpose(purpose),
-                instructions: instructions,
-                tools: tools,
-                toolSetID: toolSetID,
-                tier: tier
-            )
-        } else {
-            guard let wired = providerFactories[tier] else {
-                throw CoachError.tierUnavailable(tier: tier, reason: UnwiredTierSession.unwiredReason)
-            }
-            session = wired.makeSession(
-                for: CoachSessionFactory.Purpose(purpose),
-                instructions: instructions,
-                tools: tools,
-                toolSetID: toolSetID,
-                tier: tier
-            )
+        switch planned {
+        case .offer(let reason, let snapshotID):
+            return .escalationOffer(reason: reason, snapshotID: snapshotID)
+        case .ready(_, let plannedAssembled, let plannedSession):
+            assembled = plannedAssembled
+            session = plannedSession
         }
         do {
             // Framing via the shared composer (R1): the user message plus

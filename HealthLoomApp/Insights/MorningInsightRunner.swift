@@ -147,6 +147,18 @@ struct MorningInsightRunner {
             let insight = try await generator.insight(
                 forPrompt: DailyInsight.prompt(readiness: readiness, context: context.context)
             )
+            // Dispatch re-check (round-7 item 1, true-once): another
+            // run may have completed between this run's gate and now —
+            // the gate read a stale `lastRun`, but inference takes long
+            // enough (BG + foreground overlap) for a full run to land
+            // in between. Reload and re-verify the once-daily guard: a
+            // set `lastRun` skips instead of double-persisting +
+            // double-notifying (which would also contradict the
+            // header's dedupe claim).
+            deps.prefs.reload()
+            guard InsightScheduler.shouldRun(lastRun: deps.prefs.lastRun, now: deps.now(), calendar: deps.calendar) else {
+                return .skipped(.notDue)
+            }
             try Self.persist(insight, tier: tier, fields: context.context.fields, now: now, in: deps.container, calendar: deps.calendar)
             let content = InsightNotificationContent.make(
                 headline: insight.headline,
@@ -224,12 +236,26 @@ struct MorningInsightRunner {
 
 /// Sendable holder so the static background-sync context (which cannot
 /// capture `AppEnvironment`) and the foreground scene-phase hook share one
-/// configured runner. Set once in `AppEnvironment.init`; the once-daily
-/// guard inside the runner dedupes BG + foreground double-invocation.
+/// configured runner. Set once in `AppEnvironment.init`.
 enum InsightRunnerHost {
     @MainActor static var runner: MorningInsightRunner?
 
+    /// In-flight run (round-7 item 1): concurrent triggers (scene-phase
+    /// hook + BG completion) JOIN one run instead of double-inferring +
+    /// double-notifying — the once-daily guard alone cannot dedupe them
+    /// (both pass it while `lastRun` is still unset). Check-and-claim is
+    /// synchronous on the MainActor (no suspension between), so no
+    /// second run slips in. A joiner adopts the run's outcome.
+    @MainActor private static var inFlight: Task<Void, Never>?
+
     static func runIfDue() async {
-        _ = await runner?.runIfDue()
+        if let running = inFlight {
+            await running.value
+            return
+        }
+        guard let runner else { return }
+        inFlight = Task { await runner.runIfDue() }
+        await inFlight?.value
+        inFlight = nil
     }
 }

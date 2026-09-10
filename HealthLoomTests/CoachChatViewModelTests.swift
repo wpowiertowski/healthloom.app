@@ -327,10 +327,11 @@ struct CoachRoundTwoTests {
     }
 }
 
-/// Shared poll helper for the chat suites (file scope so every suite in
-/// this file can use it).
+/// Shared poll helper for the chat suites (round-7 item 13: promoted
+/// from file scope — the tier-switcher orchestrator tests poll the
+/// same send/stream completion).
 @MainActor
-private func waitForCondition(
+func waitForCondition(
     _ condition: @MainActor @escaping () -> Bool,
     timeout: TimeInterval = 10
 ) async throws {

@@ -72,10 +72,11 @@ import Testing
             HKCategoryValueSleepAnalysis.asleepREM.rawValue,
             HKCategoryValueSleepAnalysis.asleepCore.rawValue,
         ]
-        for (sample, expectedValue) in zip(hkSamples, expectedValues) {
+        for (index, (sample, expectedValue)) in zip(hkSamples, expectedValues).enumerated() {
             #expect(sample.categoryType == sleepType)
             #expect(sample.value == expectedValue)
-            #expect(sample.metadata?[HKMetadataKeyExternalUUID] as? String == "sleep-0001")
+            // Round-7 item 3: per-segment derived UUIDs.
+            #expect(sample.metadata?[HKMetadataKeyExternalUUID] as? String == "sleep-0001#sleep-\(index)")
         }
     }
 
@@ -344,7 +345,7 @@ import Testing
         #expect(correlation.startDate == TypeMapperFixtures.date("2026-07-01T12:15:00Z"))
         #expect(correlation.endDate == TypeMapperFixtures.date("2026-07-01T12:15:00Z"))
         #expect(correlation.objects.count == 4)
-        #expect(correlation.metadata?[HKMetadataKeyExternalUUID] as? String == "nutrition-0001")
+        #expect(correlation.metadata?[HKMetadataKeyExternalUUID] as? String == "nutrition-0001#meal") // round-7 item 3
         #expect(correlation.metadata?["healthloom.externalID"] as? String == "nutrition-0001")
         #expect(correlation.metadata?["healthloom.sourceDevice"] as? String == "Fitbit Air")
 
@@ -357,11 +358,11 @@ import Testing
 
         let energy = sample(for: .dietaryEnergyConsumed)
         #expect(energy?.quantity == HKQuantity(unit: .kilocalorie(), doubleValue: 650))
-        #expect(energy?.metadata?[HKMetadataKeyExternalUUID] as? String == "nutrition-0001")
+        #expect(energy?.metadata?[HKMetadataKeyExternalUUID] as? String == "nutrition-0001#energy_kcal") // round-7 item 3
 
         let protein = sample(for: .dietaryProtein)
         #expect(protein?.quantity == HKQuantity(unit: .gram(), doubleValue: 35))
-        #expect(protein?.metadata?[HKMetadataKeyExternalUUID] as? String == "nutrition-0001")
+        #expect(protein?.metadata?[HKMetadataKeyExternalUUID] as? String == "nutrition-0001#protein_g") // round-7 item 3
 
         let carbs = sample(for: .dietaryCarbohydrates)
         #expect(carbs?.quantity == HKQuantity(unit: .gram(), doubleValue: 70))
