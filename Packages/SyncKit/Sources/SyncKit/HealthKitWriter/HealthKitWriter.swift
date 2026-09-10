@@ -296,7 +296,9 @@ public final class HealthKitWriter: Sendable {
             // sharing the workout's base UUID across distance+energy
             // made HealthKit reject the attachment batch. The
             // workout-level metadata below keeps the base UUID (one
-            // workout object — no duplication there).
+            // workout object — no duplication there). Roles come from
+            // `MappedMetadata.workoutAttachmentRoles` (round-8 item 2)
+            // so the cleanup deletes exactly what was stamped.
             if let distanceMeters = workout.distanceMeters,
                let distanceIdentifier = Self.distanceIdentifier(for: workout.activityType),
                let distanceType = HKObjectType.quantityType(forIdentifier: distanceIdentifier) {
@@ -306,7 +308,7 @@ public final class HealthKitWriter: Sendable {
                         quantity: HKQuantity(unit: .meter(), doubleValue: distanceMeters),
                         start: workout.start,
                         end: workout.end,
-                        metadata: workout.metadata.derivedUUID(role: "distance").makeHKMetadataDictionary()
+                        metadata: workout.metadata.derivedUUID(role: MappedMetadata.workoutDistanceRole).makeHKMetadataDictionary()
                     )
                 )
             }
@@ -318,7 +320,7 @@ public final class HealthKitWriter: Sendable {
                         quantity: HKQuantity(unit: .kilocalorie(), doubleValue: energyKilocalories),
                         start: workout.start,
                         end: workout.end,
-                        metadata: workout.metadata.derivedUUID(role: "energy").makeHKMetadataDictionary()
+                        metadata: workout.metadata.derivedUUID(role: MappedMetadata.workoutEnergyRole).makeHKMetadataDictionary()
                     )
                 )
             }

@@ -262,6 +262,31 @@ struct StoreDeleterTests {
         #expect(!FileManager.default.fileExists(atPath: journal.path))
     }
 
+    @Test("store and export deletes are attempted independently")
+    func storeAndExportsAggregate() throws {
+        // Round-8 item 3: all four combinations — a throwing store
+        // step must still sweep exports (and vice versa); the FIRST
+        // error surfaces, nothing is skipped silently.
+        struct Boom: Error {}
+        let okURL = URL(fileURLWithPath: "/tmp/ok")
+        #expect(try StoreDeleter.deleteStoreAndExports(deleteStore: { [okURL] }, deleteExports: { [okURL] }) == [okURL, okURL])
+        #expect(throws: Boom.self) {
+            try StoreDeleter.deleteStoreAndExports(deleteStore: { throw Boom() }, deleteExports: { [okURL] })
+        }
+        #expect(throws: Boom.self) {
+            try StoreDeleter.deleteStoreAndExports(deleteStore: { [okURL] }, deleteExports: { throw Boom() })
+        }
+        // Both throw: the STORE error (first) surfaces.
+        struct SecondBoom: Error {}
+        do {
+            _ = try StoreDeleter.deleteStoreAndExports(deleteStore: { throw Boom() }, deleteExports: { throw SecondBoom() })
+            Issue.record("expected throw")
+        } catch is Boom {
+        } catch {
+            Issue.record("expected the store error, got \(error)")
+        }
+    }
+
     @Test("enumeration cross-check names future files loudly")
     func uncoveredFilesTripwire() throws {
         // Round-7 fix N1: a directory holding exactly the inventory

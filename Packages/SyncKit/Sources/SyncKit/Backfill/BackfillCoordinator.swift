@@ -114,7 +114,11 @@ public actor BackfillCoordinator {
     /// installing a new loop: without this, `stop()`'s suspension on the
     /// old loop lets a concurrent `start()` pass the `nil` guard first and
     /// two loops walk one cursor.
+    /// Generation of the currently-published handle (round-8 item 9):
+    /// the trailing clear in `stop()` keys off this, not the shared
+    /// `runLoopGeneration` (which concurrent stops also bump).
     private var retiredLoop: Task<Void, Never>?
+    private var retiredGeneration = 0
 
     public init(
         types: [GoogleDataType],
@@ -190,6 +194,16 @@ public actor BackfillCoordinator {
         // newer loop while one await suspends.
         while let retired = retiredLoop {
             await retired.value
+            // Round-8 item 9 (liveness): awaiting an already-completed
+            // task can return WITHOUT yielding the executor — without
+            // this explicit yield, a momentarily-stale handle spins a
+            // tight non-yielding loop that can starve the very tasks
+            // (exiting loop, trailing clear) that would clear it,
+            // wedging the drain under pool pressure. Each pass
+            // re-reads the handle, so a clear still lands promptly;
+            // the yield only guarantees the waiter never pins a thread
+            // while waiting for it.
+            await Task.yield()
         }
         guard runLoopTask == nil, !isPaused else { return }
         runLoopGeneration += 1
@@ -218,12 +232,23 @@ public actor BackfillCoordinator {
         old?.cancel()
         // Publish before awaiting: a `start()` arriving during this
         // suspension must see (and await) the retiring loop, not sail past
-        // the `nil` handle into a second concurrent walk.
-        retiredLoop = old
+        // the `nil` handle into a second concurrent walk. Round-8 item 9:
+        // publish ONLY a live handle, and clear ONLY our own publication
+        // — a second `stop()` with a nil handle must neither erase the
+        // first stop's publication (the hole: `start()` then launched a
+        // concurrent walk over the same cursor, which the generation
+        // guard cannot repair) nor clear it on the way out. Ownership
+        // keys off `retiredGeneration` (set only alongside a publish),
+        // never the shared `runLoopGeneration` other stops also bump —
+        // and a stale DONE handle can never linger: every publication
+        // is cleared exactly once by its publisher, so `start()`'s
+        // `while let` always terminates.
+        if let old {
+            retiredLoop = old
+            retiredGeneration = myGeneration
+        }
         await old?.value
-        // Clear only if still ours: a newer `stop()` bumps the generation
-        // again and publishes its own retired loop, which must survive.
-        if runLoopGeneration == myGeneration {
+        if retiredGeneration == myGeneration {
             retiredLoop = nil
         }
     }
@@ -414,6 +439,14 @@ public actor BackfillCoordinator {
             // Re-acquire after: rollback may undo a first-ever insert.
             context.rollback()
             let syncState = fetchOrCreateSyncState(for: type, context: context)
+            // Round-8 item 12: drain on the failure path too (converging
+            // on SyncEngine's catch shape) — otherwise a failed chunk
+            // leaks the coverage index (padded workout window held
+            // between chunks) + the run entry until some later run's
+            // beginRun resets them. Links drop silently here (their rows
+            // rolled back above — same contract as SyncEngine).
+            PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            _ = await conflictFilter.drainSuppressedCount(for: type)
             // Cancellation is a stop, not a failure: no error status, the
             // cursor stays where the last durable save left it.
             if error is CancellationError || (error as? GoogleHealthClientError) == .cancelled {
@@ -510,7 +543,10 @@ public actor BackfillCoordinator {
                     try await client.reconcile(type: type, since: start, until: end, pageToken: token)
                 }
             for point in walked.localOnly {
-                PagePipeline.upsertLocalSample(for: point, context: context)
+                // Round-8 item 13: throws on unencodable payloads (no
+                // silent zero-byte rows) — into the run's existing
+                // failure path (cursor unmoved, error surfaced).
+                try PagePipeline.upsertLocalSample(for: point, context: context)
             }
             totalItemCount += walked.total
             // Fix-round N3: see SyncEngine's identical log — a cap-hit

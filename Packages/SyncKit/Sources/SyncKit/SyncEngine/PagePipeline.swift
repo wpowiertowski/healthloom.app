@@ -246,10 +246,22 @@ nonisolated struct PagePipeline: Sendable {
     /// conflict resolution, architecture.md D13.2) is never wiped back to
     /// `nil` by a routine re-sync re-touching the same point. `sync`: call
     /// on the executor that owns `context`.
-    static func upsertLocalSample(for point: GoogleDataPoint, context: ModelContext) {
+    static func upsertLocalSample(for point: GoogleDataPoint, context: ModelContext) throws {
         let externalID = point.id
         let payload = SharedLocalPayload(point: point)
-        let payloadJSON = (try? JSONEncoder().encode(payload)) ?? Data()
+        // Round-8 item 13: encode failure (non-finite doubles) throws
+        // LOUDLY — the old `(try? ...) ?? Data()` wrote a zero-byte
+        // payload row that downstream readers choke on, while counting
+        // the point and committing the cursor past it (never re-pulled:
+        // unrecoverable). A throw fails the page → the run → the cursor
+        // stays unmoved and the window retries (loud every run until
+        // the data ages out or is fixed).
+        let payloadJSON: Data
+        do {
+            payloadJSON = try JSONEncoder().encode(payload)
+        } catch {
+            throw UnencodableLocalPayload(pointID: point.id)
+        }
         let sourceLabel = point.source.deviceDisplayName ?? point.source.platform ?? "unknown"
         let dataTypeKey = point.dataType.rawValue
 
@@ -299,6 +311,13 @@ nonisolated struct PagePipeline: Sendable {
 struct PageWalkPartial: Error {
     var total: Int
     var underlying: any Error
+}
+
+/// Unencodable local payload (round-8 item 13): thrown when a point's
+/// values cannot be encoded (non-finite doubles) — fails the page, the
+/// run, and holds the cursor, instead of persisting a zero-byte row.
+nonisolated struct UnencodableLocalPayload: Error, Sendable {
+    var pointID: String
 }
 
 /// Minimal, self-contained JSON shape for `LocalSample.payloadJSON` — the

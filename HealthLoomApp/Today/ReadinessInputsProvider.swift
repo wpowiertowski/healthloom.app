@@ -257,15 +257,43 @@ struct ReadinessScoreHistory {
         self.defaults = defaults
     }
 
+    /// 30-day WINDOW, not just 30 entries (round-8 item 14): the delta
+    /// caption says "vs 30-day average" — 12 entries scattered over 6
+    /// months must not average ~180-day-old scores (the HRV/RHR
+    /// `latestQuantity` path already cuts off at 7 days; history never
+    /// got one). `yyyy-MM-dd` keys compare chronologically as strings,
+    /// so the window is a string bound — no re-parsing, no timezone
+    /// drift. The Gregorian calendar is fixed (same host-independence
+    /// as the keys themselves).
+    private static let gregorian = Calendar(identifier: .gregorian)
+    private static let windowDays = 30
+
+    private static func cutoffString(today: Date) -> String {
+        // `date(byAdding:)` is total for day units; the fallback is
+        // fail-open (include all) on the impossible nil.
+        let cutoff = gregorian.date(byAdding: .day, value: -windowDays, to: today) ?? .distantPast
+        return dayString(cutoff)
+    }
+
     /// Scores for the engine's `recentScores` (today excluded — the delta
-    /// compares against prior mornings, not itself).
+    /// compares against prior mornings, not itself — plus the 30-day
+    /// window floor).
     func recentScores(today: Date = Date()) -> [Int] {
-        Self.load(from: defaults).filter { $0.day != Self.dayString(today) }.map(\.score)
+        let todayString = Self.dayString(today)
+        let cutoff = Self.cutoffString(today: today)
+        return Self.load(from: defaults)
+            .filter { $0.day != todayString && $0.day >= cutoff }
+            .map(\.score)
     }
 
     func record(score: Int, today: Date = Date()) {
-        var entries = Self.load(from: defaults).filter { $0.day != Self.dayString(today) }
-        entries.append(Entry(day: Self.dayString(today), score: score))
+        let todayString = Self.dayString(today)
+        let cutoff = Self.cutoffString(today: today)
+        // Same-day replace + age prune + 30-entry cap (belt, braces,
+        // and suspenders — any one bounds the plist; all three keep
+        // the stored shape self-describing).
+        var entries = Self.load(from: defaults).filter { $0.day != todayString && $0.day >= cutoff }
+        entries.append(Entry(day: todayString, score: score))
         defaults.set(Array(entries.suffix(30)).map { [$0.day, String($0.score)] }, forKey: Self.defaultsKey)
     }
 

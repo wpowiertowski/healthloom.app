@@ -55,6 +55,33 @@ nonisolated struct CoachTurnSnapshot: Sendable, Equatable {
     var createdAt: Date
 }
 
+/// Cursor codec for turn pagination (round-8 item 4): decoding NEVER
+/// falls through to a fresh query — garbage fails LOUDLY (throw), so a
+/// corrupt cursor surfaces instead of re-fetching page 1 up to 100×
+/// while pages 2..n (and, under wipe, turns past 200) are never
+/// reached. Pure over bytes so tests drive it without CloudKit (a
+/// real `CKQueryOperation.Cursor` cannot be minted in-process).
+nonisolated enum CloudTurnCursorCodec {
+    static func encode(_ cursor: CKQueryOperation.Cursor) throws -> Data {
+        try NSKeyedArchiver.archivedData(withRootObject: cursor, requiringSecureCoding: true)
+    }
+    /// Decodes or throws `CloudSyncError` (never the raw `NSError` —
+    ///Foundation's unarchiver throws `NSCocoaErrorDomain` 4864 for
+    /// garbage, which would bypass the engine's typed-error handling).
+    static func decode(_ data: Data) throws -> CKQueryOperation.Cursor {
+        do {
+            guard let cursor = try NSKeyedUnarchiver.unarchivedObject(ofClass: CKQueryOperation.Cursor.self, from: data) else {
+                throw CloudSyncError.failed("turn pagination cursor could not be decoded")
+            }
+            return cursor
+        } catch let syncError as CloudSyncError {
+            throw syncError
+        } catch {
+            throw CloudSyncError.failed("turn pagination cursor could not be decoded")
+        }
+    }
+}
+
 /// Record-type names in the private database's default zone. A custom zone
 /// is deliberately NOT used: zones must be created before first use (an
 /// extra failure mode), and nothing here needs atomic multi-record saves.
@@ -119,6 +146,10 @@ nonisolated enum CloudSyncError: Error, Equatable, Sendable {
     case unknownRecordType(String)
     case newerSchema(version: Int)
     case missingField(String)
+    /// Wipe-vs-sync collision (round-8 item 8): the wipe found the
+    /// engine mid-sync. Fails the wipe step loudly (retry) instead of
+    /// interleaving a delete with an upload.
+    case wipeBlockedBySync
 }
 
 /// Builds `CKRecord`s from app-owned snapshots and back. Bools travel as

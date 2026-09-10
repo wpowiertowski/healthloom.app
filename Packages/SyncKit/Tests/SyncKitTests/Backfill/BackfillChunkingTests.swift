@@ -201,10 +201,109 @@ import Testing
             modelContainer: container,
             clock: clock,
             disabledTypes: { [.steps] },
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
             horizon: .days90
         )
         #expect(await coordinator.runRound() == [.steps: .suspendedDisabled])
         #expect(mock.calls.isEmpty)
+    }
+
+    @Test func doubleStopThenStartLaunchesASingleLoop() async throws {
+        // Round-8 item 9: stop#1 publishes the retiring loop; stop#2
+        // (nil handle) must preserve it — otherwise a start() arriving
+        // mid-drain sails past into a second concurrent walk over the
+        // same cursor. Every phase below is watchdog-bounded (fail loud,
+        // never hang the suite): the verdict phase pins suspension,
+        // the drain phases pin orderly completion.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        mock.setPage(type: .steps, pageToken: nil, page: Page(points: [], nextPageToken: nil))
+        let gate = AsyncGate()
+        mock.gate = gate
+        let coordinator = BackfillCoordinator(
+            types: [.steps],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            // Hermetic horizon store (round-8 item 9 follow-up): the
+            // default is UserDefaults-backed and persists across runs
+            // on the host — a completed horizon recorded here (or by
+            // any earlier run on this machine) would flip this test's
+            // first branch to `.alreadyDone` and hang it at the gate.
+            // Never share mutable host state between test runs.
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
+            horizon: .days90
+        )
+        // Watchdog: poll `condition` until true or timeout; records
+        // (never hangs) on timeout. Returns whether it succeeded.
+        func settle(_ what: String, _ condition: () async -> Bool) async -> Bool {
+            let start = Date.now
+            while await condition() == false {
+                await Task.yield()
+                if Date.now.timeIntervalSince(start) > 10 {
+                    Issue.record("watchdog: \(what)")
+                    return false
+                }
+            }
+            return true
+        }
+        await coordinator.start()
+        await gate.waitUntilEntered()
+        let stopFirst = Task { await coordinator.stop() }
+        guard await settle("stop#1 nils the handle", { !(await coordinator.isLoopRunning) }) else { return }
+        await coordinator.stop()
+        var startReturned = false
+        let restart = Task {
+            await coordinator.start()
+            startReturned = true
+        }
+        // Verdict phase: give the restart task generous time to run
+        // its start() call, then pin SUSPENSION (a launch here is the
+        // bug — the publication was erased).
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(!startReturned)
+        await gate.open()
+        // Drain phase: every join bounded by the same watchdog.
+        await stopFirst.value
+        guard await settle("restart launches after drain", { startReturned }) else { return }
+        await restart.value
+        guard await settle("restarted loop drains", { !(await coordinator.isLoopRunning) }) else { return }
+        #expect(mock.callCount(type: .steps, pageToken: nil) >= 2)
+        await coordinator.stop()
+        #expect(!(await coordinator.isLoopRunning))
+    }
+
+    @Test func failedChunkLeavesNoResolverResidue() async throws {
+        // Round-8 item 12: a chunk failing AFTER beginRun created its
+        // run entry must still drain (converging on SyncEngine's catch
+        // shape) — pre-fix the coverage slot + run entry leaked until
+        // some later run's beginRun reset them.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        mock.setScript(type: .steps, pageToken: nil, results: [.failure(.server(status: 500))])
+        let resolver = WatchConflictResolver(
+            coverageProvider: StubWatchCoverageProvider(),
+            writer: HealthKitWriter(store: MockHealthStore())
+        )
+        let coordinator = BackfillCoordinator(
+            types: [.steps],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            conflictFilter: resolver,
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
+            horizon: .days90
+        )
+        let outcome = await coordinator.runNextChunk(for: .steps)
+        guard case .failed = outcome else {
+            Issue.record("expected failed, got \(outcome)")
+            return
+        }
+        #expect(await resolver.trackedRunCount() == 0)
     }
 
     @Test func allDisabledLoopExitsAndRestartsOnReenable() async throws {
@@ -223,6 +322,7 @@ import Testing
             modelContainer: container,
             clock: clock,
             disabledTypes: { gate.get() },
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
             horizon: .days90
         )
         await coordinator.start()

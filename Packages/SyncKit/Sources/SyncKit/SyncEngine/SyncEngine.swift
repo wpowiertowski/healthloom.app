@@ -263,7 +263,10 @@ public actor SyncEngine {
                         )
                     }
                 for point in walked.localOnly {
-                    PagePipeline.upsertLocalSample(for: point, context: context)
+                    // Round-8 item 13: throws on unencodable payloads (no
+                    // silent zero-byte rows) — into the run's existing
+                    // failure path (cursor unmoved, error surfaced).
+                    try PagePipeline.upsertLocalSample(for: point, context: context)
                 }
                 totalItemCount += walked.total
                 // Fix-round N3: a cap-hit still advances the cursor

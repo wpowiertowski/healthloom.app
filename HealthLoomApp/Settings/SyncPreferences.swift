@@ -145,6 +145,19 @@ final class SyncPreferences {
         Set(enabledTypes.map(\.scope))
     }
 
+    /// Every syncable type with a HealthKit write destination (round-8
+    /// item 1): THE share-request set. `.localOnly` types persist to
+    /// `LocalSample`, never HealthKit, so requesting share for them
+    /// would throw (no mapping) — but requesting only P0 left ~14
+    /// writable types (floors, RHR, SpO2, resp-rate, VO2, height,
+    /// body-fat, glucose, temp, hydration, nutrition…) permanently
+    /// denied, with cursors never advancing. Same funnel shape as
+    /// `syncableTypes`/`backfillTypes` — one source, not three lists.
+    static let healthKitWritableTypes: [GoogleDataType] = syncableTypes.filter {
+        if case .healthKit = $0.writability { return true }
+        return false
+    }
+
     /// The manual-Sync-Now type list (round-6 item 9): every SYNCABLE
     /// type (not just the P0 four — an enabled non-P0 row must update
     /// on demand, not only on background wake), minus disabled. Reads

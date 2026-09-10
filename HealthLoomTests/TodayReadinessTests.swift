@@ -80,6 +80,16 @@ struct ReadinessScoreHistoryTests {
         #expect(history.recentScores(today: day(1)) == [82])
     }
 
+    @Test func staleEntriesExcludedFromAverageWindow() throws {
+        // Round-8 item 14: a 60-day-old score must not enter the
+        // "30-day average" — the ring alone kept everything.
+        let ephemeral5 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral5.defaults)
+        history.record(score: 90, today: day(-60))
+        history.record(score: 80, today: day(-10))
+        #expect(history.recentScores(today: day(0)) == [80])
+    }
+
     @Test func ringCapsAtThirty() throws {
         let ephemeral4 = try makeDefaults()
         let history = ReadinessScoreHistory(defaults: ephemeral4.defaults)

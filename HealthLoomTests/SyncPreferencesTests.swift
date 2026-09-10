@@ -11,8 +11,10 @@
 
 import Testing
 import Foundation
+import HealthKit
 @testable import HealthLoom
 import CoreModel
+import SyncKit
 
 @Suite("SyncPreferences - pure functions")
 struct SyncPreferencesPureFunctionTests {
@@ -195,6 +197,28 @@ struct SyncPreferencesInstanceTests {
 @Suite("SyncPreferences manual sync list")
 @MainActor
 struct ManualSyncTypesTests {
+    @Test func shareRequestCoversFullWritableSet() throws {
+        // Round-8 item 1: the share funnel resolves (no throw — a
+        // naive all-syncable funnel would break on `.localOnly`
+        // types, which have no HealthKit mapping) and covers the
+        // pipeline-written spot checks; local-only rows are excluded
+        // from the request itself.
+        let types = SyncPreferences.healthKitWritableTypes
+        #expect(!types.contains(.electrocardiogram)) // localOnly: no HK destination
+        #expect(types.contains(.sleep)) // sanity: P0 survives
+        let resolved = try HealthKitAuth().authorizedShareTypes(sharing: types, includingWorkoutShare: false)
+        for identifier in [
+            HKQuantityTypeIdentifier.flightsClimbed,
+            HKQuantityTypeIdentifier.restingHeartRate,
+            HKQuantityTypeIdentifier.oxygenSaturation,
+            HKQuantityTypeIdentifier.vo2Max,
+            HKQuantityTypeIdentifier.bodyFatPercentage,
+        ] {
+            let sampleType = try #require(HKObjectType.quantityType(forIdentifier: identifier))
+            #expect(resolved.contains(sampleType), "share set missing \(identifier.rawValue)")
+        }
+    }
+
     @Test func manualListCoversEnabledNonP0AndDropsDisabled() async throws {
         // Round-6 item 9: manual Sync Now covers every SYNCABLE type
         // (not just P0) minus disabled. Borrows the real standard key

@@ -274,12 +274,17 @@ struct WipeFlowView: View {
             deleteCloudKit: {
                 try await appEnvironment.cloudSync.deleteAllCloudData()
             },
+            // Round-8 item 3: BOTH steps attempted independently (see
+            // `deleteStoreAndExports`) — the old sequential shape
+            // aborted before the export sweep when the store delete
+            // threw, leaving staged export JSON behind a "cannot be
+            // undone" wipe.
             deleteStore: {
-                var removed = try StoreDeleter.deleteStoreFiles()
-                // F3: staged export files are health data too — sweep
-                // them with the store, and report the count.
-                removed += try StoreDeleter.deleteExportFiles()
-                return removed
+                // F3: staged export files are health data too.
+                try StoreDeleter.deleteStoreAndExports(
+                    deleteStore: { try StoreDeleter.deleteStoreFiles() },
+                    deleteExports: { try StoreDeleter.deleteExportFiles() }
+                )
             },
             resetDefaults: {
                 if let domain = Bundle.main.bundleIdentifier {

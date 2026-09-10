@@ -254,8 +254,23 @@ enum InsightRunnerHost {
             return
         }
         guard let runner else { return }
-        inFlight = Task { await runner.runIfDue() }
-        await inFlight?.value
-        inFlight = nil
+        // Round-8 item 10: the TASK clears the slot (converging on
+        // `SyncEngine.sync` + `TipStore.runLoad`'s proven shape) — the
+        // old launcher-clears left a post-completion/pre-clear window
+        // where an arrival joined a settled task and silently skipped
+        // its run. That window specifically ate first-run RETRIES
+        // (failed, `lastRun` unset — the retry is correct and expected,
+        // and dropping it meant no insight that day). Create-then-claim
+        // is atomic here: the child inherits MainActor, so it cannot
+        // execute before this task's first suspension (`await` below).
+        // Explicit `@MainActor` (the creator may run anywhere): the
+        // slot assignment below stays synchronous with the guarded
+        // check, and the child still cannot execute before it.
+        let task = Task<Void, Never> { @MainActor [runner] in
+            defer { inFlight = nil }
+            await runner.runIfDue()
+        }
+        inFlight = task
+        await task.value
     }
 }

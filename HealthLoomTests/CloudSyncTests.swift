@@ -111,28 +111,40 @@ actor StubCloudDatabase: CloudDatabase {
     /// this same cursor forever — models a looping server so the test
     /// proves the walk terminates instead of spinning to OOM.
     var turnLoopCursor: Data?
+    /// Walk snapshot (round-8 item 5): a nil cursor starts a new walk
+    /// and snapshots the name list — server cursors are stable under
+    /// mid-walk deletes, but naive index-into-live-dict pagination
+    /// overshoots as rows vanish (the wipe deletes while walking).
+    /// Snapshot-then-compactMap mirrors that stability.
+    private var turnPageSnapshot: [String] = []
     private(set) var deletedRecordNames: [String] = []
 
     func turnPage(cursor: Data?) async throws(CloudSyncError) -> CloudTurnPage {
         if let error = queryError { throw error }
-        let turns = records.values
-            .filter { $0.recordType == CloudRecordType.coachTurn }
-            .sorted { $0.recordID.recordName < $1.recordID.recordName }
         // Opaque cursor, integer-indexed (see the protocol: Live
         // archives the real CKQueryCursor; both are just "next page
-        // please" tokens to the engine's loop).
-        let pageSize = turnPageSize ?? turns.count
+        // please" tokens to the engine's loop). Snapshot on walk
+        // start; rows deleted mid-walk resolve to nil and drop out.
+        if cursor == nil {
+            turnPageSnapshot = records.values
+                .filter { $0.recordType == CloudRecordType.coachTurn }
+                .map(\.recordID.recordName)
+                .sorted()
+        }
+        let names = turnPageSnapshot
+        let pageSize = turnPageSize ?? names.count
         let index: Int
         if let cursor, let text = String(data: cursor, encoding: .utf8), let parsed = Int(text) {
             index = parsed
         } else {
             index = 0
         }
-        let slice = Array(turns.dropFirst(index).prefix(pageSize))
+        let sliceNames = Array(names.dropFirst(index).prefix(pageSize))
+        let slice = sliceNames.compactMap { records[$0] }
         if let loop = turnLoopCursor {
             return CloudTurnPage(records: slice, nextCursor: loop)
         }
-        let next = index + slice.count < turns.count ? String(index + slice.count).data(using: .utf8) : nil
+        let next = index + sliceNames.count < names.count ? String(index + sliceNames.count).data(using: .utf8) : nil
         return CloudTurnPage(records: slice, nextCursor: next)
     }
 
@@ -653,6 +665,124 @@ struct CloudSyncTests {
         }
         await harness.engine().syncNow()
         #expect(try harness.localTurnCount() == 1)
+    }
+
+    @Test("over-cap wipe deletes everything and reports honestly")
+    func overCapWipeDeletesAll() async throws {
+        // Round-8 item 5: 250 server turns at 2/page (125 pages — past
+        // any shared-walk cap) must ALL delete; the old capped walk
+        // truncated at 100 pages, reset watermarks, and let survivors
+        // repull under a success ledger.
+        let harness = try CloudSyncHarness.make()
+        await harness.db.setTurnPageSize(2)
+        let base = harness.now.addingTimeInterval(-100_000)
+        for i in 0..<250 {
+            let snap = CoachTurnSnapshot(
+                turnID: "wipe-\(i)",
+                role: "user",
+                content: "wipe me \(i)",
+                createdAt: base.addingTimeInterval(Double(i))
+            )
+            await harness.db.seedRecord(try CloudRecordBuilder.record(for: snap))
+        }
+        let engine = harness.engine()
+        let deleted = try await engine.deleteAllCloudData()
+        #expect(deleted == 252) // 250 turns + 2 singletons
+        #expect(await harness.db.records.isEmpty)
+        await engine.syncNow()
+        #expect(try harness.localTurnCount() == 0)
+    }
+
+    @Test("push advances seen past its own write")
+    func pushAdvancesSeenWatermark() async throws {
+        // Round-8 item 6: without the advance, the next sync misreads
+        // our own just-pushed record as foreign-newer (server date vs
+        // epoch seen) and suppresses the user's intervening change one
+        // sync late. Prime, toggle, sync: the toggle must push NOW.
+        let harness = try CloudSyncHarness.make()
+        await harness.engine().syncNow() // pushes initial state (empty server)
+        #expect(await harness.db.saved(ofType: CloudRecordType.settings).count == 1)
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
+        await harness.engine().syncNow()
+        let saved = await harness.db.saved(ofType: CloudRecordType.settings)
+        #expect(saved.count == 2)
+        let snap = try CloudRecordDecoder.settings(from: saved[1])
+        #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
+    }
+
+    @Test("equal-createdAt pair straddling the batch cut both push")
+    func equalCreatedAtPairBothPush() async throws {
+        // Round-8 item 7: two turns sharing one timestamp at positions
+        // 500/501 — strict `>` vs `max(batch)` excluded the second one
+        // FOREVER (same-second pairs are routine: user+assistant). The
+        // batch extends through the edge date: both push, no dupes.
+        let harness = try CloudSyncHarness.make()
+        let base = harness.now.addingTimeInterval(-100_000)
+        let context = ModelContext(harness.container)
+        for i in 0..<499 {
+            context.insert(ChatTurn(role: "user", content: "filler \(i)", createdAt: base.addingTimeInterval(Double(i))))
+        }
+        let edge = base.addingTimeInterval(10_000)
+        context.insert(ChatTurn(role: "user", content: "edge-a", createdAt: edge))
+        context.insert(ChatTurn(role: "assistant", content: "edge-b", createdAt: edge))
+        try context.save()
+        #expect(try harness.localTurnCount() == 501)
+        await harness.engine().syncNow()
+        // The batch extends through the edge date: 499 fillers + BOTH
+        // pair members in ONE sync (pre-fix: 500, with the second
+        // member excluded forever after).
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 501)
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 501)
+        #expect(try harness.localTurnCount() == 501)
+    }
+
+    @Test("wipe while a sync runs fails loud, deletes nothing")
+    func wipeVsSyncMutualExclusion() async throws {
+        // Round-8 item 8: a wipe racing an in-flight syncNow must take
+        // the SAME exclusion claim (throw here) instead of deleting
+        // around the uploader and reporting cleared while iCloud
+        // repopulates. Park the sync in the account gate, then wipe.
+        // (Reverse leg — sync arriving mid-wipe sees `.syncing` and
+        // returns — rides the same claim, pinned by the concurrent-
+        // sync test.)
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "keep me", at: harness.now)
+        let engine = harness.engine()
+        await harness.db.setHoldAccountState(true)
+        let syncing = Task { await engine.syncNow() }
+        let start = Date.now
+        while await harness.db.accountStateCalls != 1 {
+            await Task.yield()
+            if Date.now.timeIntervalSince(start) > 5 {
+                Issue.record("sync never reached the account gate")
+                break
+            }
+        }
+        await #expect(throws: CloudSyncError.wipeBlockedBySync) {
+            try await engine.deleteAllCloudData()
+        }
+        await harness.db.releaseAccountState()
+        await syncing.value
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 1)
+        if case .synced = engine.status {
+        } else {
+            Issue.record("expected synced status, got \(engine.status)")
+        }
+    }
+
+    @Test("corrupt turn cursor fails loud, never restarts the walk")
+    func corruptCursorThrows() {
+        // Round-8 item 4: garbage bytes must THROW (fail loud), not
+        // fall through to a fresh page-1 query (which re-fetched page
+        // 1 up to 100× while later pages — and, under wipe, turns past
+        // 200 — never resolved).
+        #expect(throws: CloudSyncError.self) {
+            try CloudTurnCursorCodec.decode(Data("not-a-cursor".utf8))
+        }
+        #expect(throws: CloudSyncError.self) {
+            try CloudTurnCursorCodec.decode(Data())
+        }
     }
 
     @Test("missing scan root fails loudly, not green")

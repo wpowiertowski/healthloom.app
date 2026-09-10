@@ -128,14 +128,21 @@ nonisolated struct LiveCloudDatabase: CloudDatabase {
         let matches: [(CKRecord.ID, Result<CKRecord, Error>)]
         let queryCursor: CKQueryOperation.Cursor?
         do {
-            if let cursor,
-               let resumed = try NSKeyedUnarchiver.unarchivedObject(ofClass: CKQueryOperation.Cursor.self, from: cursor)
-            {
+            if let cursor {
+                // Round-8 item 4: a nil-unarchive FAILS LOUDLY (see
+                // `CloudTurnCursorCodec`) — the old fall-through
+                // restarted from a fresh query, fetching page 1 up to
+                // 100× (20k duplicate work) while pages 2..n were never
+                // reached; under `deleteAllCloudData` turns past 200
+                // were never deleted while the ledger reported success.
+                let resumed = try CloudTurnCursorCodec.decode(cursor)
                 (matches, queryCursor) = try await database.records(continuingMatchFrom: resumed, resultsLimit: pageSize)
             } else {
                 let query = CKQuery(recordType: CloudRecordType.coachTurn, predicate: NSPredicate(value: true))
                 (matches, queryCursor) = try await database.records(matching: query, resultsLimit: pageSize)
             }
+        } catch let syncError as CloudSyncError {
+            throw syncError // our own loud failures keep their message
         } catch {
             throw mapError(error)
         }
@@ -153,9 +160,7 @@ nonisolated struct LiveCloudDatabase: CloudDatabase {
         }
         let nextCursor: Data?
         do {
-            nextCursor = try queryCursor.map {
-                try NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true)
-            }
+            nextCursor = try queryCursor.map(CloudTurnCursorCodec.encode)
         } catch {
             // A cursor that cannot round-trip must fail LOUDLY, never
             // restart the walk from scratch (which would re-pull and
@@ -333,6 +338,12 @@ final class CloudSyncEngine {
             } else {
                 _ = try await database.saveRecord(try CloudRecordBuilder.record(for: settings))
             }
+            // Round-8 item 6: advance past OUR OWN write — without
+            // this the next sync misreads our just-pushed record as
+            // foreign-newer (server date vs epoch seen) and suppresses
+            // the user's intervening local change one sync late (an
+            // LWW race a second device always wins).
+            seenSettingsAt = max(seenSettingsAt, settings.updatedAt)
         }
         let prefs = readPrefs()
         let serverPrefs = try await database.fetchRecord(recordName: CloudRecordType.insightPrefsRecordName)
@@ -345,6 +356,7 @@ final class CloudSyncEngine {
             } else {
                 _ = try await database.saveRecord(try CloudRecordBuilder.record(for: prefs))
             }
+            seenPrefsAt = max(seenPrefsAt, prefs.updatedAt)
         }
     }
 
@@ -401,7 +413,19 @@ final class CloudSyncEngine {
     /// 400, and never pushed them — silent unrecoverable loss under a
     /// `.synced` status. Pacing preserved (500/sync); the remainder is
     /// strictly NEWER and goes next sync — delayed, never lost.
-    private func unpushedTurnBatch(limit: Int) throws(CloudSyncError) -> [CoachTurnSnapshot] {
+    ///
+    /// Equal timestamps never split across batches (round-8 item 7):
+    /// the scheme already assumes createdAt collisions (synthetic
+    /// turnIDs collide for same-second same-role pairs), and a strict
+    /// `>` vs `max(batch)` permanently excludes whichever equal-dated
+    /// row falls on the wrong side of the 500-cut. The batch extends
+    /// through the edge date (tiny groups — user/assistant pairs
+    /// sharing a second), so the watermark always lands PAST every
+    /// pushed row, never inside an equal-dated group.
+    /// Oldest unpushed rows, capped (round-7 item 4: watermark in the
+    /// predicate, oldest-first). May split an equal-dated group at the
+    /// cap — callers extend through the edge date (see above).
+    private func oldestUnpushedRows(limit: Int) throws(CloudSyncError) -> [ChatTurn] {
         let context = ModelContext(container)
         var descriptor: FetchDescriptor<ChatTurn>
         if let watermark = pushedTurnsThrough {
@@ -415,12 +439,32 @@ final class CloudSyncEngine {
             )
         }
         descriptor.fetchLimit = limit
-        let rows: [ChatTurn]
         do {
-            rows = try context.fetch(descriptor)
+            return try context.fetch(descriptor)
         } catch {
             throw CloudSyncError.failed(error.localizedDescription)
         }
+    }
+
+    private func unpushedTurnBatch(limit: Int) throws(CloudSyncError) -> [CoachTurnSnapshot] {
+        let first = try oldestUnpushedRows(limit: limit)
+        guard let edge = first.last?.createdAt else { return [] }
+        let context = ModelContext(container)
+        let edgeDescriptor = FetchDescriptor<ChatTurn>(
+            predicate: #Predicate { $0.createdAt == edge },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        let edgeRows: [ChatTurn]
+        do {
+            edgeRows = try context.fetch(edgeDescriptor)
+        } catch {
+            throw CloudSyncError.failed(error.localizedDescription)
+        }
+        // Dedupe by instance identity (same context → same instances
+        // for the same rows; the Set is belt-and-braces, not load-bearing).
+        var seen = Set(first.map(ObjectIdentifier.init))
+        var rows = first.filter { $0.createdAt < edge }
+        rows += edgeRows.filter { seen.insert(ObjectIdentifier($0)).inserted }
         return rows.map {
             // Synthetic turnID, kept deliberately (third-party N1): a
             // content hash would survive clock changes, but renaming
@@ -574,16 +618,51 @@ final class CloudSyncEngine {
     /// missing", hence "cleared", not "deleted" — a throw fails
     /// the step loudly instead of short-counting).
     func deleteAllCloudData() async throws(CloudSyncError) -> Int {
-        var names = [
-            CloudRecordType.settingsRecordName,
-            CloudRecordType.insightPrefsRecordName,
-        ]
-        names += try await pullAllTurnRecords().map { $0.recordID.recordName }
-        for name in names {
-            try await database.deleteRecord(recordName: name)
+        // Round-8 item 8: SAME exclusion claim as `syncNow` — a racing
+        // scene-activation sync must not re-upload from the intact
+        // local store mid-delete (the ledger would report cleared
+        // while iCloud repopulates). Claim-or-throw: a busy engine
+        // fails the wipe loudly (retry) instead of interleaving. The
+        // reverse leg is `syncNow`'s own guard (a sync arriving
+        // mid-wipe sees `.syncing` and returns — pinned by the
+        // concurrent-sync test).
+        guard status != .syncing else {
+            throw CloudSyncError.wipeBlockedBySync
         }
-        resetSyncState()
-        return names.count
+        let priorStatus = status
+        status = .syncing
+        do {
+            var deleted = 0
+            for name in [
+                CloudRecordType.settingsRecordName,
+                CloudRecordType.insightPrefsRecordName,
+            ] {
+                try await database.deleteRecord(recordName: name)
+                deleted += 1
+            }
+            // Round-8 item 5: page-and-delete incrementally — the
+            // shared capped walk would truncate past 100 pages (then
+            // `resetSyncState` below would zero the watermarks and the
+            // survivors would repull post-wipe, "deleted" transcript
+            // back). No accumulation (one page in memory), no cap
+            // (a wipe must complete, not sample), same-token break
+            // only (an echo deletes idempotently, then stops).
+            var cursor: Data? = nil
+            while true {
+                let page = try await database.turnPage(cursor: cursor)
+                for record in page.records {
+                    try await database.deleteRecord(recordName: record.recordID.recordName)
+                    deleted += 1
+                }
+                guard let next = page.nextCursor, next != cursor else { break }
+                cursor = next
+            }
+            resetSyncState()
+            return deleted
+        } catch {
+            status = priorStatus
+            throw error
+        }
     }
 
     /// Clears every persisted sync marker (watermarks, outbox, last
@@ -747,6 +826,11 @@ final class CloudSyncEngine {
             // Structural: retrying cannot help, and the local store is
             // untouched — surface, don't queue.
             status = .failed(message: "iCloud sync encountered unexpected data. Local data is unaffected.")
+        case .wipeBlockedBySync:
+            // Unreachable through `syncNow` (only the wipe throws it,
+            // and the wipe surfaces it via its own ledger) — defensive
+            // arm so the switch stays exhaustive without a default.
+            status = .failed(message: "Wipe collided with an in-flight sync — run the wipe again.")
         }
     }
 }
