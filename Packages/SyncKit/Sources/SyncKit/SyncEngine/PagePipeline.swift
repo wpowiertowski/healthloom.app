@@ -57,9 +57,11 @@ nonisolated struct PagePipeline: Sendable {
     /// parts duplicated permanently). Partial presence is unreachable
     /// — batch saves are atomic — so no per-sample subset writes.
     ///
-    /// The `'#'` separator is reserved (round-7 fix F1): raw Google
-    /// point IDs are numeric wire IDs that never contain it, so a
-    /// `base#role` prefix test cannot misfire on unrelated rows.
+    /// The `'#'` separator is reserved by CONVENTION (round-7 fix F1,
+    /// softened per fix-round N2): wire IDs observed to date contain
+    /// no `'#'`, but that is asserted, not pinned — a future ID shape
+    /// containing it would false-skip (under-write) here, so any ID
+    /// shape change must add a pinning test alongside it.
     /// `splitBases` is computed once per page from the queried set
     /// (in-page inserts are base IDs, already covered by the base
     /// leg) — not scanned per point.

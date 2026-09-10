@@ -469,6 +469,108 @@ import Testing
         #expect(store.savedBatches.flatMap { $0 }.count == 2)
     }
 
+    // MARK: - Fix F2, base leg covers legacy rows + overlapping replacement
+
+    @Test func legacyBareUUIDRowsSkipReexpansion() async throws {
+        // Round-7 fix F2: legacy rows (pre-suffix era — five sleep
+        // samples sharing the bare point ID) must skip the suffixed
+        // re-expansion via the base leg. Drop the base leg and all
+        // five rewrite as suffixed duplicates (proven red by mutation
+        // during development). This is the base leg's REAL job: for
+        // split points D13.4's retroactive cleanup removes conflicting
+        // base rows before the guard ever sees them (see the companion
+        // test below), so the leg is unreachable there — but legacy
+        // TypeMapper expansions have no cleanup, only this leg.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        mock.setPage(type: .sleep, pageToken: nil, page: Page(points: [TypeMapperFixtures.sleepPoint()], nextPageToken: nil))
+        let store = MockHealthStore()
+        let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+        let legacyDates = [
+            ("2026-07-08T23:15:00Z", "2026-07-08T23:40:00Z"),
+            ("2026-07-08T23:40:00Z", "2026-07-09T01:10:00Z"),
+            ("2026-07-09T01:10:00Z", "2026-07-09T02:00:00Z"),
+            ("2026-07-09T02:00:00Z", "2026-07-09T03:30:00Z"),
+            ("2026-07-09T03:30:00Z", "2026-07-09T06:45:00Z"),
+        ]
+        for (start, end) in legacyDates {
+            store.seed(
+                HKCategorySample(
+                    type: sleepType,
+                    value: HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                    start: TypeMapperFixtures.date(start),
+                    end: TypeMapperFixtures.date(end),
+                    metadata: [HKMetadataKeyExternalUUID: "sleep-0001"]
+                ),
+                isAppWritten: true
+            )
+        }
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: store),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .sleep)
+        #expect(outcome.status == .ok)
+        #expect(outcome.itemCount == 0)
+        #expect(store.savedBatches.isEmpty)
+    }
+
+    @Test func overlappingCoverageReplacesBaseWithSplitParts() async throws {
+        // Round-7 fix F2, companion: overlapping coverage deletes the
+        // conflicting base row (D13.4 retroactive cleanup, before the
+        // existence query) and the split writes its parts — REPLACEMENT
+        // (exactly the 2 parts, no base), never base+parts coexistence.
+        // This is why the base leg is unreachable for split points —
+        // and why the legacy test above (no cleanup for expansions)
+        // is the one that pins it.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        let point = TypeMapperFixtures.stepsPoint(
+            id: "steps-flip-2",
+            start: BackfillTestFixtures.date("2026-07-09T09:00:00Z"),
+            end: BackfillTestFixtures.date("2026-07-09T11:00:00Z"),
+            count: 1200
+        )
+        mock.setPage(type: .steps, pageToken: nil, page: Page(points: [point], nextPageToken: nil))
+        let store = MockHealthStore()
+        let writer = HealthKitWriter(store: store)
+        let plain = SyncEngine(
+            client: mock,
+            writer: writer,
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let first = await plain.sync(type: .steps)
+        #expect(first.status == .ok)
+        #expect(store.savedBatches.flatMap { $0 }.count == 1)
+        let coverage = StubWatchCoverageProvider()
+        coverage.windows = [WatchCoverageWindow(
+            workoutUUID: UUID(),
+            start: BackfillTestFixtures.date("2026-07-09T10:00:00Z"),
+            end: BackfillTestFixtures.date("2026-07-09T10:40:00Z")
+        )]
+        let splitting = SyncEngine(
+            client: mock,
+            writer: writer,
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow),
+            conflictFilter: WatchConflictResolver(
+                coverageProvider: coverage,
+                writer: writer,
+                preference: StubWatchPriorityPreference(enabled: true)
+            )
+        )
+        let second = await splitting.sync(type: .steps)
+        #expect(second.status == .ok)
+        #expect(second.itemCount == 1)
+        // Live store state (not the append-only batch log): exactly
+        // the two parts — the base row was cleaned up, not kept.
+        let liveUUIDs = Self.uuids(of: store.entries.map(\.sample))
+        #expect(Set(liveUUIDs) == ["steps-flip-2#split-0", "steps-flip-2#split-1"])
+    }
+
     // MARK: - Item 10, failed completion save surfaces
 
     struct SaveBoom: Error {}
