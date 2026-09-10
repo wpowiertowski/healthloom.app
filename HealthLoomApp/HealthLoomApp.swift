@@ -220,7 +220,10 @@ struct HealthLoomApp: App {
 // simulator -- **not run in this session** (interactive-debugger-only;
 // documented here and in progress.md as an outstanding manual follow-up,
 // not faked).
-private enum HealthLoomBackgroundSync {
+/// Background-sync namespace. Internal (not private) alongside
+/// `BackgroundSyncLaunchContext`/`run(context:)` so the toggle test
+/// drives the real composition in-process (round-4-sync item 4).
+enum HealthLoomBackgroundSync {
     /// Matches `project.yml`'s `BGTaskSchedulerPermittedIdentifiers` entry
     /// and architecture.md's naming (WP-01). `nonisolated` (like every
     /// stored constant in this enum) so it's readable from the `nonisolated`
@@ -346,13 +349,26 @@ private enum HealthLoomBackgroundSync {
             logger.log(
                 "Background sync finished: \(outcomes.count, privacy: .public) type(s) attempted, allSucceeded=\(allSucceeded, privacy: .public)"
             )
-            // WP-34: overnight half of the morning-insight trigger. Same
-            // shared entry as the foreground scene-phase hook — the
-            // runner's own gates (enabled, after-5am, once-daily, fresh
-            // sync, tier, authorization, signals) decide, so a failed or
-            // premature sync simply yields `.skipped`.
-            await InsightRunnerHost.runIfDue()
+            // Complete FIRST (round-4-sync item 8): the old order ran
+            // model inference before `setTaskCompleted`, outside the
+            // budget and past expiration-cancellation — an overrun
+            // terminates the app and throttles future scheduling, and
+            // the runner (a separate detached task the expiration
+            // handler cannot cancel) kept it overrunning. Completing
+            // first bounds the task to budgeted sync work only.
             taskBox.task.setTaskCompleted(success: allSucceeded)
+            // WP-34: overnight half of the morning-insight trigger — now
+            // OPPORTUNISTIC post-completion work, not task work. Same
+            // shared entry as the foreground scene-phase hook (same
+            // gates: enabled, after-5am, once-daily, fresh sync, tier,
+            // authorization, signals). A suspension here merely stops
+            // the run — no overrun termination is possible against a
+            // completed task — and the runner's own idempotency (F5
+            // replace-don't-duplicate, once-daily `lastRun`) makes a
+            // partial run safe to retry on the next trigger. (No
+            // in-process test: `BGTaskScheduler` is not drivable in a
+            // unit host; the ordering is this block, reviewed as such.)
+            await InsightRunnerHost.runIfDue()
         }
     }
 
@@ -369,7 +385,10 @@ private enum HealthLoomBackgroundSync {
     /// solely on `task.expirationHandler`'s reactive cancellation (WP-16
     /// step 2; see this section's header comment). Returns an empty array
     /// (a legitimate, non-error outcome) when nothing is due.
-    nonisolated private static func run(context: BackgroundSyncLaunchContext) async -> [SyncOutcome] {
+    /// Internal (not private) so the background-path toggle test drives
+    /// the real due→filter→sync composition in-process (round-4-sync
+    /// item 4) — `BGTaskScheduler` itself is not drivable in a unit host.
+    nonisolated static func run(context: BackgroundSyncLaunchContext) async -> [SyncOutcome] {
         let modelContext = ModelContext(context.modelContainer)
         var snapshots: [GoogleDataType: SyncStateSnapshot] = [:]
         snapshots.reserveCapacity(context.syncableTypes.count)
@@ -387,19 +406,28 @@ private enum HealthLoomBackgroundSync {
             now: Date(),
             minInterval: configuration.minInterval
         )
+        // Round-4-sync item 4: the background path honors the same
+        // Settings toggles as `DashboardView` (the `SyncPreferences`
+        // header coordination note, now fulfilled). Read LIVE from
+        // standard defaults every run — never snapshotted into the
+        // launch context, which is built once — so a toggle flips the
+        // very next background wake.
+        let enabledDue: [GoogleDataType] = await MainActor.run {
+            SyncPreferences.filterEnabled(due, disabled: SyncPreferences().disabledTypes)
+        }
         logger.log(
-            "\(due.count, privacy: .public) of \(context.syncableTypes.count, privacy: .public) type(s) due for background sync"
+            "\(enabledDue.count, privacy: .public) of \(context.syncableTypes.count, privacy: .public) type(s) due for background sync"
         )
-        guard !due.isEmpty else { return [] }
+        guard !enabledDue.isEmpty else { return [] }
 
         let runStart = Date()
         var outcomes: [SyncOutcome] = []
-        outcomes.reserveCapacity(due.count)
-        for type in due {
+        outcomes.reserveCapacity(enabledDue.count)
+        for type in enabledDue {
             let elapsed = Date().timeIntervalSince(runStart)
             guard configuration.budget.hasRemainingBudget(elapsed: elapsed) else {
                 logger.notice(
-                    "Background sync time budget exhausted; \(due.count - outcomes.count, privacy: .public) type(s) deferred to the next run"
+                    "Background sync time budget exhausted; \(enabledDue.count - outcomes.count, privacy: .public) type(s) deferred to the next run"
                 )
                 break
             }
@@ -430,7 +458,7 @@ nonisolated private struct BackgroundTaskBox: @unchecked Sendable {
 /// would require `AppEnvironment` to conform to `Sendable`, which is
 /// `AppEnvironment.swift`'s call to make, not this WP's (`AppEnvironment.swift`
 /// is outside this WP's file scope: only `HealthLoomApp.swift` is touched).
-private struct BackgroundSyncLaunchContext: Sendable {
+struct BackgroundSyncLaunchContext: Sendable {
     var modelContainer: ModelContainer
     var syncEngine: SyncEngine
     var syncableTypes: [GoogleDataType]

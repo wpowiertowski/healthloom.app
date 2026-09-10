@@ -231,10 +231,17 @@ public actor GoogleAuthManager {
     }
 
     /// Revokes the stored refresh token (WP-35 disconnect-and-wipe).
-    /// Sends the RFC 7009 revocation request, then clears local state
-    /// (actor cache + token store) in ALL cases -- a network failure still
-    /// leaves nothing locally, and the wipe's keychain step clears the
-    /// same keys again for defense in depth. Callers continue the wipe on
+    /// Clears local state (actor cache + token store) FIRST, then sends
+    /// the RFC 7009 revocation request. Round-4-sync item 7 — fail
+    /// CLOSED, decided and justified: the old order (send, then clear)
+    /// left a LIVE credential on disk whenever the network failed, after
+    /// the wipe promised its removal; the new order's worst case is a
+    /// server-side grant with NO client secret — unusable by anything on
+    /// this device, expiring on its own — while the wipe proceeds.
+    /// NEVER restored: once cleared, the secret is not written back on
+    /// any path (a failed server call must not resurrect the
+    /// credential). The wipe's keychain step clears the same keys again
+    /// for defense in depth. Callers continue the wipe on
     /// `.revocationFailed` (log only); the token is already unusable.
     public func revokeRefreshToken() async throws(GoogleAuthError) -> RevocationOutcome {
         let stored: String?
@@ -244,18 +251,16 @@ public actor GoogleAuthManager {
             throw .tokenStorageFailure
         }
         guard let refreshToken = stored else { return .nothingStored }
-        defer {
-            cachedAccessToken = nil
-            cachedExpiry = nil
-            grantedScopes = []
-        }
-        let (_, response) = try await send(buildRevocationRequest(refreshToken))
         do {
             try await tokenStore.setRefreshToken(nil)
             try await tokenStore.setAccessToken(nil)
         } catch {
             throw .tokenStorageFailure
         }
+        cachedAccessToken = nil
+        cachedExpiry = nil
+        grantedScopes = []
+        let (_, response) = try await send(buildRevocationRequest(refreshToken))
         guard response.statusCode == 200 else { throw .revocationFailed(status: response.statusCode) }
         return .revoked
     }

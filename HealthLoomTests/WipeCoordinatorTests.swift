@@ -103,6 +103,85 @@ struct HealthKitSourceDeleterTests {
     }
 }
 
+/// Recording `HealthStoreProtocol` double (round-4-sync item 9): tracks
+/// every query vs server-side delete, so the wipe-path test proves the
+/// live route issues ZERO sample queries (no unbounded fetch) and
+/// deletes per type via `deleteAllAppData`.
+private final class RecordingWipeStore: HealthStoreProtocol, @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var queryCalls = 0
+    private(set) var deleteAllAppDataCalls: [HKObjectType] = []
+    var deleteError: [String: HealthKitWriterError] = [:]
+    var cannedCounts: [String: Int] = [:]
+
+    func save(_ objects: [HKObject]) async throws(HealthKitWriterError) {}
+    func existingExternalIDs(ofType sampleType: HKSampleType, start: Date, end: Date) async throws(HealthKitWriterError) -> Set<String> {
+        lock.withLock { queryCalls += 1 }
+        return []
+    }
+    func appWrittenSampleRecords(ofType sampleType: HKSampleType, start: Date, end: Date) async throws(HealthKitWriterError) -> [AppWrittenSampleRecord] {
+        lock.withLock { queryCalls += 1 }
+        return []
+    }
+    func deleteObjects(ofType objectType: HKObjectType, externalIDs: Set<String>) async throws(HealthKitWriterError) -> Int {
+        0
+    }
+    func deleteAllAppData(ofType objectType: HKObjectType) async throws(HealthKitWriterError) -> Int {
+        lock.withLock { deleteAllAppDataCalls.append(objectType) }
+        if let error = deleteError[objectType.identifier] { throw error }
+        return cannedCounts[objectType.identifier] ?? 0
+    }
+}
+
+@Suite("HealthKitSourceDeleter live path (server-side delete)")
+struct HealthKitSourceDeleterLiveTests {
+    @Test("live wipe issues zero queries and deletes per type")
+    func liveWipeIsServerSide() async throws {
+        // Round-4-sync item 9: the regression — 10k samples in the
+        // store must NOT be fetched (queryCalls stays 0); each type is
+        // deleted server-side exactly once with its count reported.
+        let store = RecordingWipeStore()
+        store.cannedCounts = [
+            HKQuantityTypeIdentifier.stepCount.rawValue: 10_000,
+            HKCategoryTypeIdentifier.sleepAnalysis.rawValue: 42,
+        ]
+        let stepsType = try StubSource.stepsType()
+        let sleepType = try #require(HKObjectType.categoryType(forIdentifier: .sleepAnalysis))
+        var progress: [(HKObjectType, Int)] = []
+        let outcomes = await HealthKitSourceDeleter.deleteAppWrittenLive(
+            types: [stepsType, sleepType],
+            writer: HealthKitWriter(store: store),
+            onProgress: { progress.append(($0, $1)) }
+        )
+        #expect(store.queryCalls == 0)
+        #expect(store.deleteAllAppDataCalls == [stepsType, sleepType])
+        #expect(try outcomes[stepsType]?.get() == 10_000)
+        #expect(try outcomes[sleepType]?.get() == 42)
+        #expect(progress.map(\.1) == [10_000, 42])
+    }
+
+    @Test("live wipe isolates per-type failures")
+    func liveWipePerTypeIsolation() async throws {
+        // One failing type neither throws nor strands the other — same
+        // contract as the seam path, now on the server-side route.
+        struct WipeBoom: Error {}
+        let store = RecordingWipeStore()
+        let stepsType = try StubSource.stepsType()
+        let sleepType = try #require(HKObjectType.categoryType(forIdentifier: .sleepAnalysis))
+        store.deleteError = [stepsType.identifier: .underlying("boom")]
+        store.cannedCounts = [sleepType.identifier: 7]
+        let outcomes = await HealthKitSourceDeleter.deleteAppWrittenLive(
+            types: [stepsType, sleepType],
+            writer: HealthKitWriter(store: store)
+        )
+        guard case .failure = try #require(outcomes[stepsType]) else {
+            Issue.record("steps should fail")
+            return
+        }
+        #expect(try outcomes[sleepType]?.get() == 7)
+    }
+}
+
 /// Trivial Sendable box (test-only).
 private final class Locked<Value>: @unchecked Sendable {
     private let lock = NSLock()

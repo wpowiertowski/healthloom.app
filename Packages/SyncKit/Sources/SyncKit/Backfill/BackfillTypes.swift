@@ -201,6 +201,12 @@ public nonisolated enum BackfillChunkOutcome: Sendable, Equatable {
     /// round. Lets callers and the log tell "asked to stop" apart from a
     /// real chunk failure.
     case suspendedCancelled
+    /// Skipped this round: the type is currently disabled in Settings
+    /// (round-4-sync item 4 — the background/backfill paths honor the
+    /// same `filteredForSync` toggles as the foreground sync). Distinct
+    /// from `.alreadyDone` (which means "caught up"): re-enabling the
+    /// type resumes its walk from the untouched cursor.
+    case suspendedDisabled
     /// The chunk's pull/map/write failed; the type's `backfillCursor` is
     /// left untouched (same "leave the cursor, retry next time" posture as
     /// `SyncEngine`'s incremental cursor -- architecture.md D3/D4's

@@ -15,6 +15,7 @@ import CoreModel
 import GoogleHealthClient
 import HealthKit
 import Secrets
+import SyncKit
 import SwiftData
 import SwiftUI
 
@@ -261,9 +262,11 @@ struct WipeFlowView: View {
             // N3: no copy loop — the deleter dict returns directly.
             deleteHealthKit: {
                 let types = try HealthKitSourceDeleter.wipeableTypes().map { $0 as HKObjectType }
-                return await HealthKitSourceDeleter.live().deleteAppWritten(
+                // Round-4-sync item 9: server-side delete-by-source —
+                // no unbounded fetch, no Swift-side bundle filter.
+                return await HealthKitSourceDeleter.deleteAppWrittenLive(
                     types: types,
-                    ownBundleID: Bundle.main.bundleIdentifier ?? ""
+                    writer: HealthKitWriter(healthStore: HKHealthStore())
                 )
             },
             deleteStore: {

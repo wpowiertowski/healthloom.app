@@ -237,8 +237,16 @@ final class ReadinessInputsProvider {
 @MainActor
 struct ReadinessScoreHistory {
     private static let defaultsKey = "com.healthloom.settings.readinessScores"
+    // Round-4-sync item 13: fixed format DEMANDS `en_US_POSIX` (a
+    // fixed-format formatter under a non-POSIX locale U-turns digits
+    // and separators) AND an explicit Gregorian calendar (under a
+    // Buddhist/Japanese-calendar host the same formatter emits
+    // `2568-…`/`0007-…` keys — duplicate rows plus self-comparison
+    // skew after every locale change).
     private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
@@ -266,7 +274,9 @@ struct ReadinessScoreHistory {
         var score: Int
     }
 
-    private static func dayString(_ date: Date) -> String {
+    /// Day key, internal so tests pin the Gregorian/POSIX contract
+    /// (round-4-sync item 13) without rendering.
+    static func dayString(_ date: Date) -> String {
         dayFormatter.string(from: date)
     }
 

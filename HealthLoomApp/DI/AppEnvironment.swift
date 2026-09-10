@@ -279,6 +279,11 @@ final class AppEnvironment {
                 writer: backfillWriter,
                 preference: UserDefaultsWatchPriorityPreference()
             ),
+            // Round-4-sync item 4: the coordinator consults the live
+            // Settings toggles per chunk (same `filteredForSync` source
+            // as the foreground sync) — a mid-walk toggle takes effect
+            // without rebuilding anything.
+            disabledTypes: { SyncPreferences().disabledTypes },
             busyProbe: syncEngine
         )
 
@@ -626,7 +631,8 @@ final class AppEnvironment {
         // watch workout deliberately does NOT exist in the (empty
         // simulator) HealthKit store -- exercising the view's documented
         // unlinked-session fallback (ActivitiesModels.swift's header). The
-        // payload mirrors `SyncEngineLocalPayload`'s persisted shape:
+        // payload mirrors `SharedLocalPayload`'s persisted shape (the
+        // unified local-sample payload — see PagePipeline.swift):
         // `sessionPayload` is the base64 of the Google Exercise session
         // JSON (`ExerciseSessionDecoding.swift`'s wire shape).
         let seedExerciseSession = Data(

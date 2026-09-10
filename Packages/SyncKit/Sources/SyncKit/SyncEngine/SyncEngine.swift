@@ -78,6 +78,12 @@ public actor SyncEngine {
     private let clock: any SyncClock
     private let configuration: SyncConfiguration
     private let conflictFilter: any ConflictFiltering
+    /// Round-4-sync item 5: the HealthKit type resolver, injected so a
+    /// resolution failure is testable. Default is the real static
+    /// resolver; tests inject a thrower to prove the failure surfaces
+    /// (error status + non-ok outcome, zero writes) instead of `try?`'ing
+    /// into a silent green run.
+    private let sampleTypeResolver: @Sendable @MainActor (String) throws(UnresolvedHealthKitIdentifier) -> HKSampleType
     /// WP-18 (implementation-plan.md) hook point: the **one, minimal,
     /// additive** change this WP makes to this file, following the exact
     /// shape its own brief suggested ("an optional injected
@@ -117,7 +123,8 @@ public actor SyncEngine {
         clock: any SyncClock = SystemSyncClock(),
         configuration: SyncConfiguration = SyncConfiguration(),
         conflictFilter: any ConflictFiltering = IdentityConflictFilter(),
-        runRecorder: (any SyncRunRecording)? = nil
+        runRecorder: (any SyncRunRecording)? = nil,
+        sampleTypeResolver: @escaping @Sendable @MainActor (String) throws(UnresolvedHealthKitIdentifier) -> HKSampleType = HealthKitObjectTypeResolver.sampleType
     ) {
         self.client = client
         self.writer = writer
@@ -126,6 +133,7 @@ public actor SyncEngine {
         self.configuration = configuration
         self.conflictFilter = conflictFilter
         self.runRecorder = runRecorder
+        self.sampleTypeResolver = sampleTypeResolver
     }
 
     // MARK: - Public API
@@ -207,15 +215,18 @@ public actor SyncEngine {
         // (CoreModel's `.defaultIsolation(MainActor.self)`), and this actor
         // is not MainActor -- see this file's header.
         let writability = await type.writability
-        var hkSampleType: HKSampleType?
-        if case .healthKit(let identifier) = writability {
-            hkSampleType = try? await HealthKitObjectTypeResolver.sampleType(for: identifier)
-        } else {
-            hkSampleType = nil
-        }
 
         var totalItemCount = 0
         do {
+            var hkSampleType: HKSampleType?
+            if case .healthKit(let identifier) = writability {
+                // Round-4-sync item 5: resolution failure THROWS into
+                // this run's catch (error status + `.failed`, zero
+                // writes — nothing below has run yet). The old `try?`
+                // swallowed it into `nil`, and the run then rewrote
+                // the whole window reporting green `.ok`.
+                hkSampleType = try await sampleTypeResolver(identifier)
+            }
             // WP-12b: give the conflict filter its per-run window *before*
             // the existence query below -- the real resolver
             // (`WatchConflictResolver`) refreshes its watch-coverage cache
@@ -244,11 +255,15 @@ public actor SyncEngine {
                 let page = try await client.reconcile(
                     type: type, since: windowStart, until: windowEnd, pageToken: pageToken
                 )
-                totalItemCount += try await processPage(
-                    page.points,
-                    knownExternalIDs: &knownExternalIDs,
-                    context: context
-                )
+                // Round-4-sync item 15: the shared page pipeline (points
+                // + knownExternalIDs in, count out); `.localOnly`
+                // upserts stay on this executor (see PagePipeline).
+                let processed = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
+                    .processPage(page.points, knownExternalIDs: &knownExternalIDs)
+                for point in processed.localOnlyPoints {
+                    PagePipeline.upsertLocalSample(for: point, context: context)
+                }
+                totalItemCount += processed.itemCount
                 pageToken = page.nextPageToken
             } while pageToken != nil
 
@@ -258,7 +273,7 @@ public actor SyncEngine {
             // but the row only exists after `upsertLocalSample` ran
             // (fetches see pending inserts in the same context). Identity
             // filter drains nothing.
-            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
             let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
 
             // Full window succeeded (every page fetched, mapped, and
@@ -306,7 +321,7 @@ public actor SyncEngine {
             // their rows were rolled back above, so they drop silently per
             // `applyDeferredSessionLinks`' contract and are re-recorded on
             // the re-pull.)
-            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
             let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
 
             // Cancellation is a stop, not a failure: no error status, no
@@ -354,116 +369,6 @@ public actor SyncEngine {
         }
     }
 
-    /// Maps, conflict-filters, batches, and writes/upserts every point in one
-    /// page. `knownExternalIDs` is threaded through by `inout` (rather than
-    /// re-queried per page) so the existence check genuinely happens once
-    /// per (type, window) -- D4's invariant, met even more strictly than
-    /// "once per page".
-    private func processPage(
-        _ points: [GoogleDataPoint],
-        knownExternalIDs: inout Set<String>,
-        context: ModelContext
-    ) async throws -> Int {
-        var batch: [HKObject] = []
-        var newExternalIDs: [String] = []
-        var localOnlyPoints: [GoogleDataPoint] = []
-        var skipCount = 0
-        var workoutCount = 0
-
-        for point in points {
-            // `await`: `TypeMapper.map(_:)` is MainActor-isolated (see this
-            // file's header); `conflictFilter.resolve` is declared `async`
-            // regardless of isolation (SyncEngineTypes.swift).
-            let mapped = await conflictFilter.resolve(await TypeMapper.map(point), for: point)
-            switch mapped {
-            case .quantity(let sample):
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(sample)
-                newExternalIDs.append(point.id)
-            case .quantities(let samples):
-                // WP-12b: a cumulative sample split at watch-coverage edges
-                // (`WatchConflictResolver`, architecture.md D13.3) -- N part
-                // samples for one point, all sharing `point.id`'s external-ID
-                // metadata, exactly `.category`'s existing one-point-many-
-                // samples shape. One point, one itemCount contribution.
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(contentsOf: samples)
-                newExternalIDs.append(point.id)
-            case .category(let samples):
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(contentsOf: samples)
-                newExternalIDs.append(point.id)
-            case .correlation(let correlation):
-                // WP-13 addition (coordination note: this arm was added
-                // alongside WP-14's concurrent SyncKit work -- see
-                // progress.md's WP-13 entry). Unlike `.workout` below, an
-                // `HKCorrelation` is itself a plain `HKObject`/`HKSample`
-                // (built synchronously by `TypeMapper.map(_:)` -- see
-                // MappedObject.swift's `MappedNutritionCorrelation
-                // .makeHKCorrelation()`), so it slots into the exact same
-                // batch/existence-diff path as `.quantity`/`.category`
-                // above -- no parallel dedupe or save mechanism, per WP-13's
-                // explicit "verify this, don't build a parallel mechanism"
-                // instruction.
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(correlation)
-                newExternalIDs.append(point.id)
-            case .workout(let workout):
-                // WP-12b: the follow-up WP-12 flagged, now wired. A workout
-                // reaching this arm has already passed D13's conflict
-                // resolution (the `conflictFilter.resolve` call above
-                // downgrades watch-covered sessions to `.localOnly` before
-                // they ever get here), so anything left is a genuine
-                // Fitbit-only activity. Dedupe uses the exact same
-                // per-(type, window) existence set as every other arm --
-                // `knownExternalIDs` was queried against
-                // `HKObjectType.workoutType()` for `.exercise` runs (the
-                // writability table's `"HKWorkoutType"` sentinel resolves to
-                // it); only the *write* path differs, unavoidably:
-                // `HKWorkoutBuilder.finishWorkout()` saves directly to the
-                // store (HealthKitWriter.swift's `saveWorkout` doc comment),
-                // so a saved workout is inserted into `knownExternalIDs`
-                // immediately rather than batched.
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                _ = try await writer.saveWorkout(workout)
-                knownExternalIDs.insert(point.id)
-                workoutCount += 1
-            case .localOnly:
-                localOnlyPoints.append(point)
-            case .skip:
-                skipCount += 1
-            }
-        }
-
-        if !batch.isEmpty {
-            try await writer.save(batch)
-            knownExternalIDs.formUnion(newExternalIDs)
-        }
-
-        for point in localOnlyPoints {
-            upsertLocalSample(for: point, context: context)
-        }
-
-        return newExternalIDs.count + workoutCount + localOnlyPoints.count + skipCount
-    }
-
-    /// WP-12b (architecture.md D13.2): stamp `LocalSample.linkedWatchWorkoutUUID`
-    /// for every session the run's conflict filter deferred to a watch
-    /// workout. Fetch-by-externalID sees the rows `upsertLocalSample`
-    /// inserted earlier in this same context (pending inserts are visible to
-    /// `FetchDescriptor` by default). A link whose row is missing (e.g. the
-    /// page that would have upserted it failed mid-run) is dropped silently
-    /// -- the window is fully re-pulled next run and the link re-recorded.
-    private func applyDeferredSessionLinks(_ links: [String: UUID], context: ModelContext) {
-        guard !links.isEmpty else { return }
-        for (externalID, workoutUUID) in links {
-            let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
-            if let sample = try? context.fetch(descriptor).first {
-                sample.linkedWatchWorkoutUUID = workoutUUID
-            }
-        }
-    }
-
     // MARK: - SwiftData bookkeeping
 
     private func fetchOrCreateSyncState(for type: GoogleDataType, context: ModelContext) -> SyncState {
@@ -482,70 +387,6 @@ public actor SyncEngine {
         context.insert(created)
         return created
     }
-
-    /// Upserts by `externalID` (WP-09 step 4). Fetches any existing row
-    /// first -- rather than blindly inserting a fresh `LocalSample` and
-    /// relying on SwiftData's `.unique`-attribute upsert behavior (confirmed
-    /// last-write-wins by WP-02's own tests) -- specifically so
-    /// `linkedWatchWorkoutUUID` (set later by WP-12b's `ConflictResolver`,
-    /// architecture.md D13.2) is never silently wiped back to `nil` by a
-    /// routine re-sync of the same point.
-    private func upsertLocalSample(for point: GoogleDataPoint, context: ModelContext) {
-        let externalID = point.id
-        let payload = SyncEngineLocalPayload(point: point)
-        let payloadJSON = (try? JSONEncoder().encode(payload)) ?? Data()
-        let sourceLabel = point.source.deviceDisplayName ?? point.source.platform ?? "unknown"
-        let dataTypeKey = point.dataType.rawValue
-
-        let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
-        if let existing = try? context.fetch(descriptor).first {
-            existing.dataType = dataTypeKey
-            existing.payloadJSON = payloadJSON
-            existing.start = point.start
-            existing.end = point.end
-            existing.source = sourceLabel
-        } else {
-            context.insert(
-                LocalSample(
-                    externalID: externalID,
-                    dataType: dataTypeKey,
-                    payloadJSON: payloadJSON,
-                    start: point.start,
-                    end: point.end,
-                    source: sourceLabel
-                )
-            )
-        }
-    }
 }
 
-/// Minimal, self-contained JSON shape for `LocalSample.payloadJSON` -- WP-09
-/// only needs *a* full-fidelity encoding to satisfy "route .localOnly to
-/// LocalSample upsert"; WP-14 (implementation-plan.md) owns the real
-/// per-type payload schema/decoding for the in-app "Not in Apple Health"
-/// badge rows and may replace this shape entirely. Deliberately `private` to
-/// this file -- nothing else in SyncKit depends on its exact fields.
-nonisolated private struct SyncEngineLocalPayload: Codable {
-    var id: String
-    var dataType: String
-    var start: Date
-    var end: Date
-    var values: [String: Double]
-    var sessionPayload: Data?
-    var sourcePlatform: String?
-    var sourceDeviceDisplayName: String?
-    var sourceRecordingMethod: String?
-
-    init(point: GoogleDataPoint) {
-        self.id = point.id
-        self.dataType = point.dataType.rawValue
-        self.start = point.start
-        self.end = point.end
-        self.values = point.values
-        self.sessionPayload = point.sessionPayload
-        self.sourcePlatform = point.source.platform
-        self.sourceDeviceDisplayName = point.source.deviceDisplayName
-        self.sourceRecordingMethod = point.source.recordingMethod
-    }
-}
 #endif

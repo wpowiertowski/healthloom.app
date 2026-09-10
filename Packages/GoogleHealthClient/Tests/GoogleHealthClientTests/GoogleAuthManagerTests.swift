@@ -356,13 +356,18 @@ struct GoogleAuthManagerTests {
         #expect(try await store.accessToken() == nil)
     }
 
-    @Test("transport failure still clears the cache but keeps the store")
+    @Test("transport failure still leaves nothing locally (fail closed)")
     func revocationTransportFailure() async throws {
         struct TransportBoom: Error {}
+        // Round-4-sync item 7: the old order (send, then clear) pinned
+        // keeping the store on transport failure — a live credential
+        // surviving the wipe. The new order clears FIRST: a failed
+        // server call leaves a server-side grant with no client secret
+        // (unusable), never a client secret with no server call.
         // Branch on URL (F11): the token endpoint succeeds (genuinely
         // seeding granted scopes), the revoke endpoint throws — so the
-        // cache-cleared assert below proves the defer ran instead of
-        // passing vacuously on an unseedable cache.
+        // cleared asserts below prove the clear ran instead of passing
+        // vacuously on unseedable state.
         let http = RecordingHTTPSession { request, _ in
             if request.url?.absoluteString.contains("oauth2.googleapis.com/token") == true {
                 return (Self.tokenResponseJSON(accessToken: "fresh", scope: "scope-a scope-b"), httpResponse(
@@ -379,11 +384,12 @@ struct GoogleAuthManagerTests {
         await #expect(throws: GoogleAuthError.self) {
             try await manager.revokeRefreshToken()
         }
-        // Actor cache cleared via defer (seeded scopes dropped)…
+        // Actor cache cleared (seeded scopes dropped)…
         #expect(await manager.currentGrantedScopes.isEmpty)
-        // …but the store is untouched: clearing secrets is the wipe's
-        // keychain step, not the failed request's.
-        #expect(try await store.refreshToken() == "refresh-abc")
+        // …AND the store cleared: the failed server call does not
+        // resurrect the credential, and the wipe's promise holds.
+        #expect(try await store.refreshToken() == nil)
+        #expect(try await store.accessToken() == nil)
     }
 
     @Test("nothing stored is success without a request")
