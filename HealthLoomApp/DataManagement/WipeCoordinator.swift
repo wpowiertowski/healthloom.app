@@ -8,10 +8,11 @@
 // Order is load-bearing: revoke FIRST (it needs the token), keychain
 // second (kills the token and every provider key — WP-29's per-provider
 // removal already exists in AI Models for single keys; this is the
-// all-keys counterpart), HealthKit third (needs no secrets), store files
-// fourth (the open container is invalid afterwards — the UI gates on
-// completion and asks for relaunch), UserDefaults last (kills the
-// onboarding flag, so relaunch starts clean).
+// all-keys counterpart), HealthKit third (needs no secrets), iCloud
+// fourth (server records before local watermarks — round-6 item 1),
+// store files fifth (the open container is invalid afterwards — the UI
+// gates on completion and asks for relaunch), UserDefaults last (kills
+// the onboarding flag, so relaunch starts clean).
 //
 // `@Observable` drives the progress UI; every I/O boundary is an
 // injected closure (AGENTS.md §2), so the full wipe runs in tests against
@@ -31,6 +32,7 @@ final class WipeCoordinator {
         case revokeGoogle
         case keychain
         case healthKit
+        case cloudKit
         case store
         case defaults
 
@@ -41,6 +43,7 @@ final class WipeCoordinator {
             case .revokeGoogle: return "Revoking Google access"
             case .keychain: return "Deleting saved keys"
             case .healthKit: return "Deleting HealthKit samples"
+            case .cloudKit: return "Deleting iCloud data"
             case .store: return "Deleting app data"
             case .defaults: return "Resetting settings"
             }
@@ -65,6 +68,11 @@ final class WipeCoordinator {
         /// set itself can't be derived (unknown mapping) — failing the
         /// step loudly instead of wiping an unknown subset.
         let deleteHealthKit: () async throws -> [HKObjectType: Result<Int, Error>]
+        /// iCloud private-DB deletion (round-6 item 1): server records
+        /// go BEFORE local watermarks reset (the engine orders it) so a
+        /// relaunch cannot repull wiped data. Returns the deleted-record
+        /// count for the ledger.
+        let deleteCloudKit: () async throws -> Int
         /// Removes the store files. Returns removed URLs for the ledger.
         let deleteStore: () throws -> [URL]
         /// Resets persisted preferences.
@@ -133,13 +141,22 @@ final class WipeCoordinator {
             states[.healthKit] = .done(detail: "skipped by user")
         }
 
-        // 4. Store files (container invalid afterwards by design).
+        // 4. iCloud (round-6 item 1): server records, then watermarks
+        // (the engine's `deleteAllCloudData` orders it) — without this
+        // the wiped transcript/settings pull straight back on relaunch,
+        // breaking the alert's "cannot be undone" promise.
+        await perform(.cloudKit) {
+            let deleted = try await self.deps.deleteCloudKit()
+            return "\(deleted) iCloud record(s) deleted"
+        }
+
+        // 5. Store files (container invalid afterwards by design).
         await perform(.store) {
             let removed = try self.deps.deleteStore()
             return "\(removed.count) file(s) removed"
         }
 
-        // 5. Defaults last (kills onboarding + toggles for the relaunch).
+        // 6. Defaults last (kills onboarding + toggles for the relaunch).
         await perform(.defaults) {
             self.deps.resetDefaults()
             return "settings reset"

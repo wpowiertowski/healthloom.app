@@ -32,4 +32,13 @@ final class WatchPriorityPreferences {
         defaults.set(enabled, forKey: UserDefaultsWatchPriorityPreference.defaultsKey)
         isEnabled = enabled
     }
+
+    /// Re-reads the toggle from defaults (round-6 item 10): the cloud
+    /// pull applies server state through the ENGINE's owner instances —
+    /// without this, this screen's instance stays stale after a pull
+    /// and its next write-back clobbers the pulled value. Called from
+    /// the `.cloudSyncDidApply` handler alongside the other reloads.
+    func reload() {
+        isEnabled = UserDefaultsWatchPriorityPreference(defaults: defaults).isWatchPriorityEnabled()
+    }
 }

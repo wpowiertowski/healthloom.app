@@ -485,19 +485,22 @@ public actor BackfillCoordinator {
         }
 
         var totalItemCount = 0
-        var pageToken: String?
-        repeat {
-            let page = try await client.reconcile(type: type, since: start, until: end, pageToken: pageToken)
-            // Round-4-sync item 15: the shared page pipeline (see
-            // PagePipeline.swift); `.localOnly` upserts stay here.
-            let processed = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
-                .processPage(page.points, knownExternalIDs: &knownExternalIDs)
-            for point in processed.localOnlyPoints {
+        // Round-6 item 8: the bounded shared walk (see PagePipeline);
+        // `.localOnly` upserts stay here. Partial progress on a
+        // throwing page still counts (same contract as SyncEngine).
+        do {
+            let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
+                .processPages(knownExternalIDs: knownExternalIDs) { token in
+                    try await client.reconcile(type: type, since: start, until: end, pageToken: token)
+                }
+            for point in walked.localOnly {
                 PagePipeline.upsertLocalSample(for: point, context: context)
             }
-            totalItemCount += processed.itemCount
-            pageToken = page.nextPageToken
-        } while pageToken != nil
+            totalItemCount += walked.total
+        } catch let walk as PageWalkPartial {
+            totalItemCount += walk.total
+            throw walk.underlying
+        }
 
         // WP-12b: stamp deferred-session links onto the LocalSample rows the
         // pages above upserted (same mechanics as

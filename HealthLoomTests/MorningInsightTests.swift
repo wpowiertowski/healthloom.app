@@ -23,6 +23,34 @@ struct InsightPreferencesInitTests {
     // `morningInsightsEnabled` persisted the still-default later fields
     // OVER their stored values — every launch reset lockDetails/viaCloud/
     // lastRun whenever insights were enabled. Init must be read-only.
+    @Test("reload preserves externally-changed fields (no stale write-back)")
+    func reloadPreservesExternalChanges() throws {
+        // Round-6 item 2: without the suppressPersist guard, assigning
+        // `morningInsightsEnabled` inside reload() fires didSet→persist,
+        // writing this instance's STALE details/viaCloud/lastRun OVER
+        // the stored values before they are read — only the first field
+        // ever actually reloads. Pre-fix every assert below fails.
+        let ephemeralR = try EphemeralDefaults(prefix: "morninginsight-reload")
+        let defaults = ephemeralR.defaults
+        // The runner's long-lived copy, snapshotted while all-false.
+        let stale = InsightPreferences(defaults: defaults)
+        // Settings (a separate instance) enables everything behind its back.
+        let settings = InsightPreferences(defaults: defaults)
+        settings.morningInsightsEnabled = true
+        settings.lockScreenDetails = true
+        settings.insightsViaCloud = true
+        let stamp = Date(timeIntervalSince1970: 1_800_000_100)
+        settings.lastRun = stamp
+        stale.reload()
+        #expect(stale.morningInsightsEnabled == true)
+        #expect(stale.lockScreenDetails == true)
+        #expect(stale.insightsViaCloud == true)
+        #expect(stale.lastRun == stamp)
+        // And the store itself was never clobbered mid-reload.
+        #expect(InsightPreferences(defaults: defaults).lockScreenDetails == true)
+        #expect(InsightPreferences(defaults: defaults).lastRun == stamp)
+    }
+
     @Test("init from populated defaults preserves every field")
     func initPreservesAllFields() throws {
         let ephemeralInit = try EphemeralDefaults(prefix: "morninginsight-init")
@@ -133,6 +161,17 @@ struct InsightNotificationContentTests {
         #expect(built.title == "Your morning insight is ready")
         #expect(!built.body.contains(where: { $0.isNumber }))
         #expect(built.body.contains("Resting heart rate is down"))
+    }
+
+    @Test("prose commas survive; grouped numbers redact as one token")
+    func proseCommasSurvive() {
+        // Round-6 item 15: commas are redacted only inside digit
+        // groups — headline prose keeps its punctuation.
+        #expect(InsightNotificationContent.redacted("Good morning, it's time to review 8,240 steps")
+            == "Good morning, it's time to review • steps")
+        #expect(InsightNotificationContent.redacted("down 4, rest well, walk 1,200")
+            == "down •, rest well, walk •")
+        #expect(InsightNotificationContent.redacted("resting 72.5 bpm") == "resting • bpm")
     }
 
     @Test("full-text mode is verbatim")

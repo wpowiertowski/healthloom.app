@@ -338,7 +338,10 @@ enum HealthLoomBackgroundSync {
 
         Task.detached(priority: .utility) {
             let outcomes = await syncTask.value
-            let allSucceeded = outcomes.allSatisfy { $0.status == .ok }
+            // Round-6 item 7: an expiration-cancelled sync is a STOP,
+            // not a failure (every other layer says so) — reporting it
+            // as failure throttles future wakes.
+            let allSucceeded = Self.backgroundTaskSucceeded(outcomes)
             // Documented, asserted confirmation only -- never gates the
             // actual reschedule, which already happened, unconditionally,
             // above.
@@ -385,6 +388,14 @@ enum HealthLoomBackgroundSync {
     /// solely on `task.expirationHandler`'s reactive cancellation (WP-16
     /// step 2; see this section's header comment). Returns an empty array
     /// (a legitimate, non-error outcome) when nothing is due.
+    /// Maps BG outcomes to `setTaskCompleted` (round-6 item 7):
+    /// `.cancelled` counts as success — a clean stop, never a failure.
+    /// Pure so tests pin the table (empty/all-ok/cancelled → true;
+    /// any `.error` → false).
+    nonisolated static func backgroundTaskSucceeded(_ outcomes: [SyncOutcome]) -> Bool {
+        outcomes.allSatisfy { $0.status == .ok || $0.status == .cancelled }
+    }
+
     /// Internal (not private) so the background-path toggle test drives
     /// the real due→filter→sync composition in-process (round-4-sync
     /// item 4) — `BGTaskScheduler` itself is not drivable in a unit host.

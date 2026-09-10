@@ -28,6 +28,7 @@ import CoreModel
 import Foundation
 import GoogleHealthClient
 import Observation
+import os
 import Secrets
 import SwiftData
 import SyncKit
@@ -75,7 +76,33 @@ final class AppEnvironment {
     static let backfillTypes: [GoogleDataType] = GoogleDataType.allCases.filter { $0.writability != .skip }
 
     let modelContainer: ModelContainer
+    /// True when the on-disk store failed to open and the app is running
+    /// on a throwaway in-memory store (round-6 item 3): NOTHING persists
+    /// — the UI must say so (DashboardView banners it) instead of
+    /// reporting success while discarding the session.
+    let isStoreEphemeral: Bool
     let cloudSync: CloudSyncEngine
+
+    /// Opens the store, falling back LOUDLY (round-6 item 3) — decided:
+    /// launch on a memory store (availability) + published flag + fault
+    /// log (honesty), never a silent discard and never a hard crash on
+    /// a transient failure (lock contention, brief disk hiccup). Only a
+    /// TOTAL failure (memory open throws too) still traps — nothing can
+    /// run at all then. Seamed (`opener`) so tests drive the failure.
+    /// Returns the container plus whether it is ephemeral.
+    static func openModelContainer(
+        useInMemory: Bool,
+        opener: @Sendable @MainActor (Bool) throws -> ModelContainer = CoreModel.makeContainer
+    ) throws -> (ModelContainer, Bool) {
+        do {
+            return (try opener(useInMemory), false)
+        } catch {
+            Logger(subsystem: "app.healthloom", category: "store").fault(
+                "On-disk store failed to open (\(String(describing: error), privacy: .public)) — continuing EPHEMERAL; data will not persist. Restart the app."
+            )
+            return (try opener(true), true)
+        }
+    }
     let tipStore: TipStore
     let healthKitAuth: HealthKitAuth
     let googleAuthManager: GoogleAuthManager
@@ -178,18 +205,18 @@ final class AppEnvironment {
         }
 
         let container: ModelContainer
+        let ephemeral: Bool
         do {
-            container = try CoreModel.makeContainer(inMemory: launchConfiguration.useInMemoryContainer)
+            (container, ephemeral) = try Self.openModelContainer(
+                useInMemory: launchConfiguration.useInMemoryContainer
+            )
         } catch {
-            // Defensive fallback, not specified by WP-10: a broken on-disk
-            // store shouldn't hard-crash launch when an in-memory container
-            // can still let onboarding/dashboard render (with data that
-            // won't persist across relaunch) -- surfaces the failure via a
-            // fallback rather than silently swallowing it.
-            container = (try? CoreModel.makeContainer(inMemory: true))
-                ?? { fatalError("CoreModel.makeContainer failed even in-memory: \(error)") }()
+            // Total failure (even memory will not open): nothing can
+            // run at all — trap loudly, never limp along storeless.
+            fatalError("CoreModel.makeContainer failed even in-memory: \(error)")
         }
         self.modelContainer = container
+        self.isStoreEphemeral = ephemeral
         // iCloud sync (private DB: settings, insight prefs, coach turns).
         // Live CloudKit adapter; hermetic stub injected in tests. Launch
         // auto-sync is gated on `!isUITest` at the call site

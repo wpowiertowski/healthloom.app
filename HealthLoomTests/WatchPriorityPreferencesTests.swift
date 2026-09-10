@@ -42,6 +42,22 @@ struct WatchPriorityPreferencesTests {
         #expect(!WatchPriorityPreferences(defaults: defaults).isEnabled)
     }
 
+    @Test func reloadSeesExternalChanges() async throws {
+        // Round-6 item 10: the cloud pull writes through the ENGINE's
+        // instances — this screen's copy must re-read, or the toggle
+        // stays stale and writes back over the pulled value.
+        let ephemeralR = try makeDefaults()
+        let defaults = ephemeralR.defaults
+        let preferences = WatchPriorityPreferences(defaults: defaults)
+        #expect(preferences.isEnabled) // unset means ON (D13.5)
+        // External change behind its back (the engine's pull path
+        // writes the key directly, as `applySettings` does).
+        defaults.set(false, forKey: UserDefaultsWatchPriorityPreference.defaultsKey)
+        #expect(preferences.isEnabled) // stale until reloaded
+        preferences.reload()
+        #expect(!preferences.isEnabled)
+    }
+
     @Test func turningBackOnPersists() async throws {
         let ephemeral3 = try makeDefaults()
         let defaults = ephemeral3.defaults

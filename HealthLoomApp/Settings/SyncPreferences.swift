@@ -145,6 +145,17 @@ final class SyncPreferences {
         Set(enabledTypes.map(\.scope))
     }
 
+    /// The manual-Sync-Now type list (round-6 item 9): every SYNCABLE
+    /// type (not just the P0 four — an enabled non-P0 row must update
+    /// on demand, not only on background wake), minus disabled. Reads
+    /// live defaults (fresh instance per call, mirroring DashboardView's
+    /// established pattern). Tested directly; the View calls this one
+    /// line.
+    static func manualSyncTypes() -> [GoogleDataType] {
+        let prefs = SyncPreferences()
+        return prefs.filteredForSync(syncableTypes)
+    }
+
     // MARK: - Persistence
 
     private func persist() {

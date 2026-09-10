@@ -23,13 +23,17 @@ enum InsightNotificationContent {
         var body: String
     }
 
-    /// Replaces every numeric token (commas stripped first, so "8,240" is
-    /// one token, not two) with a bullet. Decimals survive as one token.
+    /// Replaces every numeric token with a bullet. A comma joins the
+    /// token ONLY between digits ("8,240" redacts as one bullet; a
+    /// prose comma after a bare number — "down 4, rest well" —
+    /// survives, since the comma isn't followed by a digit).
+    /// Round-6 item 15: the old strip-all-commas-first mangled
+    /// lock-screen copy ("Good morning, it's time" lost its comma).
+    /// Decimals survive as one token.
     static func redacted(_ text: String) -> String {
-        let stripped = text.replacingOccurrences(of: ",", with: "")
-        guard let regex = try? NSRegularExpression(pattern: #"[0-9]+(?:\.[0-9]+)?"#) else { return text }
-        let range = NSRange(stripped.startIndex..., in: stripped)
-        return regex.stringByReplacingMatches(in: stripped, range: range, withTemplate: "•")
+        guard let regex = try? NSRegularExpression(pattern: #"[0-9]+(?:,[0-9]+)*(?:\.[0-9]+)?"#) else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "•")
     }
 
     static func make(headline: String, suggestions: [String], fullText: Bool) -> Built {

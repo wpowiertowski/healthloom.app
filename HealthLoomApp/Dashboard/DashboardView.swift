@@ -86,6 +86,7 @@ struct DashboardView: View {
                 )
                 .disabled(isSyncing)
             } content: {
+                ephemeralStoreWarning
                 freshnessHeader
                     .padding(.top, 18)
 
@@ -135,19 +136,28 @@ struct DashboardView: View {
         )
     }
 
+    /// Loud ephemeral-store banner (round-6 item 3): when the on-disk
+    /// store failed to open, the session runs on a throwaway memory
+    /// store — say so up front instead of reporting success while
+    /// discarding everything at relaunch.
+    @ViewBuilder
+    private var ephemeralStoreWarning: some View {
+        if appEnvironment.isStoreEphemeral {
+            ThemedCallout(
+                title: "Temporary data mode",
+                message: "HealthLoom couldn't open its saved data. Everything works, but nothing will persist until you restart the app.",
+                accessibilityIdentifier: "dashboard.ephemeralStoreWarning"
+            )
+        }
+    }
+
     private func syncNow() {
         isSyncing = true
-        // WP-17: consult `SyncPreferences` before calling `syncAll` so a
-        // type the user disabled in Settings is excluded from this manual
-        // sync path -- disabling stops future syncing but does not delete
-        // anything already written (WP-35's wipe flow, out of scope here).
-        // A fresh `SyncPreferences()` is constructed here (not held in
-        // `@State`) specifically so it always reflects whatever was most
-        // recently written in `SettingsView`, even though that screen holds
-        // its own separate instance -- see `SyncPreferences.swift`'s header
-        // note, which also flags this as the pattern WP-16's background
-        // handler should mirror for its own due-types list.
-        let typesToSync = SyncPreferences().filteredForSync(AppEnvironment.p0Types)
+        // Round-6 item 9: every syncable type (not just P0) minus
+        // disabled — an enabled non-P0 row updates on demand, not only
+        // on background wake. (Disabling stops future syncing but does
+        // not delete anything already written — WP-35's wipe flow.)
+        let typesToSync = SyncPreferences.manualSyncTypes()
         Task {
             _ = await appEnvironment.syncEngine.syncAll(types: typesToSync)
             isSyncing = false

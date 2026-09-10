@@ -37,6 +37,7 @@ actor StubCloudDatabase: CloudDatabase {
     var fetchErrors: [String: CloudSyncError] = [:]
     var saveError: CloudSyncError?
     var queryError: CloudSyncError?
+    func setTurnPageSize(_ size: Int?) { turnPageSize = size }
 
     func setAccount(_ state: CloudAccountState) { account = state }
     func setSaveError(_ error: CloudSyncError?) { saveError = error }
@@ -101,9 +102,37 @@ actor StubCloudDatabase: CloudDatabase {
         return record
     }
 
-    func allTurnRecords() async throws(CloudSyncError) -> [CKRecord] {
+    /// Page size for `turnPage` (round-6 item 4): `nil` (default) = one
+    /// page, preserving every pre-existing test's shape; set to N to
+    /// model a multi-page server.
+    var turnPageSize: Int?
+    private(set) var deletedRecordNames: [String] = []
+
+    func turnPage(cursor: Data?) async throws(CloudSyncError) -> CloudTurnPage {
         if let error = queryError { throw error }
-        return records.values.filter { $0.recordType == CloudRecordType.coachTurn }
+        let turns = records.values
+            .filter { $0.recordType == CloudRecordType.coachTurn }
+            .sorted { $0.recordID.recordName < $1.recordID.recordName }
+        guard let pageSize = turnPageSize else {
+            return CloudTurnPage(records: turns, nextCursor: nil)
+        }
+        // Opaque cursor, integer-indexed (see the protocol: Live
+        // archives the real CKQueryCursor; both are just "next page
+        // please" tokens to the engine's loop).
+        let index: Int
+        if let cursor, let text = String(data: cursor, encoding: .utf8), let parsed = Int(text) {
+            index = parsed
+        } else {
+            index = 0
+        }
+        let slice = Array(turns.dropFirst(index).prefix(pageSize))
+        let next = index + slice.count < turns.count ? String(index + slice.count).data(using: .utf8) : nil
+        return CloudTurnPage(records: slice, nextCursor: next)
+    }
+
+    func deleteRecord(recordName: String) async throws(CloudSyncError) -> Void {
+        records.removeValue(forKey: recordName)
+        deletedRecordNames.append(recordName)
     }
 
     func saved(ofType recordType: String) -> [CKRecord] {
@@ -138,6 +167,15 @@ struct CloudSyncHarness {
         let container = try CoreModel.makeContainer(inMemory: true)
         let ephemeral = try EphemeralDefaults(prefix: "cloudsync")
         return CloudSyncHarness(container: container, db: StubCloudDatabase(), ephemeral: ephemeral)
+    }
+
+    /// Fresh local store against a SHARED server (round-6 items 1+4):
+    /// simulates a wiped device (or a second device) pulling the same
+    /// private DB — local rows gone, server rows intact.
+    static func makeFreshContainerHarness(db: StubCloudDatabase, now: Date) throws -> CloudSyncHarness {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let ephemeral = try EphemeralDefaults(prefix: "cloudsync")
+        return CloudSyncHarness(container: container, db: db, now: now, ephemeral: ephemeral)
     }
 
     func engine() -> CloudSyncEngine {
@@ -455,6 +493,96 @@ struct CloudSyncTests {
         await harness.engine().syncNow()
         #expect(try harness.localTurnCount() == 600)
         #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 500)
+    }
+
+    @Test("multi-page server turns are all pulled")
+    func pagedServerTurnsAllPulled() async throws {
+        // Round-6 item 4: the stub models a 2-per-page server; the
+        // engine must follow the cursor until nil (5 turns, 3 pages).
+        // Pre-fix only the first page arrived.
+        let harness = try CloudSyncHarness.make()
+        await harness.db.setTurnPageSize(2)
+        let base = harness.now.addingTimeInterval(-5000)
+        for i in 0..<5 {
+            try harness.seedTurn(content: "server \(i)", at: base.addingTimeInterval(Double(i) * 60))
+        }
+        // Push them server-side first (clean slate locally after).
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 5)
+        // Fresh local store, same server: pull must recover all 5.
+        let fresh = try CloudSyncHarness.makeFreshContainerHarness(db: harness.db, now: harness.now)
+        await fresh.engine().syncNow()
+        #expect(try fresh.localTurnCount() == 5)
+    }
+
+    @Test("second sync inserts zero duplicates past the push window")
+    func pullDedupesAgainstFullLocalSet() async throws {
+        // Round-6 item 5: 600 turns, sync (pushes newest 500), 600 more
+        // arrive, sync again — the pull dedupe must cover ALL local
+        // rows, not the newest 500, or the 500 older server turns
+        // re-insert every run (600 → 1700 here, pre-fix).
+        let harness = try CloudSyncHarness.make()
+        let base = harness.now.addingTimeInterval(-100_000)
+        let context = ModelContext(harness.container)
+        for i in 0..<600 {
+            context.insert(ChatTurn(role: "user", content: "first \(i)", createdAt: base.addingTimeInterval(Double(i))))
+        }
+        try context.save()
+        await harness.engine().syncNow()
+        let context2 = ModelContext(harness.container)
+        for i in 0..<600 {
+            context2.insert(ChatTurn(role: "user", content: "second \(i)", createdAt: base.addingTimeInterval(60_000 + Double(i))))
+        }
+        try context2.save()
+        #expect(try harness.localTurnCount() == 1200)
+        await harness.engine().syncNow()
+        #expect(try harness.localTurnCount() == 1200)
+    }
+
+    @Test("toggle after launch is visible to the next push")
+    func toggleThenSyncNowPushes() async throws {
+        // Round-6 item 6: the engine's owner mirrors are built at init
+        // but Settings writes through its own instances — the engine
+        // must re-read live before pushing. Seed a server record
+        // matching the stale (empty) state, toggle through a SEPARATE
+        // instance (the Settings shape), sync with the SAME engine:
+        // pre-fix the push never fires (stale mirror reads equal).
+        let harness = try CloudSyncHarness.make()
+        let old = SyncSettingsSnapshot(
+            disabledTypeRawValues: [],
+            preferAppleWatch: false,
+            updatedAt: harness.now.addingTimeInterval(-1000)
+        )
+        await harness.db.seedRecord(try CloudRecordBuilder.record(for: old))
+        let engine = harness.engine()
+        await engine.syncNow() // primes watermarks; engine mirror still empty-disabled
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
+        await engine.syncNow()
+        let saved = await harness.db.saved(ofType: CloudRecordType.settings)
+        #expect(saved.count == 1)
+        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
+    }
+
+    @Test("wipe deletes server records; post-wipe sync pulls nothing back")
+    func wipeDeletesCloudData() async throws {
+        // Round-6 item 1: the alert promises "cannot be undone" —
+        // server records go, then watermarks, so the next sync finds
+        // nothing to repull (pre-fix the wiped transcript came back).
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "doomed", at: harness.now)
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 1)
+        let engine = harness.engine()
+        let deleted = try await engine.deleteAllCloudData()
+        #expect(deleted == 3) // settings + prefs + 1 turn
+        #expect(await harness.db.records.isEmpty)
+        // Post-wipe sync: nothing pulled back, local stays as wiped.
+        await engine.syncNow()
+        #expect(try harness.localTurnCount() == 1) // the local row itself is the store step's job
+        // The surviving local row re-pushes (correct — the store step,
+        // not the engine, deletes local rows); nothing is repulled.
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 2)
     }
 
     @Test("missing scan root fails loudly, not green")

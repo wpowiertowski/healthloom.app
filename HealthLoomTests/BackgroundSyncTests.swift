@@ -133,4 +133,19 @@ struct BackgroundSyncToggleTests {
         // …and the outcome list covers only the enabled type.
         #expect(outcomes.map(\.dataType) == [.heartRate])
     }
+
+    @Test("cancelled background outcomes complete successfully")
+    func cancelledIsSuccess() {
+        // Round-6 item 7: an expiration-cancelled sync is a STOP, not
+        // a failure — reporting failure throttles future wakes.
+        func outcome(_ status: SyncStatus) -> SyncOutcome {
+            SyncOutcome(dataType: .steps, status: status, itemCount: 0, suppressedCount: 0)
+        }
+        #expect(HealthLoomBackgroundSync.backgroundTaskSucceeded([]))
+        #expect(HealthLoomBackgroundSync.backgroundTaskSucceeded([outcome(.ok)]))
+        #expect(HealthLoomBackgroundSync.backgroundTaskSucceeded([outcome(.cancelled)]))
+        #expect(HealthLoomBackgroundSync.backgroundTaskSucceeded([outcome(.ok), outcome(.cancelled)]))
+        #expect(!HealthLoomBackgroundSync.backgroundTaskSucceeded([outcome(.error)]))
+        #expect(!HealthLoomBackgroundSync.backgroundTaskSucceeded([outcome(.ok), outcome(.error)]))
+    }
 }
