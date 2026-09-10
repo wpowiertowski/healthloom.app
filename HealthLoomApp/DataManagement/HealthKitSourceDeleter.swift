@@ -53,6 +53,33 @@ struct HealthKitSourceDeleter {
         return outcomes
     }
 
+    /// Production wipe path (round-4-sync item 9): server-side
+    /// delete-by-source via `HealthKitWriter` — the store applies its
+    /// source predicate itself (`HKSource.default()`), so the wipe never
+    /// fetches unbounded multi-year sample lists into memory (jetsam)
+    /// and never half-deletes ledger-less: per-type outcomes are
+    /// preserved for the ledger rows, one denied/unavailable type still
+    /// can't strand the rest. The seam-based `deleteAppWritten` above
+    /// stays as the tested policy core; production enters here.
+    static func deleteAppWrittenLive(
+        types: [HKObjectType],
+        writer: HealthKitWriter,
+        onProgress: (HKObjectType, Int) -> Void = { _, _ in }
+    ) async -> [HKObjectType: Result<Int, Error>] {
+        var outcomes: [HKObjectType: Result<Int, Error>] = [:]
+        for type in types {
+            do {
+                let report = try await writer.deleteAllAppData(types: [type])
+                let count = report.deletedCounts[type.identifier] ?? 0
+                onProgress(type, count)
+                outcomes[type] = .success(count)
+            } catch {
+                outcomes[type] = .failure(error)
+            }
+        }
+        return outcomes
+    }
+
     /// Production seams over one store. Bundle ownership is decided per
     /// call (`ownBundleID`), not per deleter — the same instance serves
     /// tests and production with different identities.

@@ -44,18 +44,12 @@
 // batched existence-diff/save/upsert primitives (WP-08) -- but drives them
 // itself, keyed on `backfillCursor` and an explicit chunk window it computes
 // per call, rather than going through `SyncEngine`'s cursor-anchored
-// `performSync`. `pullMapWrite`/`processPage` below are therefore a
-// deliberate, small, parallel implementation of the same pull -> map ->
-// conflict-filter -> existence-diff -> write/upsert shape
-// `SyncEngine.performSync`/`.processPage` already implements -- not
-// duplicated out of laziness, but because the two cursors' semantics
-// (forward high-water-mark + lookback vs. backward chunk-walk +
-// checkpoint) are genuinely different enough that sharing one method
-// between them would need to parameterize away most of what makes each one
-// correct. See progress.md's WP-15 entry for the full writeup and the one
-// additive change this WP *did* make to `SyncEngine.swift` (`isBusy(for:)`,
-// needed for step 2's suspend-during-incremental-sync rule, kept to a single
-// method with no other restructuring).
+// `performSync` (the two cursors' semantics — forward high-water-mark +
+// lookback vs. backward chunk-walk + checkpoint — are genuinely different;
+// see progress.md's WP-15 entry). The per-PAGE core, however, is shared:
+// `pullMapWrite` below drives the single `PagePipeline.processPage`
+// (round-4-sync item 15) both engines use — the old parallel copy is
+// gone, so the page arms can never drift apart again.
 //
 // Guarded `#if canImport(HealthKit)`, identically to `SyncEngine.swift`
 // (needs `HKObject`/`HKSampleType` and `HealthKitWriter` itself).
@@ -89,6 +83,22 @@ public actor BackfillCoordinator {
     private let clock: any SyncClock
     private let sleeper: any BackoffSleeper
     private let conflictFilter: any ConflictFiltering
+    /// Round-4-sync item 5: same injectable resolver as `SyncEngine` —
+    /// a resolution failure throws into `runNextChunk`'s catch (error
+    /// row + `.failed`, zero writes), never `try?`'d into silent green.
+    private let sampleTypeResolver: @Sendable @MainActor (String) throws(UnresolvedHealthKitIdentifier) -> HKSampleType
+    /// Types currently disabled in Settings, consulted per chunk
+    /// (round-4-sync item 4): a closure over live `UserDefaults.standard`
+    /// — never snapshotted — so a mid-walk toggle takes effect on the
+    /// next chunk without rebuilding the coordinator. `runNextChunk`
+    /// reports `.suspendedDisabled` (never pulls/writes) for these.
+    private let disabledTypes: @Sendable @MainActor () -> Set<GoogleDataType>
+    /// Persistence for the already-caught-up branch, injected so tests
+    /// can simulate a save failure there (round-4-sync item 10): a real
+    /// `ModelContext.save()` against a healthy store does not observably
+    /// throw, so without this the failure arm is untestable — which is
+    /// exactly how it shipped returning `.alreadyDone`.
+    private let persistCompletionState: @Sendable (ModelContext) throws -> Void
     private let horizonStore: any BackfillHorizonRecordStore
     private let busyProbe: any BackfillBusyProbe
     private let configuration: BackfillConfiguration
@@ -114,6 +124,9 @@ public actor BackfillCoordinator {
         clock: any SyncClock = SystemSyncClock(),
         sleeper: any BackoffSleeper = SystemSleeper(),
         conflictFilter: any ConflictFiltering = IdentityConflictFilter(),
+        persistCompletionState: @escaping @Sendable (ModelContext) throws -> Void = { try $0.save() },
+        disabledTypes: @escaping @Sendable @MainActor () -> Set<GoogleDataType> = { [] },
+        sampleTypeResolver: @escaping @Sendable @MainActor (String) throws(UnresolvedHealthKitIdentifier) -> HKSampleType = HealthKitObjectTypeResolver.sampleType,
         horizonStore: any BackfillHorizonRecordStore = UserDefaultsBackfillHorizonRecordStore(),
         busyProbe: any BackfillBusyProbe = AlwaysAvailableBusyProbe(),
         configuration: BackfillConfiguration = BackfillConfiguration(),
@@ -126,6 +139,9 @@ public actor BackfillCoordinator {
         self.clock = clock
         self.sleeper = sleeper
         self.conflictFilter = conflictFilter
+        self.disabledTypes = disabledTypes
+        self.persistCompletionState = persistCompletionState
+        self.sampleTypeResolver = sampleTypeResolver
         self.horizonStore = horizonStore
         self.busyProbe = busyProbe
         self.configuration = configuration
@@ -288,6 +304,10 @@ public actor BackfillCoordinator {
     /// `runRound`) so tests can drive/assert individual types deterministically.
     @discardableResult
     public func runNextChunk(for type: GoogleDataType) async -> BackfillChunkOutcome {
+        // Round-4-sync item 4: stable user intent dominates transient
+        // state — a disabled type is never pulled or written on ANY
+        // path through this choke point (loop, round, or direct call).
+        if await disabledTypes().contains(type) { return .suspendedDisabled }
         if isPaused { return .suspendedPaused }
         if await busyProbe.isBusy(for: type) { return .suspendedBusy }
 
@@ -331,14 +351,24 @@ public actor BackfillCoordinator {
             // the save, like the chunk path below.
             syncState.backfillCursor = nil
             do {
-                try context.save()
+                try persistCompletionState(context)
             } catch {
-                // Persistence failed: record nothing. The cursor is still
-                // set on disk, so the next round recomputes this same
-                // branch and retries -- while an unconditional record above
-                // would leave the side store claiming "complete" against a
-                // cursor that disagrees, re-entering this branch forever.
-                return .alreadyDone
+                // Round-4-sync item 10: a failed completion save is a
+                // FAILURE, not a completion — returning `.alreadyDone`
+                // here hot-looped the failing save every round with the
+                // status screen showing healthy in-progress. Mirror the
+                // chunk catch: roll back, surface via the error row
+                // (best-effort — the store just refused a write), and
+                // report `.failed` so the loop no longer spins silently.
+                // The cursor is untouched on disk, so the next round
+                // retries this same branch.
+                context.rollback()
+                let syncState = fetchOrCreateSyncState(for: type, context: context)
+                let message = SyncLogRedactor.redact(String(describing: error))
+                syncState.backfillStatus = SyncStatus.error.rawValue
+                syncState.backfillError = message
+                try? context.save()
+                return .failed(message)
             }
             horizonStore.setCompletedHorizon(horizon, for: type)
             return .alreadyDone
@@ -421,13 +451,12 @@ public actor BackfillCoordinator {
 
     // MARK: - Pull -> map -> conflict-filter -> write/upsert (one chunk window)
 
-    /// Parallels `SyncEngine`'s own pull/map/write pipeline
-    /// (`performSync`/`processPage`, SyncEngine.swift) -- see this file's
-    /// header for why this is a standalone implementation rather than a
-    /// shared call. Applies the same D4 batched-existence-diff invariant
-    /// (one query per (type, chunk window), computed once, threaded through
-    /// every page of this chunk) and the same `.workout`/`.correlation`/
-    /// `.localOnly`/`.skip` routing `SyncEngine.processPage` uses.
+    /// Chunk-window driver over the SHARED page pipeline
+    /// (`PagePipeline.processPage` — the same implementation
+    /// `SyncEngine.performSync` uses). Applies the D4
+    /// batched-existence-diff invariant (one query per (type, chunk
+    /// window), computed once, threaded through every page of this
+    /// chunk); only the window/cursor semantics are backfill's own.
     private func pullMapWrite(
         type: GoogleDataType,
         start: Date,
@@ -440,7 +469,7 @@ public actor BackfillCoordinator {
         let writability = await type.writability
         var hkSampleType: HKSampleType?
         if case .healthKit(let identifier) = writability {
-            hkSampleType = try? await HealthKitObjectTypeResolver.sampleType(for: identifier)
+            hkSampleType = try await sampleTypeResolver(identifier)
         }
 
         // WP-12b: refresh the conflict filter's coverage cache + retroactive
@@ -459,7 +488,14 @@ public actor BackfillCoordinator {
         var pageToken: String?
         repeat {
             let page = try await client.reconcile(type: type, since: start, until: end, pageToken: pageToken)
-            totalItemCount += try await processPage(page.points, knownExternalIDs: &knownExternalIDs, context: context)
+            // Round-4-sync item 15: the shared page pipeline (see
+            // PagePipeline.swift); `.localOnly` upserts stay here.
+            let processed = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
+                .processPage(page.points, knownExternalIDs: &knownExternalIDs)
+            for point in processed.localOnlyPoints {
+                PagePipeline.upsertLocalSample(for: point, context: context)
+            }
+            totalItemCount += processed.itemCount
             pageToken = page.nextPageToken
         } while pageToken != nil
 
@@ -469,82 +505,10 @@ public actor BackfillCoordinator {
         // drained purely to reset the filter's per-run state -- backfill has
         // no per-chunk log row to surface it in (`BackfillTypeStatus` tracks
         // cursor progress, not per-run counts).
-        applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+        PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
         _ = await conflictFilter.drainSuppressedCount(for: type)
 
         return totalItemCount
-    }
-
-    /// WP-12b -- identical shape/semantics to `SyncEngine.applyDeferredSessionLinks`
-    /// (SyncEngine.swift); see that method's doc comment.
-    private func applyDeferredSessionLinks(_ links: [String: UUID], context: ModelContext) {
-        guard !links.isEmpty else { return }
-        for (externalID, workoutUUID) in links {
-            let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
-            if let sample = try? context.fetch(descriptor).first {
-                sample.linkedWatchWorkoutUUID = workoutUUID
-            }
-        }
-    }
-
-    private func processPage(
-        _ points: [GoogleDataPoint],
-        knownExternalIDs: inout Set<String>,
-        context: ModelContext
-    ) async throws -> Int {
-        var batch: [HKObject] = []
-        var newExternalIDs: [String] = []
-        var localOnlyPoints: [GoogleDataPoint] = []
-        var skipCount = 0
-        var workoutCount = 0
-
-        for point in points {
-            let mapped = await conflictFilter.resolve(await TypeMapper.map(point), for: point)
-            switch mapped {
-            case .quantity(let sample):
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(sample)
-                newExternalIDs.append(point.id)
-            case .quantities(let samples):
-                // WP-12b: a cumulative sample split at watch-coverage edges
-                // -- see `SyncEngine.processPage`'s identical arm.
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(contentsOf: samples)
-                newExternalIDs.append(point.id)
-            case .category(let samples):
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(contentsOf: samples)
-                newExternalIDs.append(point.id)
-            case .correlation(let correlation):
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                batch.append(correlation)
-                newExternalIDs.append(point.id)
-            case .workout(let workout):
-                // WP-12b: wired for real, mirroring `SyncEngine.processPage`'s
-                // own `.workout` arm exactly -- see that arm's comment for
-                // the dedupe/immediate-save rationale. Anything reaching
-                // here already passed D13's conflict resolution above.
-                guard !knownExternalIDs.contains(point.id) else { continue }
-                _ = try await writer.saveWorkout(workout)
-                knownExternalIDs.insert(point.id)
-                workoutCount += 1
-            case .localOnly:
-                localOnlyPoints.append(point)
-            case .skip:
-                skipCount += 1
-            }
-        }
-
-        if !batch.isEmpty {
-            try await writer.save(batch)
-            knownExternalIDs.formUnion(newExternalIDs)
-        }
-
-        for point in localOnlyPoints {
-            upsertLocalSample(for: point, context: context)
-        }
-
-        return newExternalIDs.count + workoutCount + localOnlyPoints.count + skipCount
     }
 
     // MARK: - SwiftData bookkeeping (mirrors SyncEngine.swift's own helpers)
@@ -563,66 +527,6 @@ public actor BackfillCoordinator {
         context.insert(created)
         return created
     }
-
-    /// Identical shape/semantics to `SyncEngine.upsertLocalSample` -- fetch
-    /// first, mutate in place, never blind-reinsert, so
-    /// `linkedWatchWorkoutUUID` (set later by WP-12b's `ConflictResolver`)
-    /// is never clobbered back to `nil` by a backfill chunk re-touching a
-    /// point a foreground sync already upserted, or vice versa.
-    private func upsertLocalSample(for point: GoogleDataPoint, context: ModelContext) {
-        let externalID = point.id
-        let payload = BackfillLocalPayload(point: point)
-        let payloadJSON = (try? JSONEncoder().encode(payload)) ?? Data()
-        let sourceLabel = point.source.deviceDisplayName ?? point.source.platform ?? "unknown"
-        let dataTypeKey = point.dataType.rawValue
-
-        let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
-        if let existing = try? context.fetch(descriptor).first {
-            existing.dataType = dataTypeKey
-            existing.payloadJSON = payloadJSON
-            existing.start = point.start
-            existing.end = point.end
-            existing.source = sourceLabel
-        } else {
-            context.insert(
-                LocalSample(
-                    externalID: externalID,
-                    dataType: dataTypeKey,
-                    payloadJSON: payloadJSON,
-                    start: point.start,
-                    end: point.end,
-                    source: sourceLabel
-                )
-            )
-        }
-    }
 }
 
-/// Same minimal, self-contained shape as `SyncEngine`'s own
-/// `SyncEngineLocalPayload` (SyncEngine.swift) -- deliberately not shared
-/// (that type is `private` to its own file, and WP-14 owns the real
-/// per-type payload schema regardless, per that file's own doc comment).
-nonisolated private struct BackfillLocalPayload: Codable {
-    var id: String
-    var dataType: String
-    var start: Date
-    var end: Date
-    var values: [String: Double]
-    var sessionPayload: Data?
-    var sourcePlatform: String?
-    var sourceDeviceDisplayName: String?
-    var sourceRecordingMethod: String?
-
-    init(point: GoogleDataPoint) {
-        self.id = point.id
-        self.dataType = point.dataType.rawValue
-        self.start = point.start
-        self.end = point.end
-        self.values = point.values
-        self.sessionPayload = point.sessionPayload
-        self.sourcePlatform = point.source.platform
-        self.sourceDeviceDisplayName = point.source.deviceDisplayName
-        self.sourceRecordingMethod = point.source.recordingMethod
-    }
-}
 #endif

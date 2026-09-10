@@ -451,6 +451,28 @@ struct MorningInsightRunnerTests {
         #expect(try context.fetch(FetchDescriptor<DerivedInsight>()).count == 1)
     }
 
+    @Test("dedupe day-boundary honors the injected calendar") func dedupeCalendar() throws {
+        // Round-4-sync item 11: Sep-07 23:30Z vs Sep-08 01:00Z straddle
+        // a UTC midnight inside one Kiritimati (+14, DST-free) day —
+        // same-day under +14, different-day under UTC. Both calendars
+        // are explicit, so this holds on ANY host whatever its own time
+        // zone: the INJECTED calendar decides, never ambient
+        // `Calendar.current`. Pre-fix `persist` hardcoded `.current`,
+        // so this pair duplicated on UTC hosts (and agreed everywhere
+        // else by luck of geography, not by contract).
+        var plus14 = Calendar(identifier: .gregorian)
+        plus14.timeZone = try #require(TimeZone(identifier: "Pacific/Kiritimati"))
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try #require(TimeZone(identifier: "Etc/UTC"))
+        func at(day: Int, hour: Int, minute: Int) throws -> Date {
+            try #require(utc.date(from: DateComponents(year: 2026, month: 9, day: day, hour: hour, minute: minute)))
+        }
+        let a = try at(day: 7, hour: 23, minute: 30)
+        let b = try at(day: 8, hour: 1, minute: 0)
+        #expect(MorningInsightRunner.isSameInsightDay(a, b, calendar: plus14))
+        #expect(!MorningInsightRunner.isSameInsightDay(a, b, calendar: utc))
+    }
+
     @Test("generation failure records nothing") func failure() async throws {
         let container = try CoreModel.makeContainer(inMemory: true)
         try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))

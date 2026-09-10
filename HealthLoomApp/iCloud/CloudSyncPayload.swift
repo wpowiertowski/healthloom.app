@@ -125,23 +125,20 @@ nonisolated enum CloudSyncError: Error, Equatable, Sendable {
 /// `Int64` (0/1): `CKRecordValue` has no Bool, and `NSNumber(boolean:)`
 /// vs `numberWithLongLong` round-trip ambiguity has bitten before.
 nonisolated enum CloudRecordBuilder {
-    static func record(for settings: SyncSettingsSnapshot) throws(CloudSyncError) -> CKRecord {
-        let id = CKRecord.ID(recordName: CloudRecordType.settingsRecordName)
-        let record = CKRecord(recordType: CloudRecordType.settings, recordID: id)
-        let fields: [String: CKRecordValue] = [
+    /// Field dicts, factored once (round-4-sync item 2): `record(for:)`
+    /// and `update(_:with:)` apply the IDENTICAL validated dicts, so a
+    /// mutated fetch can never drift from a fresh build (the
+    /// per-builder `validatedFields` proof covers both paths).
+    static func settingsFields(_ settings: SyncSettingsSnapshot) -> [String: CKRecordValue] {
+        [
             "v": CloudSchema.version as CKRecordValue,
             "disabledTypes": settings.disabledTypeRawValues as CKRecordValue,
             "preferWatch": (settings.preferAppleWatch ? 1 : 0) as CKRecordValue,
             "updatedAt": settings.updatedAt as CKRecordValue,
         ]
-        try CloudRecordFields.validatedFields(fields, for: CloudRecordType.settings)
-        for (key, value) in fields { record[key] = value }
-        return record
     }
 
-    static func record(for prefs: InsightPrefsSnapshot) throws(CloudSyncError) -> CKRecord {
-        let id = CKRecord.ID(recordName: CloudRecordType.insightPrefsRecordName)
-        let record = CKRecord(recordType: CloudRecordType.insightPrefs, recordID: id)
+    static func prefsFields(_ prefs: InsightPrefsSnapshot) -> [String: CKRecordValue] {
         var fields: [String: CKRecordValue] = [
             "v": CloudSchema.version as CKRecordValue,
             "enabled": (prefs.morningInsightsEnabled ? 1 : 0) as CKRecordValue,
@@ -152,9 +149,48 @@ nonisolated enum CloudRecordBuilder {
         if let lastRun = prefs.lastRun {
             fields["lastRun"] = lastRun as CKRecordValue
         }
+        return fields
+    }
+
+    static func record(for settings: SyncSettingsSnapshot) throws(CloudSyncError) -> CKRecord {
+        let id = CKRecord.ID(recordName: CloudRecordType.settingsRecordName)
+        let record = CKRecord(recordType: CloudRecordType.settings, recordID: id)
+        let fields = settingsFields(settings)
+        try CloudRecordFields.validatedFields(fields, for: CloudRecordType.settings)
+        for (key, value) in fields { record[key] = value }
+        return record
+    }
+
+    /// Mutates a FETCHED record in place (round-4-sync item 2): the
+    /// push path calls this on the record `fetchRecord` returned —
+    /// carrying the server change token — instead of saving a fresh
+    /// tagless build over it. Same validated dict as `record(for:)`.
+    static func update(_ record: CKRecord, with settings: SyncSettingsSnapshot) throws(CloudSyncError) {
+        let fields = settingsFields(settings)
+        try CloudRecordFields.validatedFields(fields, for: CloudRecordType.settings)
+        for (key, value) in fields { record[key] = value }
+    }
+
+    static func record(for prefs: InsightPrefsSnapshot) throws(CloudSyncError) -> CKRecord {
+        let id = CKRecord.ID(recordName: CloudRecordType.insightPrefsRecordName)
+        let record = CKRecord(recordType: CloudRecordType.insightPrefs, recordID: id)
+        let fields = prefsFields(prefs)
         try CloudRecordFields.validatedFields(fields, for: CloudRecordType.insightPrefs)
         for (key, value) in fields { record[key] = value }
         return record
+    }
+
+    /// Mutates a FETCHED prefs record in place — see `update(_:with:)`
+    /// above. A nil `lastRun` REMOVES a previously-written key, so the
+    /// mutated record is exactly what a fresh build would produce
+    /// (decode treats absence as nil — no stale value can survive).
+    static func update(_ record: CKRecord, with prefs: InsightPrefsSnapshot) throws(CloudSyncError) {
+        let fields = prefsFields(prefs)
+        try CloudRecordFields.validatedFields(fields, for: CloudRecordType.insightPrefs)
+        for (key, value) in fields { record[key] = value }
+        if prefs.lastRun == nil {
+            record["lastRun"] = nil
+        }
     }
 
     static func record(for turn: CoachTurnSnapshot) throws(CloudSyncError) -> CKRecord {

@@ -88,6 +88,30 @@ struct ReadinessScoreHistoryTests {
         }
         #expect(history.recentScores(today: day(0)).count == 30)
     }
+
+    @Test func dayKeysAreGregorianPOSIXRegardlessOfHost() throws {
+        // Round-4-sync item 13: the key for a known instant must be the
+        // Gregorian `yyyy-MM-dd` — never a Buddhist `2569-…` or
+        // Japanese-era key. The reference is computed with an
+        // explicitly-constructed Gregorian/POSIX formatter IN THE TEST,
+        // so the comparison holds on any host: pre-fix this fails on a
+        // non-Gregorian host (verify by running the suite under a
+        // Buddhist-calendar locale — pre-fix yields `2569-…`); post-fix
+        // the formatter's own explicit calendar/locale make host
+        // agreement a contract, not luck.
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try #require(TimeZone(identifier: "Etc/UTC"))
+        let instant = try #require(utc.date(from: DateComponents(year: 2026, month: 9, day: 8, hour: 12)))
+        // Same time-zone basis as the unit under test (the ring's day
+        // is the USER's day — system zone is correct there); the
+        // calendars/locales differ, which is the whole assertion.
+        let reference = DateFormatter()
+        reference.locale = Locale(identifier: "en_US_POSIX")
+        reference.calendar = Calendar(identifier: .gregorian)
+        reference.timeZone = .current
+        reference.dateFormat = "yyyy-MM-dd"
+        #expect(ReadinessScoreHistory.dayString(instant) == reference.string(from: instant))
+    }
 }
 
 @Suite("ReadinessInputsProvider.display")

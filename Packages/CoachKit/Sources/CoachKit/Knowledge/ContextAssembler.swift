@@ -102,6 +102,14 @@ public final class ContextAssembler {
 
     private let modelContainer: ModelContainer
 
+    /// One shared encoder (round-4-sync item 14, AGENTS.md §2's
+    /// shared-encoder rule): the three encode sites below (per-field
+    /// bytes, shell tokens, assembly) allocated a fresh `JSONEncoder`
+    /// per call on this MainActor hot path. Default configuration, so
+    /// output bytes are identical — the existing token/byte tests prove
+    /// behavior-neutrality by passing unchanged.
+    private static let encoder = JSONEncoder()
+
     public init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
@@ -116,7 +124,7 @@ public final class ContextAssembler {
     /// character heuristic only if encoding itself throws (never observed for
     /// these `Codable` value types; keeps the estimate non-throwing).
     static func encodedBytes(for field: ProfileField) -> Int {
-        if let encoded = try? JSONEncoder().encode(field) {
+        if let encoded = try? Self.encoder.encode(field) {
             return encoded.count
         }
         return field.key.count + field.displayText.count + field.source.count
@@ -164,7 +172,7 @@ public final class ContextAssembler {
             unitSystem: unitSystem,
             today: today
         )
-        if let json = try? JSONEncoder().encode(shell) {
+        if let json = try? Self.encoder.encode(shell) {
             return bytesToTokens(json.count)
         }
         return 0
@@ -361,7 +369,7 @@ public final class ContextAssembler {
             unitSystem: resolvedUnitSystem,
             today: now
         )
-        let json = try JSONEncoder().encode(healthContext)
+        let json = try Self.encoder.encode(healthContext)
         // Single commit: prune the pre-insert set first -- reserving the new
         // row's slot arithmetically (`keeping - 1`) so its own assembly can
         // never evict it, whatever `now` says -- then insert + save once. A

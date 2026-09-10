@@ -56,7 +56,18 @@ actor StubCloudDatabase: CloudDatabase {
 
     func saveRecord(_ record: CKRecord) async throws(CloudSyncError) -> CKRecord {
         if let error = saveError { throw error }
-        records[record.recordID.recordName] = record
+        let name = record.recordID.recordName
+        // Round-4-sync item 2: models CloudKit's serverRecordChanged —
+        // saving a FRESH build over an existing record fails (the fresh
+        // build carries no server change token); saving the FETCHED
+        // instance (identity match — the token carrier) succeeds.
+        // Identity, not field comparison: this is exactly what
+        // distinguishes `update(fetchRecord(), ...)` from
+        // `record(for:)` at the call site.
+        if let existing = records[name], existing !== record {
+            throw CloudSyncError.failed("server record changed: save the fetched record, not a fresh build")
+        }
+        records[name] = record
         savedRecords.append(record)
         return record
     }
@@ -272,6 +283,129 @@ struct CloudSyncTests {
         #expect(SyncPreferences(defaults: harness.defaults).isEnabled(.steps) == true)
         #expect(SyncPreferences(defaults: harness.defaults).isEnabled(.weight) == true)
         #expect(harness.defaults.bool(forKey: "com.healthloom.settings.preferAppleWatchDuringWorkouts") == false)
+    }
+
+    @Test("concurrent syncNow calls run exactly one full push/pull")
+    func concurrentSyncNowRunsOnce() async throws {
+        // Round-4-sync item 3: the second caller must observe the
+        // synchronously-claimed `.syncing` and return — one settings
+        // save total, not two. Deterministic: the spin observes the
+        // claim before the second call starts.
+        let harness = try CloudSyncHarness.make()
+        let engine = harness.engine()
+        let first = Task { await engine.syncNow() }
+        let start = Date.now
+        while engine.status != .syncing {
+            await Task.yield()
+            if Date.now.timeIntervalSince(start) > 5 {
+                Issue.record("first sync never claimed .syncing")
+                break
+            }
+        }
+        let second = Task { await engine.syncNow() }
+        await first.value
+        await second.value
+        #expect(await harness.db.saved(ofType: CloudRecordType.settings).count == 1)
+        if case .synced(_, let pending) = engine.status {
+            #expect(pending == 0)
+        } else {
+            Issue.record("expected synced status, got \(engine.status)")
+        }
+    }
+
+    @Test("push decisions own their watermarks per singleton")
+    func singletonPushDecisions() throws {
+        // Round-4-sync item 12: the pure decisions for BOTH record
+        // names — absent/malformed push, newer suppresses, equal
+        // suppresses, differing pushes — plus the cross-talk
+        // regression: a newer PREFS record must not suppress a
+        // SETTINGS push (the old shared predicate hardcoded the
+        // settings watermark while parameterized on the name).
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let seen = now.addingTimeInterval(-1000)
+        // Absent server pushes, watermark untouched.
+        var decision = CloudSyncEngine.settingsPushDecision(server: nil, snapshot: SyncSettingsSnapshot(disabledTypeRawValues: [], preferAppleWatch: false, updatedAt: now), previouslySeen: seen)
+        #expect(decision == CloudSyncEngine.SingletonPushDecision(push: true, newSeen: seen))
+        // Malformed server pushes (overwritten, never preserved).
+        let malformed = CKRecord(recordType: CloudRecordType.settings, recordID: CKRecord.ID(recordName: CloudRecordType.settingsRecordName))
+        decision = CloudSyncEngine.settingsPushDecision(server: malformed, snapshot: SyncSettingsSnapshot(disabledTypeRawValues: [], preferAppleWatch: false, updatedAt: now), previouslySeen: seen)
+        #expect(decision.push == true)
+        // Newer server suppresses and advances the watermark.
+        let newerServer = try CloudRecordBuilder.record(for: SyncSettingsSnapshot(disabledTypeRawValues: [], preferAppleWatch: false, updatedAt: now))
+        decision = CloudSyncEngine.settingsPushDecision(server: newerServer, snapshot: SyncSettingsSnapshot(disabledTypeRawValues: [], preferAppleWatch: false, updatedAt: now), previouslySeen: seen)
+        #expect(decision == CloudSyncEngine.SingletonPushDecision(push: false, newSeen: now))
+        // Equal content suppresses.
+        decision = CloudSyncEngine.settingsPushDecision(server: newerServer, snapshot: SyncSettingsSnapshot(disabledTypeRawValues: [], preferAppleWatch: false, updatedAt: now), previouslySeen: now)
+        #expect(decision.push == false)
+        // Differing content pushes.
+        decision = CloudSyncEngine.settingsPushDecision(server: newerServer, snapshot: SyncSettingsSnapshot(disabledTypeRawValues: [GoogleDataType.steps.rawValue], preferAppleWatch: false, updatedAt: now), previouslySeen: now)
+        #expect(decision.push == true)
+        // Prefs mirror: newer suppresses…
+        let newerPrefs = try CloudRecordBuilder.record(for: InsightPrefsSnapshot(morningInsightsEnabled: true, lockScreenDetails: false, insightsViaCloud: false, lastRun: nil, updatedAt: now))
+        var prefsDecision = CloudSyncEngine.prefsPushDecision(server: newerPrefs, snapshot: InsightPrefsSnapshot(morningInsightsEnabled: true, lockScreenDetails: false, insightsViaCloud: false, lastRun: nil, updatedAt: now), previouslySeen: seen)
+        #expect(prefsDecision == CloudSyncEngine.SingletonPushDecision(push: false, newSeen: now))
+        // …differing prefs push…
+        prefsDecision = CloudSyncEngine.prefsPushDecision(server: newerPrefs, snapshot: InsightPrefsSnapshot(morningInsightsEnabled: false, lockScreenDetails: false, insightsViaCloud: false, lastRun: nil, updatedAt: now), previouslySeen: now)
+        #expect(prefsDecision.push == true)
+        // …and the cross-talk regression: that newer prefs record does
+        // NOT suppress a differing settings push.
+        decision = CloudSyncEngine.settingsPushDecision(server: newerServer, snapshot: SyncSettingsSnapshot(disabledTypeRawValues: [GoogleDataType.weight.rawValue], preferAppleWatch: true, updatedAt: now), previouslySeen: now)
+        #expect(decision.push == true)
+    }
+
+    @Test("second push after a server record exists succeeds via mutate")
+    func secondPushMutatesFetchedRecord() async throws {
+        // Round-4-sync item 2: the full-stack proof — a local edit over
+        // an EXISTING server record saves the fetched instance (identity
+        // match in the stub = server change token), not a fresh build.
+        // Pre-fix this threw serverRecordChanged → non-retryable → the
+        // push never succeeded again.
+        let harness = try CloudSyncHarness.make()
+        let old = SyncSettingsSnapshot(
+            disabledTypeRawValues: [],
+            preferAppleWatch: false,
+            updatedAt: harness.now.addingTimeInterval(-1000)
+        )
+        await harness.db.seedRecord(try CloudRecordBuilder.record(for: old))
+        await harness.engine().syncNow() // primes the seen-watermark on the old server state
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
+        // Fresh engine per sync (the established pattern — each engine
+        // loads its `SyncPreferences` mirror at init).
+        let engine = harness.engine()
+        await engine.syncNow()
+        let saved = await harness.db.saved(ofType: CloudRecordType.settings)
+        #expect(saved.count == 1)
+        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
+        if case .synced = engine.status {
+        } else {
+            Issue.record("expected synced status, got \(engine.status)")
+        }
+    }
+
+    @Test("more than 500 turns push newest-first with no pull duplicates")
+    func overLimitTurnsPushNewestFirst() async throws {
+        // Round-4-sync item 1: 600 local turns — the pushed 500 must be
+        // the NEWEST, the watermark must cover them, and a second sync
+        // must insert ZERO duplicates (the old oldest-first window
+        // re-inserted everything past turn 500 on every run).
+        let harness = try CloudSyncHarness.make()
+        let base = harness.now.addingTimeInterval(-10_000)
+        let context = ModelContext(harness.container)
+        for i in 0..<600 {
+            context.insert(ChatTurn(role: "user", content: "turn \(i)", createdAt: base.addingTimeInterval(Double(i))))
+        }
+        try context.save()
+        #expect(try harness.localTurnCount() == 600)
+        await harness.engine().syncNow()
+        let saved = await harness.db.saved(ofType: CloudRecordType.coachTurn)
+        #expect(saved.count == 500)
+        let pushedDates = try saved.map { try CloudRecordDecoder.turn(from: $0).createdAt }.sorted()
+        #expect(pushedDates.first == base.addingTimeInterval(100))
+        #expect(pushedDates.last == base.addingTimeInterval(599))
+        await harness.engine().syncNow()
+        #expect(try harness.localTurnCount() == 600)
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 500)
     }
 
     @Test("missing scan root fails loudly, not green")

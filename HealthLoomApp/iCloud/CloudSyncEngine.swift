@@ -218,7 +218,14 @@ final class CloudSyncEngine {
     /// Full push + pull. Safe to call whenever (launch, Sync Now): the
     /// account gate runs first, and re-entrancy is a no-op.
     func syncNow() async {
+        // Round-4-sync item 3: claim BEFORE the first await — guard and
+        // claim are suspension-free on this actor, so no second caller
+        // can slip between them. The old shape guarded, then awaited
+        // `accountState`, then claimed: concurrent callers both passed
+        // the guard and ran full duplicate push/pulls (AGENTS.md §2's
+        // named TOCTOU shape).
         guard status != .syncing else { return }
+        status = .syncing
         switch await database.accountState() {
         case .noAccount:
             status = .localOnly
@@ -231,7 +238,6 @@ final class CloudSyncEngine {
         case .available:
             break
         }
-        status = .syncing
         do {
             try await pushSingletons()
             try await pushNewTurns()
@@ -251,11 +257,34 @@ final class CloudSyncEngine {
 
     private func pushSingletons() async throws(CloudSyncError) {
         let settings = readSettings()
-        if try await shouldPush(snapshot: settings, recordName: CloudRecordType.settingsRecordName) {
-            _ = try await database.saveRecord(try CloudRecordBuilder.record(for: settings))
+        let serverSettings = try await database.fetchRecord(recordName: CloudRecordType.settingsRecordName)
+        let settingsDecision = Self.settingsPushDecision(server: serverSettings, snapshot: settings, previouslySeen: seenSettingsAt)
+        seenSettingsAt = settingsDecision.newSeen
+        if settingsDecision.push {
+            if let server = serverSettings {
+                // Round-4-sync item 2: mutate the FETCHED record — it
+                // carries the server change token. A fresh tagless build
+                // saved over an existing record fails
+                // serverRecordChanged, which the classifier treats as
+                // non-retryable: every post-first push would fail
+                // forever and settings/prefs would never sync again.
+                try CloudRecordBuilder.update(server, with: settings)
+                _ = try await database.saveRecord(server)
+            } else {
+                _ = try await database.saveRecord(try CloudRecordBuilder.record(for: settings))
+            }
         }
-        if try await shouldPushPrefs() {
-            _ = try await database.saveRecord(try CloudRecordBuilder.record(for: readPrefs()))
+        let prefs = readPrefs()
+        let serverPrefs = try await database.fetchRecord(recordName: CloudRecordType.insightPrefsRecordName)
+        let prefsDecision = Self.prefsPushDecision(server: serverPrefs, snapshot: prefs, previouslySeen: seenPrefsAt)
+        seenPrefsAt = prefsDecision.newSeen
+        if prefsDecision.push {
+            if let server = serverPrefs {
+                try CloudRecordBuilder.update(server, with: prefs)
+                _ = try await database.saveRecord(server)
+            } else {
+                _ = try await database.saveRecord(try CloudRecordBuilder.record(for: prefs))
+            }
         }
     }
 
@@ -263,39 +292,44 @@ final class CloudSyncEngine {
     /// (the pull phase owns that direction) or EQUAL content (saves a
     /// write on every clean sync; makes "no redundant saves" testable).
     /// Malformed server records are overwritten, never preserved.
-    private func shouldPush(snapshot: SyncSettingsSnapshot, recordName: String) async throws(CloudSyncError) -> Bool {
-        guard let server = try await database.fetchRecord(recordName: recordName) else {
-            return true
-        }
-        guard let serverSnap = try? CloudRecordDecoder.settings(from: server) else {
-            return true
-        }
-        let previouslySeen = seenSettingsAt
-        seenSettingsAt = max(previouslySeen, serverSnap.updatedAt)
-        if serverSnap.updatedAt > previouslySeen {
-            return false
-        }
-        return serverSnap.disabledTypeRawValues != snapshot.disabledTypeRawValues
-            || serverSnap.preferAppleWatch != snapshot.preferAppleWatch
+    /// Pure decisions (round-4-sync item 12): each singleton owns its
+    /// fetch + watermark — the old shared `recordName`-parameterized
+    /// predicate hardcoded the SETTINGS watermark, so calling it with
+    /// the prefs name would have suppressed settings pushes. There is
+    /// no shared predicate left to miscall. Neither mutates state: they
+    /// return the decision AND the advanced watermark; the caller
+    /// assigns (a predicate with side effects is untestable).
+    struct SingletonPushDecision: Equatable {
+        var push: Bool
+        var newSeen: Date
     }
 
-    private func shouldPushPrefs() async throws(CloudSyncError) -> Bool {
-        guard let server = try await database.fetchRecord(recordName: CloudRecordType.insightPrefsRecordName) else {
-            return true
+    nonisolated static func settingsPushDecision(server: CKRecord?, snapshot: SyncSettingsSnapshot, previouslySeen: Date) -> SingletonPushDecision {
+        guard let server, let serverSnap = try? CloudRecordDecoder.settings(from: server) else {
+            return SingletonPushDecision(push: true, newSeen: previouslySeen)
         }
-        guard let serverSnap = try? CloudRecordDecoder.prefs(from: server) else {
-            return true
-        }
-        let previouslySeen = seenPrefsAt
-        seenPrefsAt = max(previouslySeen, serverSnap.updatedAt)
+        let newSeen = max(previouslySeen, serverSnap.updatedAt)
         if serverSnap.updatedAt > previouslySeen {
-            return false
+            return SingletonPushDecision(push: false, newSeen: newSeen)
         }
-        let current = readPrefs()
-        return serverSnap.morningInsightsEnabled != current.morningInsightsEnabled
-            || serverSnap.lockScreenDetails != current.lockScreenDetails
-            || serverSnap.insightsViaCloud != current.insightsViaCloud
-            || serverSnap.lastRun != current.lastRun
+        let differs = serverSnap.disabledTypeRawValues != snapshot.disabledTypeRawValues
+            || serverSnap.preferAppleWatch != snapshot.preferAppleWatch
+        return SingletonPushDecision(push: differs, newSeen: newSeen)
+    }
+
+    nonisolated static func prefsPushDecision(server: CKRecord?, snapshot: InsightPrefsSnapshot, previouslySeen: Date) -> SingletonPushDecision {
+        guard let server, let serverSnap = try? CloudRecordDecoder.prefs(from: server) else {
+            return SingletonPushDecision(push: true, newSeen: previouslySeen)
+        }
+        let newSeen = max(previouslySeen, serverSnap.updatedAt)
+        if serverSnap.updatedAt > previouslySeen {
+            return SingletonPushDecision(push: false, newSeen: newSeen)
+        }
+        let differs = serverSnap.morningInsightsEnabled != snapshot.morningInsightsEnabled
+            || serverSnap.lockScreenDetails != snapshot.lockScreenDetails
+            || serverSnap.insightsViaCloud != snapshot.insightsViaCloud
+            || serverSnap.lastRun != snapshot.lastRun
+        return SingletonPushDecision(push: differs, newSeen: newSeen)
     }
 
     private func pushNewTurns() async throws(CloudSyncError) {
@@ -406,7 +440,14 @@ final class CloudSyncEngine {
 
     private func localTurns() throws(CloudSyncError) -> [CoachTurnSnapshot] {
         let context = ModelContext(container)
-        var descriptor = FetchDescriptor<ChatTurn>(sortBy: [SortDescriptor(\.createdAt)])
+        // Round-4-sync item 1: NEWEST-first, `order:` spelled explicitly
+        // like every other site. The old ascending default + fetchLimit
+        // paged the OLDEST 500: the watermark then passed turn 500 and
+        // pushes stopped forever, while the pull dedupe (built from the
+        // same oldest-500) re-inserted everything newer as duplicates,
+        // unboundedly. Newest-first keeps pushed turns inside the
+        // dedupe window by construction.
+        var descriptor = FetchDescriptor<ChatTurn>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         // Cap the replay window: history sync is a convenience, not an
         // archive migration — 500 most recent turns bound the upload.
         descriptor.fetchLimit = 500

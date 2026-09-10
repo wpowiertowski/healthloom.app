@@ -93,6 +93,7 @@
 		97F94DE436BF306852E54F47 /* scoredHero-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 5F91F671FC5EF318435D6857 /* scoredHero-dark-AXXXL.png */; };
 		9DF2C3675FE498D32A2081E0 /* TodayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B34DDA73518EFD159707DA9 /* TodayUITests.swift */; };
 		9F60ECF0CD3AE06D39287B7E /* OnboardingScaffold.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F5DD637ABFCA06BE6119EC /* OnboardingScaffold.swift */; };
+		9FDAF4B7D6B1BB747DB272DD /* BackgroundSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B59A3261026F168E598D3C08 /* BackgroundSyncTests.swift */; };
 		A11B8924A47D0B8152F66412 /* GoogleHealthClient in Frameworks */ = {isa = PBXBuildFile; productRef = 10626739E4A8B074FBFE97AE /* GoogleHealthClient */; };
 		A209AA18044B5129C1B9BF0D /* CloudGateCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B476E1153F2CBAD912E1F757 /* CloudGateCache.swift */; };
 		A21888395E548143F16A70A6 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6981148E49190261FD2766 /* WelcomeView.swift */; };
@@ -295,6 +296,7 @@
 		B26A022827F594640AA3DF9C /* coachInsight-dark-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachInsight-dark-AXXXL.png"; sourceTree = "<group>"; };
 		B30FD6CED69D7B5609EA0D90 /* CoachChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachChatViewModelTests.swift; sourceTree = "<group>"; };
 		B476E1153F2CBAD912E1F757 /* CloudGateCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudGateCache.swift; sourceTree = "<group>"; };
+		B59A3261026F168E598D3C08 /* BackgroundSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSyncTests.swift; sourceTree = "<group>"; };
 		B636138EC9433DF44A01B2D8 /* ActivitiesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitiesUITests.swift; sourceTree = "<group>"; };
 		B7F48763E8F1B8D12AB95829 /* CoachUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachUITests.swift; sourceTree = "<group>"; };
 		B9016C7A02AAAFFC517044AD /* welcome-dark-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "welcome-dark-AXXXL.png"; sourceTree = "<group>"; };
@@ -708,6 +710,7 @@
 			children = (
 				15AF48D6CF1DCBA4EE186B07 /* ActivityConsolidatorTests.swift */,
 				02C1A6AFD50CEB5638CB78EC /* AIModelsViewModelTests.swift */,
+				B59A3261026F168E598D3C08 /* BackgroundSyncTests.swift */,
 				A03FB573C3AA54B936C4A2CB /* CloudKeyValidatorTests.swift */,
 				89253009FF69315BB768A3F9 /* CloudSyncTests.swift */,
 				B30FD6CED69D7B5609EA0D90 /* CoachChatViewModelTests.swift */,
@@ -1013,6 +1016,7 @@
 			files = (
 				83CE9F79DA40887E71B299E3 /* AIModelsViewModelTests.swift in Sources */,
 				F5201EEB895AEADD50381C78 /* ActivityConsolidatorTests.swift in Sources */,
+				9FDAF4B7D6B1BB747DB272DD /* BackgroundSyncTests.swift in Sources */,
 				7F22DBBEB26B3078D3667B72 /* CloudKeyValidatorTests.swift in Sources */,
 				F51FBC81951E3295DD33291E /* CloudSyncTests.swift in Sources */,
 				6D7F1E86CE93ECE287462D44 /* CoachChatViewModelTests.swift in Sources */,

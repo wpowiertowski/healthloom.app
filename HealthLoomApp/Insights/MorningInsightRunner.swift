@@ -147,7 +147,7 @@ struct MorningInsightRunner {
             let insight = try await generator.insight(
                 forPrompt: DailyInsight.prompt(readiness: readiness, context: context.context)
             )
-            try Self.persist(insight, tier: tier, fields: context.context.fields, now: now, in: deps.container)
+            try Self.persist(insight, tier: tier, fields: context.context.fields, now: now, in: deps.container, calendar: deps.calendar)
             let content = InsightNotificationContent.make(
                 headline: insight.headline,
                 suggestions: insight.suggestions,
@@ -179,12 +179,21 @@ struct MorningInsightRunner {
         )
     }
 
+    /// Same-day predicate for the F5 replace-don't-duplicate rule
+    /// (round-4-sync item 11): pure so tests pin it under explicit
+    /// non-system calendars — the boundary is the INJECTED calendar,
+    /// never ambient `Calendar.current`.
+    static func isSameInsightDay(_ a: Date, _ b: Date, calendar: Calendar) -> Bool {
+        calendar.isDate(a, inSameDayAs: b)
+    }
+
     private static func persist(
         _ insight: DailyInsight,
         tier: ModelTier,
         fields: [ProfileField],
         now: Date,
-        in container: ModelContainer
+        in container: ModelContainer,
+        calendar: Calendar
     ) throws {
         let context = ModelContext(container)
         // F5 day-dedupe: notify can throw *after* this insert (revoked
@@ -192,10 +201,13 @@ struct MorningInsightRunner {
         // retry would persist a second identical row. Same-day rows are
         // replaced, never duplicated; the plan's only-on-success rule
         // still refers to `lastRun`, which stays unset on failure.
-        let calendar = Calendar.current
+        // Round-4-sync item 11: `deps.calendar`, never
+        // `Calendar.current` — the dedupe day-boundary must agree with
+        // the scheduling gates above, or a retry under a non-system
+        // calendar duplicates instead of replacing.
         let stale = try context.fetch(FetchDescriptor<DerivedInsight>()).filter {
             $0.sourceProvider.hasPrefix(insightSourceProvider)
-                && calendar.isDate($0.createdAt, inSameDayAs: now)
+                && Self.isSameInsightDay($0.createdAt, now, calendar: calendar)
         }
         for row in stale {
             context.delete(row)
