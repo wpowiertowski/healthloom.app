@@ -46,6 +46,9 @@ actor StubCloudDatabase: CloudDatabase {
     private var hostileFreshCursor = false
     private var hostileCount = 0
     func setHostileFreshCursor(_ enabled: Bool) { hostileFreshCursor = enabled }
+    /// Pages served in hostile mode (round-9 fix N1): lets the test
+    /// pin the exact bound the wipe walk enforces.
+    var hostileTurnPageCalls: Int { hostileCount }
 
     func setAccount(_ state: CloudAccountState) { account = state }
     func setSaveError(_ error: CloudSyncError?) { saveError = error }
@@ -236,7 +239,11 @@ struct CloudSyncTests {
         await harness.engine().syncNow()
         let saved = await harness.db.saved(ofType: CloudRecordType.settings)
         #expect(saved.count == 1)
-        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        guard saved.count == 1, let first = saved.first else {
+            Issue.record("expected exactly one settings save, got \(saved.count)")
+            return
+        }
+        let snap = try CloudRecordDecoder.settings(from: first)
         #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
         #expect(await harness.db.saved(ofType: CloudRecordType.insightPrefs).count == 1)
     }
@@ -491,7 +498,11 @@ struct CloudSyncTests {
         await engine.syncNow()
         let saved = await harness.db.saved(ofType: CloudRecordType.settings)
         #expect(saved.count == 1)
-        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        guard saved.count == 1, let first = saved.first else {
+            Issue.record("expected exactly one settings save, got \(saved.count)")
+            return
+        }
+        let snap = try CloudRecordDecoder.settings(from: first)
         #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
         if case .synced = engine.status {
         } else {
@@ -592,7 +603,11 @@ struct CloudSyncTests {
         await engine.syncNow()
         let saved = await harness.db.saved(ofType: CloudRecordType.settings)
         #expect(saved.count == 1)
-        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        guard saved.count == 1, let first = saved.first else {
+            Issue.record("expected exactly one settings save, got \(saved.count)")
+            return
+        }
+        let snap = try CloudRecordDecoder.settings(from: first)
         #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
     }
 
@@ -863,6 +878,17 @@ struct CloudSyncTests {
         ) {
             _ = try await harness.engine().deleteAllCloudData()
         }
+        // Round-9 fix N1: pin the bound itself (exactly 100 pages —
+        // the walk neither truncates early nor spins past the cap)
+        // and the resume (the throw skipped `resetSyncState`, so
+        // watermarks are intact and a retry with a settled server
+        // completes: both turns went on the hostile run's page 1, so
+        // the retry re-counts only the 2 singletons).
+        #expect(await harness.db.hostileTurnPageCalls == 100)
+        await harness.db.setHostileFreshCursor(false)
+        let resumed = try await harness.engine().deleteAllCloudData()
+        #expect(resumed == 2)
+        #expect(await harness.db.records.isEmpty)
     }
 
     @Test("missing scan root fails loudly, not green")
