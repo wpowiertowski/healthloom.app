@@ -39,6 +39,13 @@ actor StubCloudDatabase: CloudDatabase {
     var queryError: CloudSyncError?
     func setTurnPageSize(_ size: Int?) { turnPageSize = size }
     func setTurnLoopCursor(_ cursor: Data?) { turnLoopCursor = cursor }
+    /// Hostile fresh cursor (round-9 item 3): every page returns a
+    /// DIFFERENT non-nil cursor — models a server that never settles,
+    /// so the test proves the wipe walk terminates (cap-throw) instead
+    /// of re-walking forever. Takes precedence over `turnLoopCursor`.
+    private var hostileFreshCursor = false
+    private var hostileCount = 0
+    func setHostileFreshCursor(_ enabled: Bool) { hostileFreshCursor = enabled }
 
     func setAccount(_ state: CloudAccountState) { account = state }
     func setSaveError(_ error: CloudSyncError?) { saveError = error }
@@ -141,6 +148,10 @@ actor StubCloudDatabase: CloudDatabase {
         }
         let sliceNames = Array(names.dropFirst(index).prefix(pageSize))
         let slice = sliceNames.compactMap { records[$0] }
+        if hostileFreshCursor {
+            hostileCount += 1
+            return CloudTurnPage(records: slice, nextCursor: "hostile-\(hostileCount)".data(using: .utf8))
+        }
         if let loop = turnLoopCursor {
             return CloudTurnPage(records: slice, nextCursor: loop)
         }
@@ -667,14 +678,16 @@ struct CloudSyncTests {
         #expect(try harness.localTurnCount() == 1)
     }
 
-    @Test("over-cap wipe deletes everything and reports honestly")
+    @Test("multi-page wipe deletes everything and reports honestly")
     func overCapWipeDeletesAll() async throws {
-        // Round-8 item 5: 250 server turns at 2/page (125 pages — past
-        // any shared-walk cap) must ALL delete; the old capped walk
-        // truncated at 100 pages, reset watermarks, and let survivors
-        // repull under a success ledger.
+        // Round-8 item 5: 250 server turns over many pages must ALL
+        // delete incrementally; the old walk truncated and reset
+        // watermarks, letting survivors repull under a success
+        // ledger. Round-9 item 3 reconciliation: 5/page (50 pages —
+        // multi-page proof that stays under the 100-page bound);
+        // past-100 hostile termination is pinned by the hostile test.
         let harness = try CloudSyncHarness.make()
-        await harness.db.setTurnPageSize(2)
+        await harness.db.setTurnPageSize(5)
         let base = harness.now.addingTimeInterval(-100_000)
         for i in 0..<250 {
             let snap = CoachTurnSnapshot(
@@ -693,21 +706,41 @@ struct CloudSyncTests {
         #expect(try harness.localTurnCount() == 0)
     }
 
+    /// Prime + mutate + sync, returning the second push's record
+    /// (round-9 items 8+12): the settings and prefs seen-advance tests
+    /// were line-for-line copies — one helper, one `saved[1]`, fixed
+    /// once (no force-index after a non-fatal count check — the
+    /// §5.1 #10 crash-the-suite smell).
+    private func secondPush(
+        recordType: String,
+        mutate: (CloudSyncHarness) -> Void,
+        assertSecond: (CKRecord) throws -> Void
+    ) async throws {
+        let harness = try CloudSyncHarness.make()
+        await harness.engine().syncNow() // pushes initial state (empty server)
+        #expect(await harness.db.saved(ofType: recordType).count == 1)
+        mutate(harness)
+        await harness.engine().syncNow()
+        let saved = await harness.db.saved(ofType: recordType)
+        guard saved.count == 2 else {
+            Issue.record("expected a second push for \(recordType), got \(saved.count) saves")
+            return
+        }
+        try assertSecond(saved[1])
+    }
+
     @Test("push advances seen past its own write")
     func pushAdvancesSeenWatermark() async throws {
         // Round-8 item 6: without the advance, the next sync misreads
         // our own just-pushed record as foreign-newer (server date vs
         // epoch seen) and suppresses the user's intervening change one
         // sync late. Prime, toggle, sync: the toggle must push NOW.
-        let harness = try CloudSyncHarness.make()
-        await harness.engine().syncNow() // pushes initial state (empty server)
-        #expect(await harness.db.saved(ofType: CloudRecordType.settings).count == 1)
-        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
-        await harness.engine().syncNow()
-        let saved = await harness.db.saved(ofType: CloudRecordType.settings)
-        #expect(saved.count == 2)
-        let snap = try CloudRecordDecoder.settings(from: saved[1])
-        #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
+        try await secondPush(recordType: CloudRecordType.settings, mutate: {
+            SyncPreferences(defaults: $0.defaults).setEnabled(false, for: .steps)
+        }, assertSecond: {
+            let snap = try CloudRecordDecoder.settings(from: $0)
+            #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
+        })
     }
 
     @Test("equal-createdAt pair straddling the batch cut both push")
@@ -716,6 +749,16 @@ struct CloudSyncTests {
         // 500/501 — strict `>` vs `max(batch)` excluded the second one
         // FOREVER (same-second pairs are routine: user+assistant). The
         // batch extends through the edge date: both push, no dupes.
+        // Round-9 item 5: this test ALSO pins the single-context +
+        // key dedupe — a naive single-context hoist WITHOUT key
+        // dedupe (identity only) drops the in-page mate here and
+        // strands it forever (watermark lands on its date while it
+        // stays unpushed: 500 saved, never 501 — the livelock class).
+        // A larger same-date flood is unconstructible by design: the
+        // synthetic turnID is `time-role` (third-party N1), so same-
+        // stamp same-role turns collapse server-side by save-if-absent
+        // (500 seeded → 1 saved, proven) — the pair is the maximal
+        // realistic edge group, and this straddle is its hardest shape.
         let harness = try CloudSyncHarness.make()
         let base = harness.now.addingTimeInterval(-100_000)
         let context = ModelContext(harness.container)
@@ -790,15 +833,36 @@ struct CloudSyncTests {
         // Round-8 fix N2: the prefs mirror of pushAdvancesSeenWatermark
         // — without the advance, the next sync misreads our own write
         // as foreign-newer and suppresses the change one sync late.
+        // Shares `secondPush` (round-9 item 12) — no second copy of
+        // the prime/mutate/sync/index shape.
+        try await secondPush(recordType: CloudRecordType.insightPrefs, mutate: {
+            InsightPreferences(defaults: $0.defaults).insightsViaCloud = true
+        }, assertSecond: {
+            let snap = try CloudRecordDecoder.prefs(from: $0)
+            #expect(snap.insightsViaCloud == true)
+        })
+    }
+
+    @Test("hostile fresh cursor terminates the wipe loudly")
+    func hostileCursorTerminatesWipe() async throws {
+        // Round-9 item 3: a server returning a fresh-but-unequal cursor
+        // per page (records already deleted → empty pages, zero
+        // progress) spins the old uncapped walk FOREVER — this test
+        // hangs pre-fix (no exit exists), so red is by inspection:
+        // the uncapped `while true` breaks only on nil-or-equal, and
+        // the hostile stub yields neither. Post-fix the cap throws
+        // loudly with watermarks intact (no silent truncation, retry
+        // resumes) — pinned here by the exact error.
         let harness = try CloudSyncHarness.make()
-        await harness.engine().syncNow()
-        #expect(await harness.db.saved(ofType: CloudRecordType.insightPrefs).count == 1)
-        InsightPreferences(defaults: harness.defaults).insightsViaCloud = true
-        await harness.engine().syncNow()
-        let saved = await harness.db.saved(ofType: CloudRecordType.insightPrefs)
-        #expect(saved.count == 2)
-        let snap = try CloudRecordDecoder.prefs(from: saved[1])
-        #expect(snap.insightsViaCloud == true)
+        try harness.seedTurn(content: "hostile one", at: harness.now)
+        try harness.seedTurn(content: "hostile two", at: harness.now)
+        await harness.engine().syncNow() // push both server-side first
+        await harness.db.setHostileFreshCursor(true)
+        await #expect(
+            throws: CloudSyncError.failed("turn delete cursor never settled")
+        ) {
+            _ = try await harness.engine().deleteAllCloudData()
+        }
     }
 
     @Test("missing scan root fails loudly, not green")

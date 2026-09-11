@@ -424,9 +424,10 @@ final class CloudSyncEngine {
     /// pushed row, never inside an equal-dated group.
     /// Oldest unpushed rows, capped (round-7 item 4: watermark in the
     /// predicate, oldest-first). May split an equal-dated group at the
-    /// cap — callers extend through the edge date (see above).
-    private func oldestUnpushedRows(limit: Int) throws(CloudSyncError) -> [ChatTurn] {
-        let context = ModelContext(container)
+    /// cap — callers extend through the edge date (see above). Takes
+    /// the caller's context (round-9 item 5): identity-based dedupe
+    /// across two contexts is inert, so the context must be shared.
+    private func oldestUnpushedRows(limit: Int, in context: ModelContext) throws(CloudSyncError) -> [ChatTurn] {
         var descriptor: FetchDescriptor<ChatTurn>
         if let watermark = pushedTurnsThrough {
             descriptor = FetchDescriptor<ChatTurn>(
@@ -447,9 +448,16 @@ final class CloudSyncEngine {
     }
 
     private func unpushedTurnBatch(limit: Int) throws(CloudSyncError) -> [CoachTurnSnapshot] {
-        let first = try oldestUnpushedRows(limit: limit)
-        guard let edge = first.last?.createdAt else { return [] }
+        // Round-9 item 5: ONE shared context for both fetches — the
+        // old two-context shape made the identity dedupe below inert
+        // (different instances per context, nothing ever filtered).
+        // Hoisting alone would have DROPPED the whole edge group
+        // (livelock, watermark never advances — the round-8-item-7
+        // loss class), so the dedupe is key-based too: value identity
+        // that survives any context split.
         let context = ModelContext(container)
+        let first = try oldestUnpushedRows(limit: limit, in: context)
+        guard let edge = first.last?.createdAt else { return [] }
         let edgeDescriptor = FetchDescriptor<ChatTurn>(
             predicate: #Predicate { $0.createdAt == edge },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
@@ -460,11 +468,15 @@ final class CloudSyncEngine {
         } catch {
             throw CloudSyncError.failed(error.localizedDescription)
         }
-        // Dedupe by instance identity (same context → same instances
-        // for the same rows; the Set is belt-and-braces, not load-bearing).
-        var seen = Set(first.map(ObjectIdentifier.init))
-        var rows = first.filter { $0.createdAt < edge }
-        rows += edgeRows.filter { seen.insert(ObjectIdentifier($0)).inserted }
+        // The batch is the FULL first page plus the edge extension
+        // (minus rows already on the page — the dedupe that was inert
+        // across two contexts now actually filters, killing intra-batch
+        // double-pushes; totals and the watermark are unchanged).
+        var seen = Set(first.map { Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt) })
+        var rows = first
+        rows += edgeRows.filter {
+            seen.insert(Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt)).inserted
+        }
         return rows.map {
             // Synthetic turnID, kept deliberately (third-party N1): a
             // content hash would survive clock changes, but renaming
@@ -539,10 +551,11 @@ final class CloudSyncEngine {
     /// Every server turn, following the query cursor until nil
     /// (round-6 item 4): the old single-shot fetch pulled an arbitrary
     /// unordered fragment that varied run to run. Bounded (round-7
-    /// item 5): page cap + same-token break, mirroring PagePipeline —
-    /// an echoing cursor otherwise spins to OOM, reachable from every
-    /// scene activation AND from `deleteAllCloudData` mid-wipe (a hung
-    /// wipe with no timeout).
+    /// item 5 + round-9 item 3): page cap + same-token break, mirroring
+    /// PagePipeline — an echoing cursor otherwise spins to OOM,
+    /// reachable from every scene activation. `deleteAllCloudData`
+    /// carries the same bound on its own walk (it cannot share this
+    /// one — it deletes while walking, so it needs its own counter).
     private func pullAllTurnRecords() async throws(CloudSyncError) -> [CKRecord] {
         var all: [CKRecord] = []
         var cursor: Data? = nil
@@ -631,6 +644,15 @@ final class CloudSyncEngine {
         }
         let priorStatus = status
         status = .syncing
+        // Round-9 item 3 follow-up: restore-on-failure via `defer`,
+        // not `catch { throw error }` — this toolchain types a bare
+        // catch's `error` as `any Error`, which cannot rethrow through
+        // the `throws(CloudSyncError)` boundary (and wrapping would
+        // erase `wipeBlockedBySync` identity the parked-sync test
+        // pins). Provably equivalent: restore runs iff the body
+        // throws, before the original error propagates untouched.
+        var succeeded = false
+        defer { if !succeeded { status = priorStatus } }
         do {
             var deleted = 0
             for name in [
@@ -640,28 +662,39 @@ final class CloudSyncEngine {
                 try await database.deleteRecord(recordName: name)
                 deleted += 1
             }
-            // Round-8 item 5: page-and-delete incrementally — the
-            // shared capped walk would truncate past 100 pages (then
-            // `resetSyncState` below would zero the watermarks and the
-            // survivors would repull post-wipe, "deleted" transcript
-            // back). No accumulation (one page in memory), no cap
-            // (a wipe must complete, not sample), same-token break
-            // only (an echo deletes idempotently, then stops).
+            // Round-8 item 5 + round-9 item 3: page-and-delete
+            // incrementally (one page in memory, never accumulated —
+            // the old shared capped walk truncated past 100 pages and
+            // `resetSyncState` then resurrected the survivors
+            // post-wipe). Bounded by the SAME cap as
+            // `pullAllTurnRecords`: a fresh-but-unequal cursor per page
+            // re-walks forever (wipe hangs, deleted-count grows), so a
+            // cap-hit throws LOUDLY — never silent truncation (the
+            // throw skips `resetSyncState`, watermarks intact, retry
+            // resumes). Cancellation probe per page: the typed-throws
+            // boundary can't surface `CancellationError`, so a cancel
+            // maps to a loud retryable failure (same no-reset safety).
             var cursor: Data? = nil
+            var pages = 0
             while true {
+                guard !Task.isCancelled else {
+                    throw CloudSyncError.failed("cloud wipe cancelled")
+                }
+                guard pages < Self.turnPageCap else {
+                    throw CloudSyncError.failed("turn delete cursor never settled")
+                }
                 let page = try await database.turnPage(cursor: cursor)
                 for record in page.records {
                     try await database.deleteRecord(recordName: record.recordID.recordName)
                     deleted += 1
                 }
+                pages += 1
                 guard let next = page.nextCursor, next != cursor else { break }
                 cursor = next
             }
             resetSyncState()
+            succeeded = true
             return deleted
-        } catch {
-            status = priorStatus
-            throw error
         }
     }
 

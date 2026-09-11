@@ -174,13 +174,17 @@ extension HealthKitSourceDeleter {
     /// round-trip): progress rows and tests read this sequence.
     /// Types this app has EVER requested share for (round-6 item 14) —
     /// frozen at the v1 request set. The wipe covers request ∪ history:
-    /// narrowing `p0Types` later (or a revoked grant today) can never
+    /// narrowing the request set later (or a revoked grant today) can never
     /// strand previously-written samples outside the wipe with no
     /// ledger row. Pass a narrowed `requesting` list to prove it (the
     /// historical floor still wipes); production uses the default.
     static let historicalRequestTypes: [GoogleDataType] = [.steps, .heartRate, .weight, .sleep]
 
-    static func wipeableTypes(requesting: [GoogleDataType] = AppEnvironment.p0Types) throws -> [HKSampleType] {
+    // Round-9 item 1: the default IS the onboarding share funnel —
+    // the old p0Types default left newly-writable types
+    // authorized-but-never-wiped, contradicting the
+    // share-and-wipe-or-neither invariant.
+    static func wipeableTypes(requesting: [GoogleDataType] = SyncPreferences.healthKitWritableTypes) throws -> [HKSampleType] {
         // Membership comes from the shared share-set computation (F10):
         // whatever onboarding authorizes, the wipe covers — no parallel
         // source to drift. Order is imposed here (request order, then

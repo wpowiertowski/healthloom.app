@@ -98,10 +98,7 @@ struct HealthKitPermissionView: View {
                 // read just renders that row's "No data yet" state.
                 try await appEnvironment.healthKitAuth.requestShareAndRead(
                     share: SyncPreferences.healthKitWritableTypes,
-                    read: [
-                        .exercise, .heartRate, .steps, .sleep, .weight,
-                        .oxygenSaturation, .distance, .activeEnergyBurned,
-                    ],
+                    read: SyncPreferences.healthKitReadTypes,
                     // Round-8 item 1: share spans the FULL writable set
                     // (not just P0) — the pipeline writes ~18 types and
                     // an unshared type denies forever with a frozen

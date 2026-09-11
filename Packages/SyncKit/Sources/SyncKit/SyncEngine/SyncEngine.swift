@@ -334,11 +334,13 @@ public actor SyncEngine {
 
             // WP-12b: same drains on the failure path -- draining the count
             // both reports partial progress and resets the resolver's state
-            // so nothing leaks into the next run. (Links drain too, but
-            // their rows were rolled back above, so they drop silently per
-            // `applyDeferredSessionLinks`' contract and are re-recorded on
-            // the re-pull.)
-            PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            // so nothing leaks into the next run. Links drain WITHOUT
+            // applying (round-9 item 7): the old apply-then-save stamped
+            // them onto SURVIVING pre-existing rows, and the upsert never
+            // resets `linkedWatchWorkoutUUID` -- a stale link went
+            // permanent. Drained here means DROPPED here (re-recorded on
+            // the re-pull, like the resolver state itself).
+            _ = await conflictFilter.drainDeferredSessionLinks(for: type)
             let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
 
             // Cancellation is a stop, not a failure: no error status, no

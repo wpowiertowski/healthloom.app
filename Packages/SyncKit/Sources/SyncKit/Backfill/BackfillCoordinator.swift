@@ -247,7 +247,14 @@ public actor BackfillCoordinator {
             retiredLoop = old
             retiredGeneration = myGeneration
         }
-        await old?.value
+        // Round-9 item 14: drain WHATEVER is published — including a
+        // previous stop's still-draining loop when this call arrived
+        // with no handle of its own — so `stop()` returns only when no
+        // loop is running, on EVERY path. The old `await old?.value`
+        // skipped the drain entirely on the nil-handle path, breaking
+        // the postcondition for stop-then-wipe callers (a wipe issued
+        // right after a handle-less stop could race the draining walk).
+        await retiredLoop?.value
         if retiredGeneration == myGeneration {
             retiredLoop = nil
         }
@@ -439,13 +446,16 @@ public actor BackfillCoordinator {
             // Re-acquire after: rollback may undo a first-ever insert.
             context.rollback()
             let syncState = fetchOrCreateSyncState(for: type, context: context)
-            // Round-8 item 12: drain on the failure path too (converging
-            // on SyncEngine's catch shape) — otherwise a failed chunk
-            // leaks the coverage index (padded workout window held
-            // between chunks) + the run entry until some later run's
-            // beginRun resets them. Links drop silently here (their rows
-            // rolled back above — same contract as SyncEngine).
-            PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            // Round-8 item 12 + round-9 item 7: drain on the failure
+            // path too (converging on SyncEngine's catch shape) —
+            // otherwise a failed chunk leaks the coverage index +
+            // run entry. But drain WITHOUT applying or persisting:
+            // the old shape applied the drained links and then `try?`
+            // saved them onto SURVIVING (pre-existing) rows — and the
+            // upsert never resets `linkedWatchWorkoutUUID`, so a stale
+            // link went PERMANENT, contradicting the 'drops silently'
+            // contract. Drained here means DROPPED here.
+            _ = await conflictFilter.drainDeferredSessionLinks(for: type)
             _ = await conflictFilter.drainSuppressedCount(for: type)
             // Cancellation is a stop, not a failure: no error status, the
             // cursor stays where the last durable save left it.

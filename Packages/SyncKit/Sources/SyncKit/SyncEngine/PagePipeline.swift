@@ -49,13 +49,10 @@ nonisolated struct PagePipeline: Sendable {
 
     /// Dedupe for one mapped arm (round-7 item 3 + fix-round F1): skip
     /// iff the point's base ID is known (legacy pre-suffix rows carry
-    /// the bare point ID), or EVERY emitted UUID is known (re-syncs
-    /// reproduce expansion UUIDs exactly), or the point's SPLIT PARTS
-    /// are known (the flip-flop direction: an unsplit base sample
-    /// arriving after its split parts stored must skip — the reverse
-    /// was already safe via base-known, but base-emit alongside stored
-    /// parts duplicated permanently). Partial presence is unreachable
-    /// — batch saves are atomic — so no per-sample subset writes.
+    /// the bare point ID), or its split parts are known (the flip-flop
+    /// direction), or EVERY emitted UUID is known (re-syncs reproduce
+    /// expansion UUIDs exactly). Partial presence is unreachable —
+    /// batch saves are atomic — so no per-sample subset writes.
     ///
     /// The `'#'` separator is reserved by CONVENTION (round-7 fix F1,
     /// softened per fix-round N2): wire IDs observed to date contain
@@ -65,24 +62,38 @@ nonisolated struct PagePipeline: Sendable {
     /// `splitBases` is computed once per page from the queried set
     /// (in-page inserts are base IDs, already covered by the base
     /// leg) — not scanned per point.
-    /// Dedupe decision (round-8 fix N1: internal so tests pin the
-    /// table directly). An EMPTY uuid set is NOT known — `allSatisfy`
-    /// on `[]` is vacuously true, which silently dropped metadata-less
-    /// samples (counted 0, cursor advanced past the window). The base
-    /// and split legs still apply (a legacy bare row may match by
-    /// base string).
-    static func isKnown(
+    ///
+    /// ONE coherent unstamped-sample rule (round-9 items 4+6+9+11):
+    /// callers enforce UUID presence via `checkedUUIDs` BEFORE
+    /// reaching here (unstamped members throw — fail loud, item-13
+    /// doctrine — never silently written every sync, never silently
+    /// dropped). So this function never observes an empty set from
+    /// production paths; the single expression below folds every leg
+    /// with no special case to diverge later.
+    private static func isKnown(
         baseID: String,
         uuids: [String],
         splitBases: Set<String>,
         in known: Set<String>
     ) -> Bool {
-        if uuids.isEmpty {
-            return known.contains(baseID) || splitBases.contains(baseID)
+        known.contains(baseID) || splitBases.contains(baseID) || (!uuids.isEmpty && uuids.allSatisfy(known.contains))
+    }
+
+    /// Emitted UUIDs or throw (round-9 items 4+6): every sample the
+    /// pipeline is about to count must carry the stamp the existence
+    /// set is queried by — otherwise it is undedupable (rewritten
+    /// every sync, or dropped and never revisited). Throws the
+    /// dedicated `UnstampedSample` error LOUDLY, so the run fails with
+    /// the offending point identified, the cursor unmoved, and the
+    /// window retried. Internal so the unit test pins it directly
+    /// (unreachable through `processPage` — every emitter stamps —
+    /// which is exactly why it needs its own pin).
+    static func checkedUUIDs<T: HKObject>(_ objects: [T], baseID: String) throws -> [String] {
+        let uuids = objects.compactMap(emittedUUID)
+        guard uuids.count == objects.count else {
+            throw UnstampedSample(pointID: baseID)
         }
-        return known.contains(baseID)
-            || uuids.allSatisfy(known.contains)
-            || splitBases.contains(baseID)
+        return uuids
     }
 
     private static func emittedUUID(of object: HKObject) -> String? {
@@ -185,7 +196,8 @@ nonisolated struct PagePipeline: Sendable {
             let mapped = await conflictFilter.resolve(await TypeMapper.map(point), for: point)
             switch mapped {
             case .quantity(let sample):
-                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: sample)].compactMap({ $0 }), splitBases: splitBases, in: known) else { continue }
+                let singleUUIDs = try Self.checkedUUIDs([sample], baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: singleUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(sample)
                 writtenCount += 1
@@ -194,12 +206,14 @@ nonisolated struct PagePipeline: Sendable {
                 // (architecture.md D13.3) — N part samples for one point,
                 // each with its own derived UUID (round-7 item 3). One
                 // point, one itemCount contribution.
-                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), splitBases: splitBases, in: known) else { continue }
+                let pageUUIDs = try Self.checkedUUIDs(samples, baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: pageUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(contentsOf: samples)
                 writtenCount += 1
             case .category(let samples):
-                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), splitBases: splitBases, in: known) else { continue }
+                let pageUUIDs = try Self.checkedUUIDs(samples, baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: pageUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(contentsOf: samples)
                 writtenCount += 1
@@ -208,7 +222,8 @@ nonisolated struct PagePipeline: Sendable {
                 // `HKObject`/`HKSample` built synchronously by
                 // `TypeMapper.map(_:)` — same batch/existence-diff path
                 // as every other arm, no parallel mechanism.
-                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: correlation)].compactMap({ $0 }), splitBases: splitBases, in: known) else { continue }
+                let correlationUUIDs = try Self.checkedUUIDs([correlation], baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: correlationUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(correlation)
                 writtenCount += 1
@@ -326,6 +341,13 @@ struct PageWalkPartial: Error {
 /// values cannot be encoded (non-finite doubles) — fails the page, the
 /// run, and holds the cursor, instead of persisting a zero-byte row.
 nonisolated struct UnencodableLocalPayload: Error, Sendable {
+    var pointID: String
+}
+
+/// Unstamped sample (round-9 items 4+6): thrown when a sample the
+/// pipeline is about to count carries no external-UUID stamp — fail
+/// loud (item-13 doctrine), cursor unmoved, window retried.
+nonisolated struct UnstampedSample: Error, Sendable {
     var pointID: String
 }
 

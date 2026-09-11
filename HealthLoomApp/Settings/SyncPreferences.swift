@@ -158,6 +158,15 @@ final class SyncPreferences {
         return false
     }
 
+    /// The READ half of both share sheets (round-9 item 13): hoisted
+    /// next to the share funnel so the two call sites (onboarding +
+    /// Settings repair) can never drift apart again — that drift is
+    /// exactly what stranded item-2's repair path.
+    static let healthKitReadTypes: [GoogleDataType] = [
+        .exercise, .heartRate, .steps, .sleep, .weight,
+        .oxygenSaturation, .distance, .activeEnergyBurned,
+    ]
+
     /// The manual-Sync-Now type list (round-6 item 9): every SYNCABLE
     /// type (not just the P0 four — an enabled non-P0 row must update
     /// on demand, not only on background wake), minus disabled. Reads

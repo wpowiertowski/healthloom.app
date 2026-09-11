@@ -638,12 +638,12 @@ struct SettingsView: View {
         Task {
             defer { isRefreshingHealthSharing = false }
             do {
+                // Round-9 item 2: same funnel as onboarding — the old
+                // p0Types share defeated this repair path's purpose
+                // (pre-widening installs stayed narrow after repair).
                 try await appEnvironment.healthKitAuth.requestShareAndRead(
-                    share: AppEnvironment.p0Types,
-                    read: [
-                        .exercise, .heartRate, .steps, .sleep, .weight,
-                        .oxygenSaturation, .distance, .activeEnergyBurned,
-                    ],
+                    share: SyncPreferences.healthKitWritableTypes,
+                    read: SyncPreferences.healthKitReadTypes,
                     includingWorkoutShare: true
                 )
                 healthSharingMessage = "Health sharing is up to date."

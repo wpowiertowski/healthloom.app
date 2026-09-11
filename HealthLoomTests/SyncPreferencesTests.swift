@@ -197,6 +197,29 @@ struct SyncPreferencesInstanceTests {
 @Suite("SyncPreferences manual sync list")
 @MainActor
 struct ManualSyncTypesTests {
+    @Test func shareSheetsUseFunnelsNeverLiterals() throws {
+        // Round-9 items 2+13 (grep pin): both share sheets must route
+        // through the funnels — a literal `p0Types` share (or an
+        // inline read list) re-strands types the funnel covers.
+        var readRefs = 0
+        for directory in ["HealthLoomApp/Onboarding", "HealthLoomApp/Settings"] {
+            for source in try scanSources(in: directory) {
+                #expect(
+                    !source.code.contains("share: AppEnvironment.p0Types"),
+                    "\(source.file) regressed to a p0Types share"
+                )
+                #expect(
+                    !source.code.contains("read: ["),
+                    "\(source.file) carries an inline read list"
+                )
+                readRefs += source.code.components(separatedBy: "healthKitReadTypes").count - 1
+            }
+        }
+        // Definition + two call sites (more legitimate uses must not
+        // break this; removals do).
+        #expect(readRefs >= 3)
+    }
+
     @Test func shareRequestCoversFullWritableSet() throws {
         // Round-8 item 1: the share funnel resolves (no throw — a
         // naive all-syncable funnel would break on `.localOnly`

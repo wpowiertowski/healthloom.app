@@ -90,6 +90,22 @@ struct ReadinessScoreHistoryTests {
         #expect(history.recentScores(today: day(0)) == [80])
     }
 
+    @Test func fullWindowCoversThirtyDays() throws {
+        // Round-9 item 10: 31 consecutive days recorded — the average
+        // must cover exactly the 30 promised (today excluded, oldest
+        // in-window day kept). Pre-fix the 30-cap dropped the oldest
+        // in-window day and the average covered 29.
+        let ephemeral5 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral5.defaults)
+        for offset in (-30)...0 {
+            history.record(score: 70 + offset, today: day(offset))
+        }
+        let recent = history.recentScores(today: day(0))
+        #expect(recent.count == 30)
+        #expect(recent.first == 70 - 30)
+        #expect(recent.last == 70 - 1)
+    }
+
     @Test func ringCapsAtThirty() throws {
         let ephemeral4 = try makeDefaults()
         let history = ReadinessScoreHistory(defaults: ephemeral4.defaults)

@@ -13,6 +13,15 @@ import SwiftData
 import Testing
 @testable import SyncKit
 
+/// Stop-completion flag (round-9 item 14): test-side completion
+/// observation must not mutate a captured `var` from a `Task`
+/// (Swift 6 concurrent-mutation error under strict flags).
+actor StopFlag {
+    private var done = false
+    func set() { done = true }
+    func get() -> Bool { done }
+}
+
 @Suite struct BackfillChunkingTests {
     static let fixedNow = BackfillTestFixtures.date("2026-07-10T12:00:00Z")
 
@@ -212,9 +221,15 @@ import Testing
         // Round-8 item 9: stop#1 publishes the retiring loop; stop#2
         // (nil handle) must preserve it — otherwise a start() arriving
         // mid-drain sails past into a second concurrent walk over the
-        // same cursor. Every phase below is watchdog-bounded (fail loud,
-        // never hang the suite): the verdict phase pins suspension,
-        // the drain phases pin orderly completion.
+        // same cursor. Round-9 item 14 reconciliation: stop#2 now
+        // SUSPENDS on the in-flight drain (stop returns only when no
+        // loop is running), so the second stop runs CONCURRENTLY here
+        // — a sequential `await stop()` while parked would deadlock
+        // the test body before `gate.open()` by design, not by bug.
+        // The pins are unchanged: publication preserved, start
+        // suspends mid-drain (single loop after), everything drains
+        // orderly. Every phase is watchdog-bounded (fail loud, never
+        // hang the suite).
         let container = try CoreModel.makeContainer(inMemory: true)
         let clock = TestSyncClock(Self.fixedNow)
         let mock = MockGoogleReconcileClient()
@@ -253,20 +268,28 @@ import Testing
         await gate.waitUntilEntered()
         let stopFirst = Task { await coordinator.stop() }
         guard await settle("stop#1 nils the handle", { !(await coordinator.isLoopRunning) }) else { return }
-        await coordinator.stop()
+        // Concurrent (see header): stop#2 must WAIT here, not return.
+        let secondDone = StopFlag()
+        let stopSecond = Task {
+            await coordinator.stop()
+            await secondDone.set()
+        }
         var startReturned = false
         let restart = Task {
             await coordinator.start()
             startReturned = true
         }
-        // Verdict phase: give the restart task generous time to run
-        // its start() call, then pin SUSPENSION (a launch here is the
-        // bug — the publication was erased).
+        // Verdict phase: give both tasks generous time to run their
+        // calls, then pin SUSPENSION (a start launch here is the
+        // round-8 bug — the publication was erased; a stop#2 return
+        // here is the round-9 bug — the drain was skipped).
         try await Task.sleep(for: .milliseconds(500))
         #expect(!startReturned)
+        #expect(await secondDone.get() == false)
         await gate.open()
         // Drain phase: every join bounded by the same watchdog.
         await stopFirst.value
+        await stopSecond.value
         guard await settle("restart launches after drain", { startReturned }) else { return }
         await restart.value
         guard await settle("restarted loop drains", { !(await coordinator.isLoopRunning) }) else { return }
@@ -304,6 +327,116 @@ import Testing
             return
         }
         #expect(await resolver.trackedRunCount() == 0)
+    }
+
+    @Test func failedChunkLeavesNoLinkResidueOnSurvivingRows() async throws {
+        // Round-9 item 7: the exercised session records a link for its
+        // row, then page 2 fails. The upsert rolls back — but the row
+        // PRE-EXISTED (committed before the run), so it survives. The
+        // old catch applied the drained links and `try?` saved them
+        // onto that survivor (stale link permanent — upsert never
+        // resets `linkedWatchWorkoutUUID`). Drained must mean DROPPED.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let survivor = LocalSample(
+            externalID: "flip-link-1",
+            dataType: GoogleDataType.exercise.rawValue,
+            payloadJSON: Data(),
+            start: BackfillTestFixtures.date("2026-07-09T10:02:00Z"),
+            end: BackfillTestFixtures.date("2026-07-09T10:43:00Z"),
+            source: "flip"
+        )
+        let seed = ModelContext(container)
+        seed.insert(survivor)
+        try seed.save()
+        let mock = MockGoogleReconcileClient()
+        let session = [TypeMapperFixtures.exercisePoint(
+            id: "flip-link-1",
+            start: BackfillTestFixtures.date("2026-07-09T10:02:00Z"),
+            end: BackfillTestFixtures.date("2026-07-09T10:43:00Z")
+        )]
+        mock.setScript(
+            type: .exercise,
+            pageToken: nil,
+            results: [.success(Page(points: session, nextPageToken: "flip-p2"))]
+        )
+        mock.setScript(
+            type: .exercise,
+            pageToken: "flip-p2",
+            results: [.failure(.server(status: 500))]
+        )
+        let coverage = StubWatchCoverageProvider()
+        coverage.windows = [WatchConflictResolverTests.morningRunWindow()]
+        let resolver = WatchConflictResolver(
+            coverageProvider: coverage,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            preference: StubWatchPriorityPreference(enabled: true)
+        )
+        let coordinator = BackfillCoordinator(
+            types: [.exercise],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            conflictFilter: resolver,
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
+            horizon: .days90
+        )
+        let outcome = await coordinator.runNextChunk(for: .exercise)
+        guard case .failed = outcome else {
+            Issue.record("expected failed, got \(outcome)")
+            return
+        }
+        let survivors = try ModelContext(container).fetch(FetchDescriptor<LocalSample>(
+            predicate: #Predicate { $0.externalID == "flip-link-1" }
+        ))
+        let row = try #require(survivors.first)
+        #expect(row.linkedWatchWorkoutUUID == nil)
+        #expect(await resolver.trackedRunCount() == 0)
+    }
+
+    @Test func stopWaitsForDrainOnAllPaths() async throws {
+        // Round-9 item 14: stop#1 publishes the draining loop; stop#2
+        // (nil handle) must ALSO wait for it — not return while the
+        // retired walk still drains (postcondition broken for
+        // stop-then-wipe callers). Pre-fix stop#2 returned immediately.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        mock.setPage(type: .steps, pageToken: nil, page: Page(points: [], nextPageToken: nil))
+        let gate = AsyncGate()
+        mock.gate = gate
+        let coordinator = BackfillCoordinator(
+            types: [.steps],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
+            horizon: .days90
+        )
+        await coordinator.start()
+        await gate.waitUntilEntered()
+        let stopFirst = Task { await coordinator.stop() }
+        let start = Date.now
+        while await coordinator.isLoopRunning {
+            await Task.yield()
+            if Date.now.timeIntervalSince(start) > 10 {
+                Issue.record("stop#1 never nilled the handle")
+                break
+            }
+        }
+        let secondDone = StopFlag()
+        let stopSecond = Task {
+            await coordinator.stop()
+            await secondDone.set()
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await secondDone.get() == false)
+        await gate.open()
+        await stopFirst.value
+        await stopSecond.value
+        #expect(!(await coordinator.isLoopRunning))
     }
 
     @Test func allDisabledLoopExitsAndRestartsOnReenable() async throws {

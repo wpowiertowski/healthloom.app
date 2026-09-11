@@ -289,12 +289,16 @@ struct ReadinessScoreHistory {
     func record(score: Int, today: Date = Date()) {
         let todayString = Self.dayString(today)
         let cutoff = Self.cutoffString(today: today)
-        // Same-day replace + age prune + 30-entry cap (belt, braces,
-        // and suspenders — any one bounds the plist; all three keep
-        // the stored shape self-describing).
+        // Same-day replace + age prune + 31-entry cap. The cap is 31,
+        // not 30 (round-9 item 10): a full 30-day window plus today is
+        // 31 rows — capping at 30 drops the oldest IN-WINDOW day, so
+        // the average covers 29 while the caption promises 30. The
+        // window (not the cap) is the semantic; the cap only bounds a
+        // pathological clock (31 rows max, one per day by construction
+        // — same-day replaces, so 31 distinct days is the ceiling).
         var entries = Self.load(from: defaults).filter { $0.day != todayString && $0.day >= cutoff }
         entries.append(Entry(day: todayString, score: score))
-        defaults.set(Array(entries.suffix(30)).map { [$0.day, String($0.score)] }, forKey: Self.defaultsKey)
+        defaults.set(Array(entries.suffix(31)).map { [$0.day, String($0.score)] }, forKey: Self.defaultsKey)
     }
 
     private struct Entry: Equatable {

@@ -613,18 +613,38 @@ import Testing
         #expect(state.lastSyncedAt == nil) // cursor unmoved
     }
 
-    // MARK: - Fix N1, empty UUID set is not known
+    // MARK: - Fix round-9, unstamped members throw (items 4+6+9+11)
 
-    @Test func emptyUUIDSetIsNotKnown() {
-        // Round-8 fix N1: pins `isKnown`'s table directly — an empty
-        // emitted-UUID set must take the write path (only base/split
-        // legs can still skip it), never the vacuous allSatisfy.
-        let known: Set<String> = ["other"]
-        #expect(PagePipeline.isKnown(baseID: "p", uuids: [], splitBases: [], in: known) == false)
-        #expect(PagePipeline.isKnown(baseID: "other", uuids: [], splitBases: [], in: known) == true)
-        #expect(PagePipeline.isKnown(baseID: "p", uuids: [], splitBases: ["p"], in: known) == true)
-        #expect(PagePipeline.isKnown(baseID: "p", uuids: ["p#0", "p#1"], splitBases: [], in: ["p#0", "p#1"]) == true)
-        #expect(PagePipeline.isKnown(baseID: "p", uuids: ["p#0", "p#1"], splitBases: [], in: ["p#0"]) == false)
+    @Test func unstampedMembersThrowLoudly() throws {
+        // Round-9 items 4+6 (superseding fix-round N1's helper-table
+        // test — deleted with it, `isKnown` private again): the ONE
+        // coherent unstamped rule is enforced in `checkedUUIDs` — a
+        // fully-stamped batch passes through, an empty batch passes
+        // through (nothing to dedupe), but a PARTIALLY-stamped batch
+        // throws instead of writing dupes forever or dropping
+        // silently. Unreachable through `processPage` (every emitter
+        // stamps), so pinned here at the enforcement point itself.
+        let stepsType = try #require(HKObjectType.quantityType(forIdentifier: .stepCount))
+        let stamped = HKQuantitySample(
+            type: stepsType,
+            quantity: HKQuantity(unit: .count(), doubleValue: 1),
+            start: Self.fixedNow,
+            end: Self.fixedNow,
+            metadata: [HKMetadataKeyExternalUUID: "s-1"]
+        )
+        let unstamped = HKQuantitySample(
+            type: stepsType,
+            quantity: HKQuantity(unit: .count(), doubleValue: 1),
+            start: Self.fixedNow,
+            end: Self.fixedNow,
+            metadata: [:]
+        )
+        #expect(try PagePipeline.checkedUUIDs([stamped], baseID: "s") == ["s-1"])
+        let empty: [HKQuantitySample] = []
+        #expect(try PagePipeline.checkedUUIDs(empty, baseID: "s").isEmpty)
+        #expect(throws: UnstampedSample.self) {
+            try PagePipeline.checkedUUIDs([stamped, unstamped], baseID: "s")
+        }
     }
 
     // MARK: - Item 10, failed completion save surfaces

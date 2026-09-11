@@ -459,7 +459,7 @@ struct WipeableTypesTests {
         // through any other channel breaks this equality loudly.
         let wipeable = try HealthKitSourceDeleter.wipeableTypes()
         let expected = try HealthKitAuth().authorizedShareTypes(
-            sharing: AppEnvironment.p0Types,
+            sharing: SyncPreferences.healthKitWritableTypes,
             includingWorkoutShare: true
         )
         #expect(Set(wipeable) == expected)
@@ -469,6 +469,19 @@ struct WipeableTypesTests {
             let distance = try #require(HKObjectType.quantityType(forIdentifier: identifier))
             #expect(wipeable.contains(distance))
         }
+    }
+
+    @Test("newly-writable types land in the wipe")
+    func newlyWritableTypesWiped() throws {
+        // Round-9 item 1: round-8 widened the share to the funnel but
+        // the wipe still defaulted to p0Types — newly-writable types
+        // authorized-but-never-wiped, no ledger row. `.floors` is in
+        // the funnel and outside P0: its HealthKit type must wipe.
+        #expect(SyncPreferences.healthKitWritableTypes.contains(.floors))
+        #expect(!AppEnvironment.p0Types.contains(.floors))
+        let wipeable = try HealthKitSourceDeleter.wipeableTypes()
+        let flights = try #require(HKObjectType.quantityType(forIdentifier: .flightsClimbed))
+        #expect(wipeable.contains(flights))
     }
 
     @Test("narrowed request still wipes the historical floor")
