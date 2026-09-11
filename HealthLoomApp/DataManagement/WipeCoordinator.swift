@@ -24,6 +24,7 @@ import Foundation
 import GoogleHealthClient
 import HealthKit
 import Secrets
+import SyncKit
 
 @MainActor
 @Observable
@@ -58,6 +59,16 @@ final class WipeCoordinator {
     }
 
     struct Dependencies {
+        /// Quiesces every writer trigger for the wipe duration AND after
+        /// (round-10 item 1: one-way latch — background/foreground work
+        /// must not resurrect cleared records or write through the
+        /// unlinked store handle). Runs FIRST, before revoke. Defaulted
+        /// no-op so scripted test doubles that don't probe ordering keep
+        /// compiling. (No property-level default: this struct carries an
+        /// explicit init — see below — and a default in both places is a
+        /// double-initialization error. The default lives on the init
+        /// parameter.)
+        let quiesceWriters: () -> Void
         /// Google token revocation. Throws on transport/endpoint failure;
         /// `.nothingStored` is success (never consented / already wiped).
         let revokeGoogle: () async throws -> RevocationOutcome
@@ -77,6 +88,29 @@ final class WipeCoordinator {
         let deleteStore: () throws -> [URL]
         /// Resets persisted preferences.
         let resetDefaults: () -> Void
+
+        /// Explicit init (round-10 item 1 toolchain note): this
+        /// toolchain's memberwise initializer EXCLUDES defaulted
+        /// properties (probe-proven), so the defaulted `quiesceWriters`
+        /// needs a hand-written init to stay both defaulted and
+        /// passable.
+        init(
+            quiesceWriters: @escaping () -> Void = {},
+            revokeGoogle: @escaping () async throws -> RevocationOutcome,
+            deleteAllKeys: @escaping () async throws -> Void,
+            deleteHealthKit: @escaping () async throws -> [HKObjectType: Result<Int, Error>],
+            deleteCloudKit: @escaping () async throws -> Int,
+            deleteStore: @escaping () throws -> [URL],
+            resetDefaults: @escaping () -> Void
+        ) {
+            self.quiesceWriters = quiesceWriters
+            self.revokeGoogle = revokeGoogle
+            self.deleteAllKeys = deleteAllKeys
+            self.deleteHealthKit = deleteHealthKit
+            self.deleteCloudKit = deleteCloudKit
+            self.deleteStore = deleteStore
+            self.resetDefaults = resetDefaults
+        }
     }
 
     private(set) var states: [Step: StepState] = Dictionary(
@@ -109,6 +143,12 @@ final class WipeCoordinator {
             isRunning = false
             isFinished = true
         }
+
+        // 0. Quiesce first of all (round-10 item 1): from here until
+        // relaunch, no trigger may write — racing writers would
+        // resurrect records mid-wipe and write through the unlinked
+        // store handle after it.
+        deps.quiesceWriters()
 
         // 1. Revoke first: the only step that needs a live secret.
         await perform(.revokeGoogle) {
@@ -174,7 +214,11 @@ final class WipeCoordinator {
             // Human retry guidance, never enum-debug (F5).
             states[step] = .failed(wipeError.stepDetail)
         } catch {
-            states[step] = .failed(String(describing: error))
+            // Round-10 item 6: redacted (D11) — a raw
+            // `String(describing:)` can carry bearer tokens or
+            // authenticated URLs into the step ledger (same surface
+            // SyncEngine redacts at its catch).
+            states[step] = .failed(SyncLogRedactor.redact(String(describing: error)))
         }
     }
 }
@@ -182,6 +226,43 @@ final class WipeCoordinator {
 /// Wipe-local errors. Log-safe by construction (counts and type display
 /// names only, never payloads or tokens). The partial case renders
 /// directly into the step row — human retry guidance, never enum-debug.
+/// One-way wipe latch (round-10 item 1): set when a wipe STARTS, never
+/// cleared except by relaunch. Every writer trigger (foreground syncNow,
+/// insight runner, backfill loop, BG handler) checks it and no-ops —
+/// otherwise background+foreground work recreates iCloud records,
+/// defaults markers, and store rows WITHOUT relaunch, or writes through
+/// the SQLite handle on the unlinked store file. Lock-guarded statics
+/// (the `EphemeralDefaultsJanitor` precedent): readable from any
+/// isolation, including the nonisolated BG launch handler that cannot
+/// capture `AppEnvironment`. Production closures read it; tests inject
+/// scripted closures and never touch the static (plus `resetForTesting`
+/// for the latch's own unit test).
+
+enum WipeQuiesce {
+    // `nonisolated` throughout (the `BackgroundSync` precedent): this
+    // latch is read from nonisolated contexts (notably the BG launch
+    // handler), and this target defaults to MainActor isolation.
+    nonisolated private static let lock = NSLock()
+    // `nonisolated(unsafe)` + lock discipline (the janitor precedent):
+    // the compiler can't see the locking, so the unsafety is stated
+    // and the discipline is reviewed, not inferred.
+    nonisolated(unsafe) private static var latched = false
+
+    nonisolated static func latch() {
+        lock.withLock { latched = true }
+    }
+
+    nonisolated static var isLatched: Bool {
+        lock.withLock { latched }
+    }
+
+    /// Test-only reset (the latch's own unit test; production never
+    /// clears — only relaunch does).
+    nonisolated static func resetForTesting() {
+        lock.withLock { latched = false }
+    }
+}
+
 enum WipeError: Error, Equatable {
     case healthKitPartial(deleted: Int, failedTypeNames: [String])
 

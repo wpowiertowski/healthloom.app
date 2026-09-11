@@ -295,13 +295,17 @@ public actor WatchConflictResolver: ConflictFiltering {
             }
             guard !conflicting.isEmpty else { return }
 
-            // The workout's attached distance/energy samples carry the same
-            // external-ID stamp (HealthKitWriter.saveWorkout's metadata,
-            // D4), so one multi-type delete removes the workout and its
-            // attachments together. The sweep covers every distance bucket
-            // the writer can emit (HealthKitWriter.distanceIdentifier's
-            // non-nil rows) -- sweeping only walkingRunning would leave
-            // cycling/swimming/rowing attachments behind as orphans.
+            // The workout's attached distance/energy samples carry
+            // ROLE-SUFFIXED stamps (round-7 item 3 + round-8 item 2) —
+            // deleting only the base IDs orphaned the attachments
+            // forever (double-count vs the watch). Expand with the same
+            // roles `saveWorkout` stamped (`MappedMetadata
+            // .workoutAttachmentRoles` — one home for both); exact-match
+            // misses on other types are harmless. The sweep covers every
+            // distance bucket the writer can emit (HealthKitWriter
+            // .distanceIdentifier's non-nil rows) -- sweeping only
+            // walkingRunning would leave cycling/swimming/rowing
+            // attachments behind as orphans.
             var sweepTypes: [HKObjectType] = [workoutType]
             for identifier in HealthKitWriter.distanceIdentifiersForCleanup {
                 if let distanceType = HKObjectType.quantityType(forIdentifier: identifier) {
@@ -311,7 +315,13 @@ public actor WatchConflictResolver: ConflictFiltering {
             if let energyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
                 sweepTypes.append(energyType)
             }
-            try await writer.delete(externalIDs: Set(conflicting.map(\.externalID)), types: sweepTypes)
+            var deleteIDs = Set(conflicting.map(\.externalID))
+            for base in conflicting.map(\.externalID) {
+                for role in MappedMetadata.workoutAttachmentRoles {
+                    deleteIDs.insert(MappedMetadata.suffixedUUID(base: base, role: role))
+                }
+            }
+            try await writer.delete(externalIDs: deleteIDs, types: sweepTypes)
         }
     }
 }

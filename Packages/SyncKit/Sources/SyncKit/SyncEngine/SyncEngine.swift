@@ -252,33 +252,34 @@ public actor SyncEngine {
 
             // Round-6 item 8: the bounded shared walk (same-token
             // break, page cap, cancellation probe — see PagePipeline).
-            // `.localOnly` upserts stay on this executor. Partial
-            // progress on a throwing page still counts (the header's
-            // informational-count contract).
-            do {
-                let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
-                    .processPages(knownExternalIDs: knownExternalIDs) { token in
-                        try await client.reconcile(
-                            type: type, since: windowStart, until: windowEnd, pageToken: token
-                        )
-                    }
-                for point in walked.localOnly {
-                    PagePipeline.upsertLocalSample(for: point, context: context)
-                }
-                totalItemCount += walked.total
-                // Fix-round N3: a cap-hit still advances the cursor
-                // with a partial `.ok` — log it loudly. Anything past
-                // the cap in this window is recovered only through
-                // lookback overlap on later runs, so silence here would
-                // read as full success.
-                if walked.hitPageCap {
-                    DiagnosticsLog.sync.notice(
-                        "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial window committed; remainder beyond lookback overlap will not be revisited."
+            // `.localOnly` upserts stay on this executor (round-10 item
+            // 14: the pipeline resumes off-actor after its awaits, and
+            // `ModelContext` is not thread-safe — context work never
+            // crosses into it). A throwing page propagates
+            // `PageWalkPartial` to the run's catch below, which commits
+            // the completed pages' rows there.
+            let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
+                .processPages(knownExternalIDs: knownExternalIDs) { token in
+                    try await client.reconcile(
+                        type: type, since: windowStart, until: windowEnd, pageToken: token
                     )
                 }
-            } catch let walk as PageWalkPartial {
-                totalItemCount += walk.total
-                throw walk.underlying
+            for point in walked.localOnly {
+                // Round-8 item 13: throws on unencodable payloads (no
+                // silent zero-byte rows) — into the run's existing
+                // failure path (cursor unmoved, error surfaced).
+                try PagePipeline.upsertLocalSample(for: point, context: context)
+            }
+            totalItemCount += walked.total
+            // Fix-round N3: a cap-hit still advances the cursor
+            // with a partial `.ok` — log it loudly. Anything past
+            // the cap in this window is recovered only through
+            // lookback overlap on later runs, so silence here would
+            // read as full success.
+            if walked.hitPageCap {
+                DiagnosticsLog.sync.notice(
+                    "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial window committed; remainder beyond lookback overlap will not be revisited."
+                )
             }
 
             // WP-12b: apply deferred-session links (external ID -> watch
@@ -329,13 +330,44 @@ public actor SyncEngine {
             // `fetchOrCreateSyncState`'s insert on a first-ever sync.
             let syncState = fetchOrCreateSyncState(for: type, context: context)
 
+            // Round-10 item 14: commit the completed pages' `.localOnly`
+            // rows even though the walk failed (upserted here, on this
+            // executor, ahead of the error-row saves below that commit
+            // them — the cursor still holds, so the window re-pulls
+            // idempotently around the persisted rows). The walk counted
+            // them, so the count reflects persisted rows exactly:
+            // subtract any upsert that fails rather than masking the
+            // original error with a new throw. Unwrap for everything
+            // below — a bare check on the wrapper would misclassify a
+            // cancelled walk as failed.
+            let effective = (error as? PageWalkPartial)?.underlying ?? error
+            if let walk = error as? PageWalkPartial {
+                totalItemCount += walk.total
+                var upsertFailures = 0
+                for point in walk.localOnly {
+                    do {
+                        try PagePipeline.upsertLocalSample(for: point, context: context)
+                    } catch {
+                        upsertFailures += 1
+                    }
+                }
+                if upsertFailures > 0 {
+                    DiagnosticsLog.sync.notice(
+                        "Dropped \(upsertFailures, privacy: .public) unencodable local-only point(s) from a failed walk's count — rows never persisted, never counted."
+                    )
+                    totalItemCount -= upsertFailures
+                }
+            }
+
             // WP-12b: same drains on the failure path -- draining the count
             // both reports partial progress and resets the resolver's state
-            // so nothing leaks into the next run. (Links drain too, but
-            // their rows were rolled back above, so they drop silently per
-            // `applyDeferredSessionLinks`' contract and are re-recorded on
-            // the re-pull.)
-            PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+            // so nothing leaks into the next run. Links drain WITHOUT
+            // applying (round-9 item 7): the old apply-then-save stamped
+            // them onto SURVIVING pre-existing rows, and the upsert never
+            // resets `linkedWatchWorkoutUUID` -- a stale link went
+            // permanent. Drained here means DROPPED here (re-recorded on
+            // the re-pull, like the resolver state itself).
+            _ = await conflictFilter.drainDeferredSessionLinks(for: type)
             let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
 
             // Cancellation is a stop, not a failure: no error status, no
@@ -343,7 +375,7 @@ public actor SyncEngine {
             // window. (Without this branch a routine expiration-handler
             // cancel paints a red dashboard row for the system doing its
             // job.)
-            if error is CancellationError || (error as? GoogleHealthClientError) == .cancelled {
+            if effective is CancellationError || (effective as? GoogleHealthClientError) == .cancelled {
                 // Status moves, message stays: a previous run's genuine
                 // error is evidence for the user/support, and a stop
                 // resolves nothing about it. Clearing it here would trade
@@ -367,7 +399,9 @@ public actor SyncEngine {
             // doc): pipeline errors can embed bearer tokens or
             // authenticated URLs; the sync-log path already redacts via
             // SyncLogRedactor -- this persisted/UI-rendered path must too.
-            let message = SyncLogRedactor.redact(String(describing: error))
+            // `effective` (not the wrapper): the ledger should name the
+            // page failure, never `PageWalkPartial(...)` debug output.
+            let message = SyncLogRedactor.redact(String(describing: effective))
             syncState.lastStatus = SyncStatus.error.rawValue
             syncState.lastError = message
             try? context.save()

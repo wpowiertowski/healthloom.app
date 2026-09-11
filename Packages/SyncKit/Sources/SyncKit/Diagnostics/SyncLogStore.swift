@@ -30,13 +30,24 @@ import Foundation
 /// no external locking.
 public actor SyncLogStore {
     public static let defaultCapacity = 500
+    /// Full-rewrite compaction cadence (round-10 item 13): the file may
+    /// hold up to `capacity + compactionInterval` lines between rewrites
+    /// (`load` caps on read, so readers never see the slack).
+    public static let defaultCompactionInterval = 100
 
     private let capacity: Int
+    private let compactionInterval: Int
     private let persistence: any SyncLogPersisting
     private var entries: [SyncLogEntry]
+    private var appendsSinceCompaction = 0
 
-    public init(capacity: Int = SyncLogStore.defaultCapacity, persistence: any SyncLogPersisting = FileSyncLogPersistence()) {
+    public init(
+        capacity: Int = SyncLogStore.defaultCapacity,
+        compactionInterval: Int = SyncLogStore.defaultCompactionInterval,
+        persistence: any SyncLogPersisting = FileSyncLogPersistence()
+    ) {
         self.capacity = capacity
+        self.compactionInterval = compactionInterval
         self.persistence = persistence
         var loaded = persistence.load()
         if loaded.count > capacity {
@@ -47,14 +58,25 @@ public actor SyncLogStore {
 
     /// Appends one entry, evicting the oldest entries first if `capacity` is
     /// now exceeded (strict FIFO -- see this file's header for the sizing
-    /// rationale). Persists the post-eviction array on every append so a
-    /// killed app never loses more than the in-flight entry.
+    /// rationale). Persists the single entry immediately (O(1)
+    /// append-line, so a killed app never loses more than the in-flight
+    /// entry) and full-rewrites only every `compactionInterval` appends
+    /// once at cap (amortized O(1)-ish file writes instead of a 500-row
+    /// re-encode per entry -- the 26-encodes-per-wake shape round-10 item
+    /// 13 removes).
     public func append(_ entry: SyncLogEntry) {
         entries.append(entry)
         if entries.count > capacity {
             entries.removeFirst(entries.count - capacity)
         }
-        persistence.save(entries)
+        persistence.append(entry)
+        if entries.count >= capacity {
+            appendsSinceCompaction += 1
+            if appendsSinceCompaction >= compactionInterval {
+                appendsSinceCompaction = 0
+                persistence.save(entries)
+            }
+        }
     }
 
     /// Chronological (oldest-first) order, optionally windowed to the
@@ -83,6 +105,7 @@ public actor SyncLogStore {
     /// own "kept for symmetry" precedent (Backfill/BackfillTypes.swift).
     public func clear() {
         entries = []
+        appendsSinceCompaction = 0
         persistence.save(entries)
     }
 }

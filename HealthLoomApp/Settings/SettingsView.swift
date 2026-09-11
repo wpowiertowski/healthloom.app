@@ -37,6 +37,7 @@ import CoreModel
 import GoogleHealthClient
 import SwiftData
 import SwiftUI
+import SyncKit
 
 struct SettingsView: View {
     /// Reachable both as a tab root (`HomeView`) and pushed from the Data
@@ -505,6 +506,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .onDisappear(perform: sweepStagedExport)
     }
 
     private func row(for type: GoogleDataType) -> some View {
@@ -534,6 +536,15 @@ struct SettingsView: View {
         insightAuthStatus = await appEnvironment.insightNotifier.authorizationStatus()
     }
 
+    /// Round-10 item 15: sweep the staged export when leaving Settings
+    /// (`ShareLink` offers no dismissal callback, and the sheet reads
+    /// the file lazily while open — so the safe sweep points are
+    /// view-disappear and re-prepare, both after any sheet is gone).
+    private func sweepStagedExport() {
+        exportURL = nil
+        _ = try? StoreDeleter.deleteExportFiles()
+    }
+
     /// WP-35 export: fetches every exportable row, encodes the versioned
     /// document, and stages a temp file for the `ShareLink` above. Errors
     /// surface inline (never a silent no-op). Previous staged files are
@@ -541,7 +552,7 @@ struct SettingsView: View {
     private func prepareExport() {
         isExporting = true
         exportError = nil
-        exportURL = nil
+        sweepStagedExport() // round-10 item 15: re-prepare retires the previous staged file now, not at some later export/wipe
         Task {
             defer { isExporting = false }
             do {
@@ -620,7 +631,7 @@ struct SettingsView: View {
                 guard consentAttempts[type] == attempt else { return }
                 consentAttempts[type] = nil
                 preferences.setEnabled(false, for: type)
-                scopeErrors[type] = "Couldn't confirm Google access for \(displayName(type)): \(error)"
+                scopeErrors[type] = "Couldn't confirm Google access for \(displayName(type)): \(SyncLogRedactor.redact(String(describing: error)))"
             }
         }
     }
@@ -638,17 +649,17 @@ struct SettingsView: View {
         Task {
             defer { isRefreshingHealthSharing = false }
             do {
+                // Round-9 item 2: same funnel as onboarding — the old
+                // p0Types share defeated this repair path's purpose
+                // (pre-widening installs stayed narrow after repair).
                 try await appEnvironment.healthKitAuth.requestShareAndRead(
-                    share: AppEnvironment.p0Types,
-                    read: [
-                        .exercise, .heartRate, .steps, .sleep, .weight,
-                        .oxygenSaturation, .distance, .activeEnergyBurned,
-                    ],
+                    share: SyncPreferences.healthKitWritableTypes,
+                    read: SyncPreferences.healthKitReadTypes,
                     includingWorkoutShare: true
                 )
                 healthSharingMessage = "Health sharing is up to date."
             } catch {
-                healthSharingMessage = "Couldn't update Health sharing: \(error)"
+                healthSharingMessage = "Couldn't update Health sharing: \(SyncLogRedactor.redact(String(describing: error)))"
             }
         }
     }

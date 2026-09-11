@@ -69,6 +69,7 @@ import Testing
             writer: HealthKitWriter(store: store),
             modelContainer: container,
             clock: TestSyncClock(Self.fixedNow),
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
             horizon: .days90
         )
 
@@ -124,6 +125,7 @@ import Testing
             modelContainer: container,
             clock: TestSyncClock(Self.fixedNow),
             sampleTypeResolver: { _ throws(UnresolvedHealthKitIdentifier) in throw UnresolvedHealthKitIdentifier(identifier: "bogus") },
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
             horizon: .days90
         )
 
@@ -158,6 +160,7 @@ import Testing
             modelContainer: container,
             clock: TestSyncClock(Self.fixedNow),
             disabledTypes: { [.steps] },
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
             horizon: .days90
         )
         #expect(await coordinator.runNextChunk(for: .steps) == .suspendedDisabled)
@@ -223,6 +226,7 @@ import Testing
             writer: HealthKitWriter(store: MockHealthStore()),
             modelContainer: container,
             clock: TestSyncClock(Self.fixedNow),
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
             horizon: .days90
         )
         let outcome = await coordinator.runNextChunk(for: .steps)
@@ -569,6 +573,105 @@ import Testing
         // the two parts — the base row was cleaned up, not kept.
         let liveUUIDs = Self.uuids(of: store.entries.map(\.sample))
         #expect(Set(liveUUIDs) == ["steps-flip-2#split-0", "steps-flip-2#split-1"])
+    }
+
+    // MARK: - Item 13, unencodable payload fails loud, cursor unmoved
+
+    @Test func nonFinitePayloadFailsLoudlyCursorUnmoved() async throws {
+        // Round-8 item 13: a NaN in the values makes the payload
+        // unencodable — the run must FAIL (error status, no cursor
+        // advance, no row), never persist a zero-byte row it counts
+        // and commits past. Pre-fix: `.ok`, one empty row, cursor
+        // advanced (downstream readers choke, never re-pulled).
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        let start = Self.fixedNow.addingTimeInterval(-3600)
+        let point = GoogleDataPoint(
+            id: "ecg-nan-1",
+            dataType: .electrocardiogram,
+            start: start,
+            end: start.addingTimeInterval(30),
+            source: DataSource(platform: "IOS", deviceDisplayName: "Apple Watch", recordingMethod: "AUTOMATICALLY_RECORDED"),
+            values: ["junk": Double.nan]
+        )
+        mock.setPage(type: .electrocardiogram, pageToken: nil, page: Page(points: [point], nextPageToken: nil))
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .electrocardiogram)
+        #expect(outcome.status == .error)
+        #expect(outcome.itemCount == 0)
+        let context = ModelContext(container)
+        #expect(try context.fetch(FetchDescriptor<LocalSample>()).isEmpty)
+        let key = GoogleDataType.electrocardiogram.rawValue
+        let state = try #require(try context.fetch(
+            FetchDescriptor<SyncState>(predicate: #Predicate { $0.dataType == key })
+        ).first)
+        #expect(state.lastSyncedAt == nil) // cursor unmoved
+    }
+
+    // MARK: - Fix round-9, unstamped members throw (items 4+6+9+11)
+
+    @Test func unstampedMembersThrowLoudly() throws {
+        // Round-9 items 4+6 (superseding fix-round N1's helper-table
+        // test — deleted with it, `isKnown` private again): the ONE
+        // coherent unstamped rule is enforced in `checkedUUIDs` — a
+        // fully-stamped batch passes through, an empty batch passes
+        // through (nothing to dedupe), but a PARTIALLY-stamped batch
+        // throws instead of writing dupes forever or dropping
+        // silently. Unreachable through `processPage` (every emitter
+        // stamps), so pinned here at the enforcement point itself.
+        let stepsType = try #require(HKObjectType.quantityType(forIdentifier: .stepCount))
+        let stamped = HKQuantitySample(
+            type: stepsType,
+            quantity: HKQuantity(unit: .count(), doubleValue: 1),
+            start: Self.fixedNow,
+            end: Self.fixedNow,
+            metadata: [HKMetadataKeyExternalUUID: "s-1"]
+        )
+        let unstamped = HKQuantitySample(
+            type: stepsType,
+            quantity: HKQuantity(unit: .count(), doubleValue: 1),
+            start: Self.fixedNow,
+            end: Self.fixedNow,
+            metadata: [:]
+        )
+        #expect(try PagePipeline.checkedUUIDs([stamped], baseID: "s") == ["s-1"])
+        let empty: [HKQuantitySample] = []
+        #expect(try PagePipeline.checkedUUIDs(empty, baseID: "s").isEmpty)
+        #expect(throws: UnstampedSample.self) {
+            try PagePipeline.checkedUUIDs([stamped, unstamped], baseID: "s")
+        }
+    }
+
+    @Test func mismatchedWorkoutStampThrowsLoudly() throws {
+        // Round-10 item 9: the `.workout` arm's equivalent gate — the
+        // spec must carry exactly the point's base UUID (workout-level
+        // metadata keeps the base, never a suffix). A missing or
+        // drifted stamp would rewrite every sync, silently (the
+        // UnstampedSample-loud class). Unreachable through
+        // `processPage` (the mapper always stamps `point.id`), so
+        // pinned here at the gate itself.
+        func workout(stamp: String) -> MappedWorkout {
+            MappedWorkout(
+                activityType: .running,
+                start: Self.fixedNow,
+                end: Self.fixedNow,
+                distanceMeters: nil,
+                energyKilocalories: nil,
+                metadata: MappedMetadata(externalUUID: stamp, externalID: stamp, sourceDevice: nil)
+            )
+        }
+        try PagePipeline.checkedWorkoutUUID(workout(stamp: "w-1"), baseID: "w-1")
+        #expect(throws: UnstampedSample.self) {
+            try PagePipeline.checkedWorkoutUUID(workout(stamp: ""), baseID: "w-1")
+        }
+        #expect(throws: UnstampedSample.self) {
+            try PagePipeline.checkedWorkoutUUID(workout(stamp: "w-1#distance"), baseID: "w-1")
+        }
     }
 
     // MARK: - Item 10, failed completion save surfaces

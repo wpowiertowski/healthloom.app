@@ -35,6 +35,16 @@ final class CoachChatViewModel {
         var prompts: PromptManager
         var assembler: ContextAssembler
         var factory: CoachSessionFactory
+        /// Tiers the injected factory actually serves (round-10 item
+        /// 11): the orchestrator map holds ONLY these, so unwired tiers
+        /// hit its `tierUnavailable` guard instead of being answered by
+        /// a tier-blind double and persisted under a false provider.
+        /// Default is production truth (the default factory serves
+        /// on-device live and fail-closes everything else inside
+        /// itself); tier-blind test doubles pass `.allCases` explicitly.
+        /// (No property-level default — explicit init below carries it;
+        /// a default in both places double-initializes.)
+        var wiredTiers: Set<ModelTier>
         var availability: any CoachAvailabilityChecking
         /// WP-29: the tier slot renders the effectively-on tiers (row
         /// toggle AND catalog gate) from this shared wiring -- the same
@@ -42,6 +52,33 @@ final class CoachChatViewModel {
         /// Settings without a relaunch. Interactive switching stays WP-32's.
         var tierSettings: TierSettingsStore
         var tierCatalog: ModelCatalog
+
+        /// Explicit init (round-10 item 1 toolchain note, same as
+        /// `WipeCoordinator.Dependencies`): this toolchain's memberwise
+        /// initializer excludes defaulted properties, so the defaulted
+        /// `wiredTiers` needs a hand-written init to stay both
+        /// defaulted and passable.
+        init(
+            container: ModelContainer,
+            store: KnowledgeStore,
+            prompts: PromptManager,
+            assembler: ContextAssembler,
+            factory: CoachSessionFactory,
+            wiredTiers: Set<ModelTier> = [.onDevice],
+            availability: any CoachAvailabilityChecking,
+            tierSettings: TierSettingsStore,
+            tierCatalog: ModelCatalog
+        ) {
+            self.container = container
+            self.store = store
+            self.prompts = prompts
+            self.assembler = assembler
+            self.factory = factory
+            self.wiredTiers = wiredTiers
+            self.availability = availability
+            self.tierSettings = tierSettings
+            self.tierCatalog = tierCatalog
+        }
     }
 
     /// Tool-set identity for the chat session (WP-22 `toolSetID` contract:
@@ -147,10 +184,7 @@ final class CoachChatViewModel {
     /// The turn pipeline (round-7 item 13): the chat path routes
     /// THROUGH the orchestrator instead of re-implementing its subset
     /// inline — quota fallback, escalation offers, and keyless-tier
-    /// defense fire on real turns. Constructed from the same doubles
-    /// tests already inject (one shared factory serves every tier,
-    /// exactly like the old inline `chatSession` did), so existing
-    /// constructions are untouched. Streaming UX (draft deltas, stop,
+    /// defense fire on real turns. Streaming UX (draft deltas, stop,
     /// partial persist, tab-switch survival) stays here — the
     /// orchestrator decides and streams, this model owns the
     /// transcript.
@@ -163,8 +197,12 @@ final class CoachChatViewModel {
             prompts: deps.prompts,
             assembler: deps.assembler,
             sessions: deps.factory,
+            // Round-10 item 11: ONLY wired tiers are present — unwired
+            // tiers hit the orchestrator's `tierUnavailable` guard
+            // instead of being answered by a tier-blind factory and
+            // persisted under a false provider.
             providerFactories: Dictionary(
-                uniqueKeysWithValues: ModelTier.allCases.map { ($0, deps.factory) }
+                uniqueKeysWithValues: deps.wiredTiers.map { ($0, deps.factory) }
             ),
             catalog: deps.tierCatalog
         )

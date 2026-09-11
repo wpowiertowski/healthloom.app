@@ -85,6 +85,34 @@ enum StoreDeleter {
         return removed
     }
 
+    /// Runs the store delete and the export sweep INDEPENDENTLY,
+    /// aggregating errors (round-8 item 3): extracted so tests drive
+    /// all four success/failure combinations without the view. The
+    /// first error fails the step loudly (rethrow below) — but never
+    /// before the other step had its chance (every-step-attempted).
+    @discardableResult
+    static func deleteStoreAndExports(
+        deleteStore: () throws -> [URL],
+        deleteExports: () throws -> [URL]
+    ) throws -> [URL] {
+        var removed: [URL] = []
+        var firstError: (any Error)?
+        do {
+            removed += try deleteStore()
+        } catch {
+            firstError = error
+        }
+        do {
+            removed += try deleteExports()
+        } catch {
+            firstError = firstError ?? error
+        }
+        if let firstError {
+            throw firstError
+        }
+        return removed
+    }
+
     /// Removes staged export files (`healthloom-export-*.json`, F3): a
     /// complete health-data JSON must not survive a wipe in sandbox tmp,
     /// and re-exports must not accumulate. Prefix-scoped so unrelated tmp

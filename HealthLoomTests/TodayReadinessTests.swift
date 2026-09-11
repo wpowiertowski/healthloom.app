@@ -80,6 +80,56 @@ struct ReadinessScoreHistoryTests {
         #expect(history.recentScores(today: day(1)) == [82])
     }
 
+    @Test func staleEntriesExcludedFromAverageWindow() throws {
+        // Round-8 item 14: a 60-day-old score must not enter the
+        // "30-day average" — the ring alone kept everything.
+        let ephemeral5 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral5.defaults)
+        history.record(score: 90, today: day(-60))
+        history.record(score: 80, today: day(-10))
+        #expect(history.recentScores(today: day(0)) == [80])
+    }
+
+    @Test func insightsOffDailyOpensAccumulateHistory() throws {
+        // Round-10 item 5: drives the view path's exact calls
+        // (assemble -> score -> record) across three days with
+        // signals and NO MorningInsightRunner anywhere — history
+        // accumulates from Today opens alone and the delta appears,
+        // independent of the morning-insights toggle.
+        let ephemeral6 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral6.defaults)
+        let inputs = ReadinessInputsProvider.assemble(ReadinessAggregates(
+            hrvLatestMs: 60, hrvBaselineMs: 50,
+            restingHRLatestBpm: 62, restingHRBaselineBpm: 60,
+            sleepSeconds: 7.5 * 3600, sleepEfficiency: 0.92,
+            priorDayWorkoutKcal: 400
+        ))
+        for offset in [-2, -1, 0] {
+            let result = ReadinessEngine.score(inputs: inputs, recentScores: history.recentScores(today: day(offset)))
+            #expect(result.signalsUsed > 0)
+            history.record(score: result.score, today: day(offset))
+        }
+        #expect(history.recentScores(today: day(0)).count == 2)
+        let final = ReadinessEngine.score(inputs: inputs, recentScores: history.recentScores(today: day(0)))
+        #expect(final.deltaVsAverage != nil)
+    }
+
+    @Test func fullWindowCoversThirtyDays() throws {
+        // Round-9 item 10: 31 consecutive days recorded — the average
+        // must cover exactly the 30 promised (today excluded, oldest
+        // in-window day kept). Pre-fix the 30-cap dropped the oldest
+        // in-window day and the average covered 29.
+        let ephemeral5 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral5.defaults)
+        for offset in (-30)...0 {
+            history.record(score: 70 + offset, today: day(offset))
+        }
+        let recent = history.recentScores(today: day(0))
+        #expect(recent.count == 30)
+        #expect(recent.first == 70 - 30)
+        #expect(recent.last == 70 - 1)
+    }
+
     @Test func ringCapsAtThirty() throws {
         let ephemeral4 = try makeDefaults()
         let history = ReadinessScoreHistory(defaults: ephemeral4.defaults)

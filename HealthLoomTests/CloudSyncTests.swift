@@ -12,16 +12,18 @@
 //   missing-field records are skipped without touching local state.
 // - turns: new turns push once (watermark advances); existing records
 //   are never rewritten; pull inserts missing turns, skips present ones.
-// - account/offline: no account → silent local-only + queued outbox;
-//   undetermined → queued; retryable → queued + "will retry" status;
-//   structural failure → surfaced, NOT queued; outage→recovery flushes.
+// - account/offline: no account → silent local-only + retry flag;
+//   undetermined → flagged; retryable → flagged + "will retry" status;
+//   structural failure → surfaced, NOT flagged; outage→recovery clears.
 // - privacy: HealthKit-shaped fields are rejected by the allowlist, and
 //   a source grep-test proves no HK symbol exists in the sync directory.
 
 import CloudKit
+import CoachKit
 import CoreModel
 import Foundation
 import SwiftData
+import SyncKit
 import Testing
 @testable import HealthLoom
 
@@ -39,6 +41,16 @@ actor StubCloudDatabase: CloudDatabase {
     var queryError: CloudSyncError?
     func setTurnPageSize(_ size: Int?) { turnPageSize = size }
     func setTurnLoopCursor(_ cursor: Data?) { turnLoopCursor = cursor }
+    /// Hostile fresh cursor (round-9 item 3): every page returns a
+    /// DIFFERENT non-nil cursor — models a server that never settles,
+    /// so the test proves the wipe walk terminates (cap-throw) instead
+    /// of re-walking forever. Takes precedence over `turnLoopCursor`.
+    private var hostileFreshCursor = false
+    private var hostileCount = 0
+    func setHostileFreshCursor(_ enabled: Bool) { hostileFreshCursor = enabled }
+    /// Pages served in hostile mode (round-9 fix N1): lets the test
+    /// pin the exact bound the wipe walk enforces.
+    var hostileTurnPageCalls: Int { hostileCount }
 
     func setAccount(_ state: CloudAccountState) { account = state }
     func setSaveError(_ error: CloudSyncError?) { saveError = error }
@@ -111,28 +123,44 @@ actor StubCloudDatabase: CloudDatabase {
     /// this same cursor forever — models a looping server so the test
     /// proves the walk terminates instead of spinning to OOM.
     var turnLoopCursor: Data?
+    /// Walk snapshot (round-8 item 5): a nil cursor starts a new walk
+    /// and snapshots the name list — server cursors are stable under
+    /// mid-walk deletes, but naive index-into-live-dict pagination
+    /// overshoots as rows vanish (the wipe deletes while walking).
+    /// Snapshot-then-compactMap mirrors that stability.
+    private var turnPageSnapshot: [String] = []
     private(set) var deletedRecordNames: [String] = []
 
     func turnPage(cursor: Data?) async throws(CloudSyncError) -> CloudTurnPage {
         if let error = queryError { throw error }
-        let turns = records.values
-            .filter { $0.recordType == CloudRecordType.coachTurn }
-            .sorted { $0.recordID.recordName < $1.recordID.recordName }
         // Opaque cursor, integer-indexed (see the protocol: Live
         // archives the real CKQueryCursor; both are just "next page
-        // please" tokens to the engine's loop).
-        let pageSize = turnPageSize ?? turns.count
+        // please" tokens to the engine's loop). Snapshot on walk
+        // start; rows deleted mid-walk resolve to nil and drop out.
+        if cursor == nil {
+            turnPageSnapshot = records.values
+                .filter { $0.recordType == CloudRecordType.coachTurn }
+                .map(\.recordID.recordName)
+                .sorted()
+        }
+        let names = turnPageSnapshot
+        let pageSize = turnPageSize ?? names.count
         let index: Int
         if let cursor, let text = String(data: cursor, encoding: .utf8), let parsed = Int(text) {
             index = parsed
         } else {
             index = 0
         }
-        let slice = Array(turns.dropFirst(index).prefix(pageSize))
+        let sliceNames = Array(names.dropFirst(index).prefix(pageSize))
+        let slice = sliceNames.compactMap { records[$0] }
+        if hostileFreshCursor {
+            hostileCount += 1
+            return CloudTurnPage(records: slice, nextCursor: "hostile-\(hostileCount)".data(using: .utf8))
+        }
         if let loop = turnLoopCursor {
             return CloudTurnPage(records: slice, nextCursor: loop)
         }
-        let next = index + slice.count < turns.count ? String(index + slice.count).data(using: .utf8) : nil
+        let next = index + sliceNames.count < names.count ? String(index + sliceNames.count).data(using: .utf8) : nil
         return CloudTurnPage(records: slice, nextCursor: next)
     }
 
@@ -184,9 +212,9 @@ struct CloudSyncHarness {
         return CloudSyncHarness(container: container, db: db, now: now, ephemeral: ephemeral)
     }
 
-    func engine() -> CloudSyncEngine {
+    func engine(isQuiesced: @escaping () -> Bool = { false }) -> CloudSyncEngine {
         let now = self.now
-        return CloudSyncEngine(container: container, defaults: defaults, database: db, now: { now })
+        return CloudSyncEngine(container: container, defaults: defaults, database: db, now: { now }, isQuiesced: isQuiesced)
     }
 
     func seedTurn(role: String = "user", content: String, at date: Date) throws {
@@ -213,7 +241,11 @@ struct CloudSyncTests {
         await harness.engine().syncNow()
         let saved = await harness.db.saved(ofType: CloudRecordType.settings)
         #expect(saved.count == 1)
-        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        guard saved.count == 1, let first = saved.first else {
+            Issue.record("expected exactly one settings save, got \(saved.count)")
+            return
+        }
+        let snap = try CloudRecordDecoder.settings(from: first)
         #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
         #expect(await harness.db.saved(ofType: CloudRecordType.insightPrefs).count == 1)
     }
@@ -468,7 +500,11 @@ struct CloudSyncTests {
         await engine.syncNow()
         let saved = await harness.db.saved(ofType: CloudRecordType.settings)
         #expect(saved.count == 1)
-        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        guard saved.count == 1, let first = saved.first else {
+            Issue.record("expected exactly one settings save, got \(saved.count)")
+            return
+        }
+        let snap = try CloudRecordDecoder.settings(from: first)
         #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
         if case .synced = engine.status {
         } else {
@@ -569,7 +605,11 @@ struct CloudSyncTests {
         await engine.syncNow()
         let saved = await harness.db.saved(ofType: CloudRecordType.settings)
         #expect(saved.count == 1)
-        let snap = try CloudRecordDecoder.settings(from: saved[0])
+        guard saved.count == 1, let first = saved.first else {
+            Issue.record("expected exactly one settings save, got \(saved.count)")
+            return
+        }
+        let snap = try CloudRecordDecoder.settings(from: first)
         #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
     }
 
@@ -653,6 +693,234 @@ struct CloudSyncTests {
         }
         await harness.engine().syncNow()
         #expect(try harness.localTurnCount() == 1)
+    }
+
+    @Test("multi-page wipe deletes everything and reports honestly")
+    func overCapWipeDeletesAll() async throws {
+        // Round-8 item 5: 250 server turns over many pages must ALL
+        // delete incrementally; the old walk truncated and reset
+        // watermarks, letting survivors repull under a success
+        // ledger. Round-9 item 3 reconciliation: 5/page (50 pages —
+        // multi-page proof that stays under the 100-page bound);
+        // past-100 hostile termination is pinned by the hostile test.
+        let harness = try CloudSyncHarness.make()
+        await harness.db.setTurnPageSize(5)
+        let base = harness.now.addingTimeInterval(-100_000)
+        for i in 0..<250 {
+            let snap = CoachTurnSnapshot(
+                turnID: "wipe-\(i)",
+                role: "user",
+                content: "wipe me \(i)",
+                createdAt: base.addingTimeInterval(Double(i))
+            )
+            await harness.db.seedRecord(try CloudRecordBuilder.record(for: snap))
+        }
+        let engine = harness.engine()
+        let deleted = try await engine.deleteAllCloudData()
+        #expect(deleted == 252) // 250 turns + 2 singletons
+        #expect(await harness.db.records.isEmpty)
+        await engine.syncNow()
+        #expect(try harness.localTurnCount() == 0)
+    }
+
+    /// Prime + mutate + sync, returning the second push's record
+    /// (round-9 items 8+12): the settings and prefs seen-advance tests
+    /// were line-for-line copies — one helper, one `saved[1]`, fixed
+    /// once (no force-index after a non-fatal count check — the
+    /// §5.1 #10 crash-the-suite smell).
+    private func secondPush(
+        recordType: String,
+        mutate: (CloudSyncHarness) -> Void,
+        assertSecond: (CKRecord) throws -> Void
+    ) async throws {
+        let harness = try CloudSyncHarness.make()
+        await harness.engine().syncNow() // pushes initial state (empty server)
+        #expect(await harness.db.saved(ofType: recordType).count == 1)
+        mutate(harness)
+        await harness.engine().syncNow()
+        let saved = await harness.db.saved(ofType: recordType)
+        guard saved.count == 2 else {
+            Issue.record("expected a second push for \(recordType), got \(saved.count) saves")
+            return
+        }
+        try assertSecond(saved[1])
+    }
+
+    @Test("push advances seen past its own write")
+    func pushAdvancesSeenWatermark() async throws {
+        // Round-8 item 6: without the advance, the next sync misreads
+        // our own just-pushed record as foreign-newer (server date vs
+        // epoch seen) and suppresses the user's intervening change one
+        // sync late. Prime, toggle, sync: the toggle must push NOW.
+        try await secondPush(recordType: CloudRecordType.settings, mutate: {
+            SyncPreferences(defaults: $0.defaults).setEnabled(false, for: .steps)
+        }, assertSecond: {
+            let snap = try CloudRecordDecoder.settings(from: $0)
+            #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue])
+        })
+    }
+
+    @Test("equal-createdAt pair straddling the batch cut both push")
+    func equalCreatedAtPairBothPush() async throws {
+        // Round-8 item 7: two turns sharing one timestamp at positions
+        // 500/501 — strict `>` vs `max(batch)` excluded the second one
+        // FOREVER (same-second pairs are routine: user+assistant). The
+        // batch extends through the edge date: both push, no dupes.
+        // Round-9 item 5: this test ALSO pins the single-context +
+        // key dedupe — a naive single-context hoist WITHOUT key
+        // dedupe (identity only) drops the in-page mate here and
+        // strands it forever (watermark lands on its date while it
+        // stays unpushed: 500 saved, never 501 — the livelock class).
+        // A larger same-date flood is unconstructible by design: the
+        // synthetic turnID is `time-role` (third-party N1), so same-
+        // stamp same-role turns collapse server-side by save-if-absent
+        // (500 seeded → 1 saved, proven) — the pair is the maximal
+        // realistic edge group, and this straddle is its hardest shape.
+        let harness = try CloudSyncHarness.make()
+        let base = harness.now.addingTimeInterval(-100_000)
+        let context = ModelContext(harness.container)
+        for i in 0..<499 {
+            context.insert(ChatTurn(role: "user", content: "filler \(i)", createdAt: base.addingTimeInterval(Double(i))))
+        }
+        let edge = base.addingTimeInterval(10_000)
+        context.insert(ChatTurn(role: "user", content: "edge-a", createdAt: edge))
+        context.insert(ChatTurn(role: "assistant", content: "edge-b", createdAt: edge))
+        try context.save()
+        #expect(try harness.localTurnCount() == 501)
+        await harness.engine().syncNow()
+        // The batch extends through the edge date: 499 fillers + BOTH
+        // pair members in ONE sync (pre-fix: 500, with the second
+        // member excluded forever after).
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 501)
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 501)
+        #expect(try harness.localTurnCount() == 501)
+    }
+
+    @Test("wipe while a sync runs fails loud, deletes nothing")
+    func wipeVsSyncMutualExclusion() async throws {
+        // Round-8 item 8: a wipe racing an in-flight syncNow must take
+        // the SAME exclusion claim (throw here) instead of deleting
+        // around the uploader and reporting cleared while iCloud
+        // repopulates. Park the sync in the account gate, then wipe.
+        // (Reverse leg — sync arriving mid-wipe sees `.syncing` and
+        // returns — rides the same claim, pinned by the concurrent-
+        // sync test.)
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "keep me", at: harness.now)
+        let engine = harness.engine()
+        await harness.db.setHoldAccountState(true)
+        let syncing = Task { await engine.syncNow() }
+        let start = Date.now
+        while await harness.db.accountStateCalls != 1 {
+            await Task.yield()
+            if Date.now.timeIntervalSince(start) > 5 {
+                Issue.record("sync never reached the account gate")
+                break
+            }
+        }
+        await #expect(throws: CloudSyncError.wipeBlockedBySync) {
+            try await engine.deleteAllCloudData()
+        }
+        await harness.db.releaseAccountState()
+        await syncing.value
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 1)
+        if case .synced = engine.status {
+        } else {
+            Issue.record("expected synced status, got \(engine.status)")
+        }
+    }
+
+    @Test("corrupt turn cursor fails loud, never restarts the walk")
+    func corruptCursorThrows() {
+        // Round-8 item 4: garbage bytes must THROW (fail loud), not
+        // fall through to a fresh page-1 query (which re-fetched page
+        // 1 up to 100× while later pages — and, under wipe, turns past
+        // 200 — never resolved).
+        #expect(throws: CloudSyncError.self) {
+            try CloudTurnCursorCodec.decode(Data("not-a-cursor".utf8))
+        }
+        #expect(throws: CloudSyncError.self) {
+            try CloudTurnCursorCodec.decode(Data())
+        }
+    }
+
+    @Test("prefs push advances seen past its own write")
+    func prefsPushAdvancesSeenWatermark() async throws {
+        // Round-8 fix N2: the prefs mirror of pushAdvancesSeenWatermark
+        // — without the advance, the next sync misreads our own write
+        // as foreign-newer and suppresses the change one sync late.
+        // Shares `secondPush` (round-9 item 12) — no second copy of
+        // the prime/mutate/sync/index shape.
+        try await secondPush(recordType: CloudRecordType.insightPrefs, mutate: {
+            InsightPreferences(defaults: $0.defaults).insightsViaCloud = true
+        }, assertSecond: {
+            let snap = try CloudRecordDecoder.prefs(from: $0)
+            #expect(snap.insightsViaCloud == true)
+        })
+    }
+
+    @Test("pathological edge group defers whole, never splits")
+    func pathologicalEdgeGroupDefersWhole() async throws {
+        // Round-10 item 8: 600 same-date turns (alternating roles) —
+        // the edge group alone exceeds a full page. Pushing it whole
+        // unbounds the batch; pushing part strands the rest past the
+        // watermark. So the whole group defers: zero pushed, watermark
+        // unmoved, rows intact, stable across syncs (no hang, no
+        // growth, no dupes). Full push is impossible here regardless
+        // (same-date same-role turns share a turnID and collapse
+        // server-side — round-9 proof); every REACHABLE group (at most
+        // one pair) pushes atomically, pinned by the straddling-pair
+        // test.
+        let harness = try CloudSyncHarness.make()
+        let at = harness.now.addingTimeInterval(-1000)
+        let context = ModelContext(harness.container)
+        for i in 0..<600 {
+            context.insert(ChatTurn(
+                role: i.isMultiple(of: 2) ? "user" : "assistant",
+                content: "flood \(i)",
+                createdAt: at
+            ))
+        }
+        try context.save()
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 0)
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 0)
+        #expect(try harness.localTurnCount() == 600)
+    }
+
+    @Test("hostile fresh cursor terminates the wipe loudly")
+    func hostileCursorTerminatesWipe() async throws {
+        // Round-9 item 3: a server returning a fresh-but-unequal cursor
+        // per page (records already deleted → empty pages, zero
+        // progress) spins the old uncapped walk FOREVER — this test
+        // hangs pre-fix (no exit exists), so red is by inspection:
+        // the uncapped `while true` breaks only on nil-or-equal, and
+        // the hostile stub yields neither. Post-fix the cap throws
+        // loudly with watermarks intact (no silent truncation, retry
+        // resumes) — pinned here by the exact error.
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "hostile one", at: harness.now)
+        try harness.seedTurn(content: "hostile two", at: harness.now)
+        await harness.engine().syncNow() // push both server-side first
+        await harness.db.setHostileFreshCursor(true)
+        await #expect(
+            throws: CloudSyncError.failed("turn delete cursor never settled")
+        ) {
+            _ = try await harness.engine().deleteAllCloudData()
+        }
+        // Round-9 fix N1: pin the bound itself (exactly 100 pages —
+        // the walk neither truncates early nor spins past the cap)
+        // and the resume (the throw skipped `resetSyncState`, so
+        // watermarks are intact and a retry with a settled server
+        // completes: both turns went on the hostile run's page 1, so
+        // the retry re-counts only the 2 singletons).
+        #expect(await harness.db.hostileTurnPageCalls == 100)
+        await harness.db.setHostileFreshCursor(false)
+        let resumed = try await harness.engine().deleteAllCloudData()
+        #expect(resumed == 2)
+        #expect(await harness.db.records.isEmpty)
     }
 
     @Test("missing scan root fails loudly, not green")
@@ -765,7 +1033,9 @@ struct CloudSyncTests {
         let engine = harness.engine()
         await engine.syncNow()
         if case .synced(_, let pending) = engine.status {
-            #expect(pending == 2)
+            // Round-10 item 10: the retry FLAG (0/1), not the old 2-op
+            // count — the queue is gone, the intent remains.
+            #expect(pending == 1)
         } else {
             Issue.record("expected queued pending status, got \(engine.status)")
         }
@@ -809,7 +1079,7 @@ struct CloudSyncTests {
         #expect(engine.pendingOutboxCount == 0)
     }
 
-    @Test("outage then recovery flushes the outbox")
+    @Test("outage then recovery clears the retry flag")
     func outageRecoveryFlushes() async throws {
         let harness = try CloudSyncHarness.make()
         await harness.db.setAccount(.noAccount)
@@ -938,5 +1208,93 @@ struct CloudSyncTests {
 final class LockedBox: Sendable {
     nonisolated(unsafe) var value: Bool
     init(_ value: Bool) { self.value = value }
+}
+
+#if compiler(>=6.4)
+@Suite("Knowledge refresh trigger")
+@MainActor
+struct KnowledgeRefreshTriggerTests {
+    @Test func refreshTriggerConstructs() async throws {
+        // Round-10 item 3: the history-observed trigger feeding
+        // non-Coach users constructs against the real factory method
+        // (firing isn't drivable — `HistoryObserver` offers no seam;
+        // the sync→profile leg itself is pinned by KnowledgeStore's
+        // refresh tests, which yield a non-empty profile with no chat
+        // opened).
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let store = KnowledgeStore(
+            modelContainer: container,
+            healthReadStore: EmptyReadStore(),
+            healthKitAuth: HealthKitAuth()
+        )
+        // App launch order: trigger FIRST, then fixture seeding, then
+        // the toggle — a trigger that breaks later writes must surface
+        // here, not only in the UI suite. Round-10 fix N1: the UITest
+        // leg returns nil through this same factory method.
+        let trigger = AppEnvironment.makeRefreshTrigger(modelContainer: container, knowledgeStore: store, isUITest: false)
+        #expect(trigger != nil)
+        #expect(AppEnvironment.makeRefreshTrigger(modelContainer: container, knowledgeStore: store, isUITest: true) == nil)
+        let seed = ModelContext(container)
+        seed.insert(KnowledgeProfile(sections: [
+            ProfileField(key: "steps.dailyAverage", displayText: "~8,200 steps/day", source: "HealthKit", asOf: .now),
+        ]))
+        try seed.save()
+        try store.setExcludedFromAI(true, forKey: "steps.dailyAverage")
+        let check = ModelContext(container)
+        let fetched = try check.fetch(FetchDescriptor<KnowledgeProfile>())
+        #expect(fetched.first?.sections.first?.excludedFromAI == true)
+        // The hazard the `!isUITest` gate guards: a fired refresh
+        // rebuilds sections from derivation, dropping non-correction
+        // fixture fields (production-correct — placeholders shouldn't
+        // exist there — but fatal to hermetic UI fixtures).
+        _ = try await store.refresh()
+        let afterRefresh = try ModelContext(container).fetch(FetchDescriptor<KnowledgeProfile>())
+        let postRefresh = try #require(afterRefresh.first)
+        #expect(!postRefresh.sections.contains(where: { $0.key == "steps.dailyAverage" }))
+    }
+}
+#endif
+
+@Suite("Wipe quiesce")
+struct WipeQuiesceTests {
+    @Test func latchHoldsUntilReset() {
+        // Round-10 item 1: the one-way latch itself (production never
+        // resets — only relaunch clears; tests reset explicitly).
+        WipeQuiesce.resetForTesting()
+        #expect(!WipeQuiesce.isLatched)
+        WipeQuiesce.latch()
+        #expect(WipeQuiesce.isLatched)
+        WipeQuiesce.resetForTesting()
+        #expect(!WipeQuiesce.isLatched)
+    }
+
+    @Test("quiesced syncNow writes nothing and claims nothing")
+    func quiescedSyncNowNoOps() async throws {
+        // Round-10 item 1: post-wipe foreground/background must cause
+        // zero writes/re-pushes — a latched engine returns before even
+        // claiming (status untouched, server untouched).
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "doomed", at: harness.now)
+        let engine = harness.engine(isQuiesced: { true })
+        await engine.syncNow()
+        #expect(await harness.db.savedRecords.isEmpty)
+        if case .syncing = engine.status {
+            Issue.record("quiesced sync claimed the engine")
+        }
+    }
+}
+
+@Suite("Foreground reconcile gate")
+struct ForegroundReconcileGateTests {
+    @Test func rapidReforegroundSkipsReconcile() {
+        // Round-10 item 7: launch (no stamp) always reconciles; a
+        // flip seconds later skips; a flip past the background
+        // planner's interval reconciles again.
+        let now = Date()
+        #expect(AppEnvironment.foregroundReconcileDue(now: now, last: nil))
+        #expect(!AppEnvironment.foregroundReconcileDue(now: now, last: now))
+        #expect(!AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-60)))
+        #expect(AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-16 * 60)))
+    }
 }
 

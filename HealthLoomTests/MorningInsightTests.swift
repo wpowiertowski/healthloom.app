@@ -299,6 +299,21 @@ struct MorningInsightRunnerTests {
         return prefs
     }
 
+    /// Session-build counter (round-8 item 10): file scope like the
+    /// session doubles above. Lock-guarded: the factory build closure
+    /// is `@Sendable`, the assertions read post-run.
+    private final class SessionBuildCounter: Sendable {
+        private let lock = NSLock()
+        private var builds = 0
+        func next() -> Int {
+            lock.withLock {
+                builds += 1
+                return builds
+            }
+        }
+        var count: Int { lock.withLock { builds } }
+    }
+
     /// One-shot rendezvous for overlap tests (round-7 item 1): file
     /// scope like the session doubles above (local types cannot carry
     /// protocol conformances; a bare actor needs none).
@@ -634,6 +649,109 @@ struct MorningInsightRunnerTests {
         #expect(notifier.scheduled.count == 1)
         let context = ModelContext(container)
         #expect(try context.fetch(FetchDescriptor<DerivedInsight>()).count == 1)
+    }
+
+    @Test("failed run does not strand its retry") func failedRunRetryRuns() async throws {
+        // Round-8 item 10: a first-run failure (`lastRun` unset) must
+        // be retryable — the trigger right after completion must RUN
+        // (and, with a healed session, succeed), not join a settled
+        // slot and silently skip, leaving no insight that day. The
+        // window itself is scheduler-timed (closed by construction:
+        // the task clears its own slot in its tail); this pins the
+        // retry contract it threatened: fail, then succeed, one notify.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
+        let ephemeralR = try Self.makeDefaults()
+        let defaults = ephemeralR.defaults
+        let now = try #require(Self.at("2026-09-08 08:00"))
+        let notifier = StubInsightNotifier(status: .authorized)
+        let counter = SessionBuildCounter()
+        let insight = Self.scriptedInsight()
+        let factory = CoachSessionFactory(build: { _, _, _ in
+            counter.next() == 1 ? ThrowingSession() as any CoachSession : ScriptedInsightSession(insight)
+        })
+        let (runner, _) = makeRunner(
+            container: container, defaults: defaults, enabled: true,
+            notifier: notifier, inputs: Self.signalInputs(), factory: factory, now: now
+        )
+        let savedHost = InsightRunnerHost.runner
+        InsightRunnerHost.runner = runner
+        defer { InsightRunnerHost.runner = savedHost }
+        await InsightRunnerHost.runIfDue() // fails (throwing session)
+        await InsightRunnerHost.runIfDue() // must RUN again, then succeed
+        #expect(counter.count == 2)
+        #expect(notifier.scheduled.count == 1)
+    }
+
+    @Test("quiesced host runs nothing") func quiescedHostNoOps() async throws {
+        // Round-10 item 1: post-wipe triggers must not infer, persist,
+        // or notify — a latched host returns before touching the runner.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
+        let ephemeralQ = try Self.makeDefaults()
+        let now = try #require(Self.at("2026-09-08 08:00"))
+        let counter = SessionBuildCounter()
+        let factory = CoachSessionFactory(build: { _, _, _ in
+            _ = counter.next()
+            return ScriptedInsightSession(Self.scriptedInsight())
+        })
+        let (runner, _) = makeRunner(
+            container: container, defaults: ephemeralQ.defaults, enabled: true,
+            notifier: StubInsightNotifier(status: .authorized),
+            inputs: Self.signalInputs(), factory: factory, now: now
+        )
+        let savedHost = InsightRunnerHost.runner
+        let savedQuiesce = InsightRunnerHost.quiesceCheck
+        InsightRunnerHost.runner = runner
+        InsightRunnerHost.quiesceCheck = { true }
+        defer {
+            InsightRunnerHost.runner = savedHost
+            InsightRunnerHost.quiesceCheck = savedQuiesce
+        }
+        await InsightRunnerHost.runIfDue()
+        #expect(counter.count == 0)
+    }
+
+    @Test("hostile session error is redacted in the failure") func hostileErrorRedacted() async throws {
+        // Round-10 item 6: the runner's failure message renders in
+        // Diagnostics — a session error carrying a token-shaped secret
+        // must arrive redacted (D11), never via a raw
+        // `String(describing:)`.
+        struct HostileBoom: Error {
+            let detail: String
+        }
+        final class HostileSession: CoachSession, Sendable {
+            let detail: String
+            init(detail: String) { self.detail = detail }
+            var isResponding: Bool { false }
+            func prewarm() {}
+            func respond(to prompt: String) async throws -> String { throw HostileBoom(detail: detail) }
+            func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
+                throw HostileBoom(detail: detail)
+            }
+            func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {
+                let detail = detail
+                return AsyncThrowingStream { $0.finish(throwing: HostileBoom(detail: detail)) }
+            }
+        }
+        let token = "sk-ant-hostileKey0123456789"
+        let container = try CoreModel.makeContainer(inMemory: true)
+        try seedSync(container: container, at: try #require(Self.at("2026-09-08 06:00")))
+        let ephemeralH = try Self.makeDefaults()
+        let now = try #require(Self.at("2026-09-08 08:00"))
+        let factory = CoachSessionFactory(build: { _, _, _ in HostileSession(detail: "stream blew up: \(token)") })
+        let (runner, _) = makeRunner(
+            container: container, defaults: ephemeralH.defaults, enabled: true,
+            notifier: StubInsightNotifier(status: .authorized),
+            inputs: Self.signalInputs(), factory: factory, now: now
+        )
+        let outcome = await runner.runIfDue()
+        guard case .failed(let message) = outcome else {
+            Issue.record("expected .failed, got \(outcome)")
+            return
+        }
+        #expect(message.contains("[REDACTED]"))
+        #expect(!message.contains(token))
     }
 
     @Test("generation failure records nothing") func failure() async throws {

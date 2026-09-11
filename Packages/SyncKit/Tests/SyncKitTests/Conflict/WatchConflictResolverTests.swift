@@ -366,11 +366,56 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
         #expect(samples.count == 1)
         #expect(samples.first?.linkedWatchWorkoutUUID == Self.watchWorkoutUUID)
         // The sweep also covered the workout's attached distance/energy
-        // sample types (same external ID -- see the resolver's cleanup).
+        // sample types (role-suffixed UUIDs -- see the resolver's
+        // cleanup, round-8 item 2).
         let sweptTypes = Set(harness.store.deleteObjectsCalls.map(\.objectType.identifier))
         #expect(sweptTypes.contains(HKObjectType.workoutType().identifier))
         #expect(sweptTypes.contains(HKQuantityTypeIdentifier.distanceWalkingRunning.rawValue))
         #expect(sweptTypes.contains(HKQuantityTypeIdentifier.activeEnergyBurned.rawValue))
+    }
+
+    @available(*, deprecated, message: "constructs a test-only fake HKWorkout via a deprecated initializer, see MockWorkoutBuilder.swift")
+    @Test func cleanupRemovesWorkoutAttachmentsWithSuffixedUUIDs() async throws {
+        // Round-8 item 2: the workout's distance/energy attachments
+        // (role-suffixed UUIDs post-round-7) must go with it — deleting
+        // only the base ID orphaned them forever (double-count vs the
+        // watch). Attachments seeded directly (what `saveWorkout` wrote
+        // to a real store); the conflicting run must remove all three.
+        let harness = try Self.makeHarness(windows: [])
+        let point = TypeMapperFixtures.exercisePoint(
+            id: "fitbit-run-3", start: Self.at("10:02:00"), end: Self.at("10:43:00")
+        )
+        harness.mock.setPage(type: .exercise, pageToken: nil, page: Page(points: [point], nextPageToken: nil))
+        harness.builderFactory.builder.storeToSeedOnFinish = harness.store
+        seedFinishResult(harness, point: point)
+        let first = await harness.engine.sync(type: .exercise)
+        #expect(first.status == .ok)
+        #expect(harness.store.sampleCount(ofType: .workoutType()) == 1)
+        // Attachments as the real store holds them (suffixed stamps).
+        let distanceType = try #require(HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning))
+        let energyType = try #require(HKObjectType.quantityType(forIdentifier: .activeEnergyBurned))
+        func attachment(type: HKQuantityType, uuid: String) -> HKQuantitySample {
+            let unit: HKUnit = type.identifier == HKQuantityTypeIdentifier.activeEnergyBurned.rawValue ? .kilocalorie() : .meter()
+            return HKQuantitySample(
+                type: type,
+                quantity: HKQuantity(unit: unit, doubleValue: 10),
+                start: Self.at("10:02:00"),
+                end: Self.at("10:43:00"),
+                metadata: [HKMetadataKeyExternalUUID: uuid]
+            )
+        }
+        harness.store.seed(attachment(type: distanceType, uuid: "fitbit-run-3#distance"), isAppWritten: true)
+        harness.store.seed(attachment(type: energyType, uuid: "fitbit-run-3#energy"), isAppWritten: true)
+        #expect(harness.store.sampleCount(ofType: distanceType) == 1)
+        // Run 2: watch workout lands -> everything conflicting goes,
+        // workout AND attachments.
+        harness.coverage.windows = [Self.morningRunWindow()]
+        harness.clock.set(Self.fixedNow.addingTimeInterval(3600))
+        let second = await harness.engine.sync(type: .exercise)
+        #expect(second.status == .ok)
+        #expect(harness.store.sampleCount(ofType: .workoutType()) == 0)
+        #expect(harness.store.sampleCount(ofType: distanceType) == 0)
+        #expect(harness.store.sampleCount(ofType: energyType) == 0)
     }
 
     // MARK: - Toggle OFF (D13.5) + degradation

@@ -262,6 +262,31 @@ struct StoreDeleterTests {
         #expect(!FileManager.default.fileExists(atPath: journal.path))
     }
 
+    @Test("store and export deletes are attempted independently")
+    func storeAndExportsAggregate() throws {
+        // Round-8 item 3: all four combinations — a throwing store
+        // step must still sweep exports (and vice versa); the FIRST
+        // error surfaces, nothing is skipped silently.
+        struct Boom: Error {}
+        let okURL = URL(fileURLWithPath: "/tmp/ok")
+        #expect(try StoreDeleter.deleteStoreAndExports(deleteStore: { [okURL] }, deleteExports: { [okURL] }) == [okURL, okURL])
+        #expect(throws: Boom.self) {
+            try StoreDeleter.deleteStoreAndExports(deleteStore: { throw Boom() }, deleteExports: { [okURL] })
+        }
+        #expect(throws: Boom.self) {
+            try StoreDeleter.deleteStoreAndExports(deleteStore: { [okURL] }, deleteExports: { throw Boom() })
+        }
+        // Both throw: the STORE error (first) surfaces.
+        struct SecondBoom: Error {}
+        do {
+            _ = try StoreDeleter.deleteStoreAndExports(deleteStore: { throw Boom() }, deleteExports: { throw SecondBoom() })
+            Issue.record("expected throw")
+        } catch is Boom {
+        } catch {
+            Issue.record("expected the store error, got \(error)")
+        }
+    }
+
     @Test("enumeration cross-check names future files loudly")
     func uncoveredFilesTripwire() throws {
         // Round-7 fix N1: a directory holding exactly the inventory
@@ -422,6 +447,57 @@ struct WipeCoordinatorTests {
         #expect(detail.contains("skipped"))
         #expect(coordinator.failedSteps.isEmpty)
     }
+
+    @Test("quiesce runs before every step")
+    func quiesceRunsFirst() async throws {
+        // Round-10 item 1: writers latch before the first destructive
+        // step — a racing writer must not resurrect records mid-wipe.
+        var order: [String] = []
+        let coordinator = WipeCoordinator(
+            deps: WipeCoordinator.Dependencies(
+                quiesceWriters: { order.append("quiesce") },
+                revokeGoogle: { order.append("revoke"); return .revoked },
+                deleteAllKeys: { order.append("keys") },
+                deleteHealthKit: { order.append("hk"); return [:] },
+                deleteCloudKit: { order.append("cloud"); return 0 },
+                deleteStore: { order.append("store"); return [] },
+                resetDefaults: { order.append("defaults") }
+            ),
+            includeHealthKit: true
+        )
+        await coordinator.run()
+        #expect(order.first == "quiesce")
+        #expect(order == ["quiesce", "revoke", "keys", "hk", "cloud", "store", "defaults"])
+    }
+
+    @Test("hostile step error is redacted in the ledger")
+    func hostileStepErrorRedacted() async throws {
+        // Round-10 item 6: step ledgers render in-app — a dependency
+        // error carrying token-shaped secrets must arrive redacted
+        // (D11), never via a raw `String(describing:)`.
+        struct HostileRevokeError: Error {
+            let detail: String
+        }
+        let token = "ya29.hostileToken0123456789"
+        let coordinator = WipeCoordinator(
+            deps: WipeCoordinator.Dependencies(
+                revokeGoogle: { throw HostileRevokeError(detail: "revoke failed: \(token)") },
+                deleteAllKeys: {},
+                deleteHealthKit: { [:] },
+                deleteCloudKit: { 0 },
+                deleteStore: { [] },
+                resetDefaults: {}
+            ),
+            includeHealthKit: true
+        )
+        await coordinator.run()
+        guard case .failed(let message) = coordinator.states[.revokeGoogle] else {
+            Issue.record("expected revokeGoogle failed")
+            return
+        }
+        #expect(message.contains("[REDACTED]"))
+        #expect(!message.contains(token))
+    }
 }
 
 @Suite("WipeableTypes derivation")
@@ -434,7 +510,7 @@ struct WipeableTypesTests {
         // through any other channel breaks this equality loudly.
         let wipeable = try HealthKitSourceDeleter.wipeableTypes()
         let expected = try HealthKitAuth().authorizedShareTypes(
-            sharing: AppEnvironment.p0Types,
+            sharing: SyncPreferences.healthKitWritableTypes,
             includingWorkoutShare: true
         )
         #expect(Set(wipeable) == expected)
@@ -444,6 +520,19 @@ struct WipeableTypesTests {
             let distance = try #require(HKObjectType.quantityType(forIdentifier: identifier))
             #expect(wipeable.contains(distance))
         }
+    }
+
+    @Test("newly-writable types land in the wipe")
+    func newlyWritableTypesWiped() throws {
+        // Round-9 item 1: round-8 widened the share to the funnel but
+        // the wipe still defaulted to p0Types — newly-writable types
+        // authorized-but-never-wiped, no ledger row. `.floors` is in
+        // the funnel and outside P0: its HealthKit type must wipe.
+        #expect(SyncPreferences.healthKitWritableTypes.contains(.floors))
+        #expect(!AppEnvironment.p0Types.contains(.floors))
+        let wipeable = try HealthKitSourceDeleter.wipeableTypes()
+        let flights = try #require(HKObjectType.quantityType(forIdentifier: .flightsClimbed))
+        #expect(wipeable.contains(flights))
     }
 
     @Test("narrowed request still wipes the historical floor")

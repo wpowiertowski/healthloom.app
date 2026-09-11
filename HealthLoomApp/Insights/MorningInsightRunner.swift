@@ -30,6 +30,7 @@ import CoreModel
 import Foundation
 import os
 import SwiftData
+import SyncKit
 
 @MainActor
 struct MorningInsightRunner {
@@ -170,7 +171,10 @@ struct MorningInsightRunner {
             deps.prefs.lastRun = now
             return .ran(tier: tier)
         } catch {
-            return .failed(String(describing: error))
+            // Round-10 item 6: redacted (D11) — the failure message
+            // renders in Diagnostics, same bearer-token/URL surface
+            // SyncEngine redacts.
+            return .failed(SyncLogRedactor.redact(String(describing: error)))
         }
     }
 
@@ -240,6 +244,13 @@ struct MorningInsightRunner {
 enum InsightRunnerHost {
     @MainActor static var runner: MorningInsightRunner?
 
+    /// Quiesce probe (round-10 item 1): production wires
+    /// `{ WipeQuiesce.isLatched }` (set once in `AppEnvironment.init`,
+    /// next to `runner`); tests script it. A latched host runs nothing
+    /// — post-wipe insights would write `DerivedInsight` rows and a
+    /// fresh `lastRun` over cleared state.
+    @MainActor static var quiesceCheck: () -> Bool = { false }
+
     /// In-flight run (round-7 item 1): concurrent triggers (scene-phase
     /// hook + BG completion) JOIN one run instead of double-inferring +
     /// double-notifying — the once-daily guard alone cannot dedupe them
@@ -249,13 +260,31 @@ enum InsightRunnerHost {
     @MainActor private static var inFlight: Task<Void, Never>?
 
     static func runIfDue() async {
+        // Round-10 item 1: quiesced means NO work — not even joining
+        // (a join is harmless but the contract is total silence).
+        guard !quiesceCheck() else { return }
         if let running = inFlight {
             await running.value
             return
         }
         guard let runner else { return }
-        inFlight = Task { await runner.runIfDue() }
-        await inFlight?.value
-        inFlight = nil
+        // Round-8 item 10: the TASK clears the slot (converging on
+        // `SyncEngine.sync` + `TipStore.runLoad`'s proven shape) — the
+        // old launcher-clears left a post-completion/pre-clear window
+        // where an arrival joined a settled task and silently skipped
+        // its run. That window specifically ate first-run RETRIES
+        // (failed, `lastRun` unset — the retry is correct and expected,
+        // and dropping it meant no insight that day). Create-then-claim
+        // is atomic here: the child inherits MainActor, so it cannot
+        // execute before this task's first suspension (`await` below).
+        // Explicit `@MainActor` (the creator may run anywhere): the
+        // slot assignment below stays synchronous with the guarded
+        // check, and the child still cannot execute before it.
+        let task = Task<Void, Never> { @MainActor [runner] in
+            defer { inFlight = nil }
+            await runner.runIfDue()
+        }
+        inFlight = task
+        await task.value
     }
 }

@@ -158,13 +158,30 @@ nonisolated public struct MappedMetadata: Sendable, Hashable {
         self.sourceDevice = sourceDevice
     }
 
+    /// Workout-attachment roles `saveWorkout` stamps (round-8 item 2):
+    /// the SAME strings the cleanup deletes by — a new attachment
+    /// role needs one let here, one use in `saveWorkout`, and automatic
+    /// coverage via `workoutAttachmentRoles` below (an unstamped role
+    /// orphans; an undeleted role double-counts).
+    public static let workoutDistanceRole = "distance"
+    public static let workoutEnergyRole = "energy"
+    public static let workoutAttachmentRoles = [workoutDistanceRole, workoutEnergyRole]
+
     /// Derived per-sample UUID (round-7 item 3): `externalID` (the bare
     /// point ID, kept as stable point identity) plus a stable role —
     /// every HealthKit sample from one expansion carries a UNIQUE
     /// external UUID while re-syncs reproduce them exactly.
+    /// The ONE constructor for suffixed UUIDs (round-8 item 2):
+    /// `derivedUUID` and the cleanup's delete-set both go through here,
+    /// so the separator shape can never drift apart between stamping
+    /// and deleting.
+    public static func suffixedUUID(base: String, role: String) -> String {
+        "\(base)#\(role)"
+    }
+
     public func derivedUUID(role: String) -> MappedMetadata {
         MappedMetadata(
-            externalUUID: "\(externalID)#\(role)",
+            externalUUID: Self.suffixedUUID(base: externalID, role: role),
             externalID: externalID,
             sourceDevice: sourceDevice
         )

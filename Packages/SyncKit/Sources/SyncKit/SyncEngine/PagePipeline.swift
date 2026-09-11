@@ -49,13 +49,10 @@ nonisolated struct PagePipeline: Sendable {
 
     /// Dedupe for one mapped arm (round-7 item 3 + fix-round F1): skip
     /// iff the point's base ID is known (legacy pre-suffix rows carry
-    /// the bare point ID), or EVERY emitted UUID is known (re-syncs
-    /// reproduce expansion UUIDs exactly), or the point's SPLIT PARTS
-    /// are known (the flip-flop direction: an unsplit base sample
-    /// arriving after its split parts stored must skip — the reverse
-    /// was already safe via base-known, but base-emit alongside stored
-    /// parts duplicated permanently). Partial presence is unreachable
-    /// — batch saves are atomic — so no per-sample subset writes.
+    /// the bare point ID), or its split parts are known (the flip-flop
+    /// direction), or EVERY emitted UUID is known (re-syncs reproduce
+    /// expansion UUIDs exactly). Partial presence is unreachable —
+    /// batch saves are atomic — so no per-sample subset writes.
     ///
     /// The `'#'` separator is reserved by CONVENTION (round-7 fix F1,
     /// softened per fix-round N2): wire IDs observed to date contain
@@ -65,15 +62,50 @@ nonisolated struct PagePipeline: Sendable {
     /// `splitBases` is computed once per page from the queried set
     /// (in-page inserts are base IDs, already covered by the base
     /// leg) — not scanned per point.
+    ///
+    /// ONE coherent unstamped-sample rule (round-9 items 4+6+9+11):
+    /// callers enforce UUID presence via `checkedUUIDs` BEFORE
+    /// reaching here (unstamped members throw — fail loud, item-13
+    /// doctrine — never silently written every sync, never silently
+    /// dropped). So this function never observes an empty set from
+    /// production paths; the single expression below folds every leg
+    /// with no special case to diverge later.
     private static func isKnown(
         baseID: String,
         uuids: [String],
         splitBases: Set<String>,
         in known: Set<String>
     ) -> Bool {
-        known.contains(baseID)
-            || uuids.allSatisfy(known.contains)
-            || splitBases.contains(baseID)
+        known.contains(baseID) || splitBases.contains(baseID) || (!uuids.isEmpty && uuids.allSatisfy(known.contains))
+    }
+
+    /// Emitted UUIDs or throw (round-9 items 4+6): every sample the
+    /// pipeline is about to count must carry the stamp the existence
+    /// set is queried by — otherwise it is undedupable (rewritten
+    /// every sync, or dropped and never revisited). Throws the
+    /// dedicated `UnstampedSample` error LOUDLY, so the run fails with
+    /// the offending point identified, the cursor unmoved, and the
+    /// window retried. Internal so the unit test pins it directly
+    /// (unreachable through `processPage` — every emitter stamps —
+    /// which is exactly why it needs its own pin).
+    /// Workout-spec stamp gate (round-10 item 9): the `.workout` arm's
+    /// equivalent of `checkedUUIDs` — the spec must carry exactly the
+    /// point's base UUID (workout-level metadata keeps the base, never
+    /// a suffix). Internal so the unit test pins it directly
+    /// (unreachable through `processPage` — the mapper always stamps
+    /// `point.id` — which is exactly why it needs its own pin).
+    static func checkedWorkoutUUID(_ workout: MappedWorkout, baseID: String) throws {
+        guard workout.metadata.externalUUID == baseID else {
+            throw UnstampedSample(pointID: baseID)
+        }
+    }
+
+    static func checkedUUIDs<T: HKObject>(_ objects: [T], baseID: String) throws -> [String] {
+        let uuids = objects.compactMap(emittedUUID)
+        guard uuids.count == objects.count else {
+            throw UnstampedSample(pointID: baseID)
+        }
+        return uuids
     }
 
     private static func emittedUUID(of object: HKObject) -> String? {
@@ -94,13 +126,18 @@ nonisolated struct PagePipeline: Sendable {
     /// discards it exactly like the old per-page commit (which never
     /// escaped a failed run either — retries re-query fresh).
     /// `.localOnly` points accumulate for the CALLER to upsert on its
-    /// own executor. On a throwing page, throws `PageWalkPartial`
-    /// (instead of the raw page error) carrying whatever was processed
-    /// before the failure — the runs' informational-count contract
-    /// (partial progress reported on failed runs) survives the
-    /// extraction. Callers add `partial.total` to their count and
-    /// rethrow `partial.underlying` (which preserves cancellation
-    /// identity for the stop-not-failure branches).
+    /// own executor — and that confinement is why `.localOnly` points
+    /// ACCUMULATE here instead of committing per page (round-10 item
+    /// 14): this pipeline resumes off-actor after its awaits, and
+    /// `ModelContext` is not thread-safe, so context writes stay with
+    /// the caller. The accumulation is bounded by the page cap above
+    /// and points are small value types — a deliberate trade, stated
+    /// here instead of hidden. On a throwing page, throws
+    /// `PageWalkPartial` (instead of the raw page error) carrying the
+    /// completed pages' count AND their `.localOnly` points — callers
+    /// upsert those rows on their own executor (committing completed
+    /// pages even on failure) and unwrap `partial.underlying` for the
+    /// cancellation identity the stop-not-failure branches need.
     func processPages(
         knownExternalIDs: Set<String>,
         fetch: @Sendable (String?) async throws -> Page
@@ -132,7 +169,7 @@ nonisolated struct PagePipeline: Sendable {
                 guard let next = page.nextPageToken, next != token else { break }
                 token = next
             } catch {
-                throw PageWalkPartial(total: total, underlying: error)
+                throw PageWalkPartial(total: total, localOnly: localOnly, underlying: error)
             }
         }
         return (total, localOnly, hitPageCap)
@@ -176,7 +213,8 @@ nonisolated struct PagePipeline: Sendable {
             let mapped = await conflictFilter.resolve(await TypeMapper.map(point), for: point)
             switch mapped {
             case .quantity(let sample):
-                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: sample)].compactMap({ $0 }), splitBases: splitBases, in: known) else { continue }
+                let singleUUIDs = try Self.checkedUUIDs([sample], baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: singleUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(sample)
                 writtenCount += 1
@@ -185,12 +223,14 @@ nonisolated struct PagePipeline: Sendable {
                 // (architecture.md D13.3) — N part samples for one point,
                 // each with its own derived UUID (round-7 item 3). One
                 // point, one itemCount contribution.
-                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), splitBases: splitBases, in: known) else { continue }
+                let pageUUIDs = try Self.checkedUUIDs(samples, baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: pageUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(contentsOf: samples)
                 writtenCount += 1
             case .category(let samples):
-                guard !Self.isKnown(baseID: point.id, uuids: samples.compactMap(Self.emittedUUID), splitBases: splitBases, in: known) else { continue }
+                let pageUUIDs = try Self.checkedUUIDs(samples, baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: pageUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(contentsOf: samples)
                 writtenCount += 1
@@ -199,7 +239,8 @@ nonisolated struct PagePipeline: Sendable {
                 // `HKObject`/`HKSample` built synchronously by
                 // `TypeMapper.map(_:)` — same batch/existence-diff path
                 // as every other arm, no parallel mechanism.
-                guard !Self.isKnown(baseID: point.id, uuids: [Self.emittedUUID(of: correlation)].compactMap({ $0 }), splitBases: splitBases, in: known) else { continue }
+                let correlationUUIDs = try Self.checkedUUIDs([correlation], baseID: point.id)
+                guard !Self.isKnown(baseID: point.id, uuids: correlationUUIDs, splitBases: splitBases, in: known) else { continue }
                 known.insert(point.id)
                 batch.append(correlation)
                 writtenCount += 1
@@ -210,6 +251,16 @@ nonisolated struct PagePipeline: Sendable {
                 // identical (query-side existence diff, same set).
                 // Anything reaching here already passed D13's conflict
                 // resolution above.
+                // Round-10 item 9: the same UUID-presence enforcement
+                // as every other arm — the spec's stamp is what the
+                // existence query matches post-save (workout-level
+                // metadata keeps the BASE uuid), so a missing or
+                // drifted stamp would rewrite every sync, silently
+                // (the UnstampedSample-loud class). `checkedUUIDs`
+                // reads built objects and the workout isn't built until
+                // `saveWorkout`, so the equivalent gate runs on the
+                // spec's stamp here (same error, same fail-loud).
+                try Self.checkedWorkoutUUID(workout, baseID: point.id)
                 guard !known.contains(point.id) else { continue }
                 _ = try await writer.saveWorkout(workout)
                 known.insert(point.id)
@@ -246,10 +297,22 @@ nonisolated struct PagePipeline: Sendable {
     /// conflict resolution, architecture.md D13.2) is never wiped back to
     /// `nil` by a routine re-sync re-touching the same point. `sync`: call
     /// on the executor that owns `context`.
-    static func upsertLocalSample(for point: GoogleDataPoint, context: ModelContext) {
+    static func upsertLocalSample(for point: GoogleDataPoint, context: ModelContext) throws {
         let externalID = point.id
         let payload = SharedLocalPayload(point: point)
-        let payloadJSON = (try? JSONEncoder().encode(payload)) ?? Data()
+        // Round-8 item 13: encode failure (non-finite doubles) throws
+        // LOUDLY — the old `(try? ...) ?? Data()` wrote a zero-byte
+        // payload row that downstream readers choke on, while counting
+        // the point and committing the cursor past it (never re-pulled:
+        // unrecoverable). A throw fails the page → the run → the cursor
+        // stays unmoved and the window retries (loud every run until
+        // the data ages out or is fixed).
+        let payloadJSON: Data
+        do {
+            payloadJSON = try JSONEncoder().encode(payload)
+        } catch {
+            throw UnencodableLocalPayload(pointID: point.id)
+        }
         let sourceLabel = point.source.deviceDisplayName ?? point.source.platform ?? "unknown"
         let dataTypeKey = point.dataType.rawValue
 
@@ -296,9 +359,30 @@ nonisolated struct PagePipeline: Sendable {
 /// before the throwing page, plus the underlying error (rethrow target —
 /// preserves cancellation identity and the redacted error row). Never
 /// constructed outside `PagePipeline.processPages`.
+/// Partial progress from a failed page walk (round-10 item 14): the
+/// completed pages' count plus their `.localOnly` points, so callers
+/// can commit those rows on their own executor even though the walk
+/// failed. `underlying` is the page error (callers unwrap it for
+/// cancellation identity — a bare `is CancellationError` check on the
+/// wrapper itself would misclassify every cancelled walk as failed).
 struct PageWalkPartial: Error {
     var total: Int
+    var localOnly: [GoogleDataPoint]
     var underlying: any Error
+}
+
+/// Unencodable local payload (round-8 item 13): thrown when a point's
+/// values cannot be encoded (non-finite doubles) — fails the page, the
+/// run, and holds the cursor, instead of persisting a zero-byte row.
+nonisolated struct UnencodableLocalPayload: Error, Sendable {
+    var pointID: String
+}
+
+/// Unstamped sample (round-9 items 4+6): thrown when a sample the
+/// pipeline is about to count carries no external-UUID stamp — fail
+/// loud (item-13 doctrine), cursor unmoved, window retried.
+nonisolated struct UnstampedSample: Error, Sendable {
+    var pointID: String
 }
 
 /// Minimal, self-contained JSON shape for `LocalSample.payloadJSON` — the

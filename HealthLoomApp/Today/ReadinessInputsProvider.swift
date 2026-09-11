@@ -257,16 +257,48 @@ struct ReadinessScoreHistory {
         self.defaults = defaults
     }
 
+    /// 30-day WINDOW, not just 30 entries (round-8 item 14): the delta
+    /// caption says "vs 30-day average" — 12 entries scattered over 6
+    /// months must not average ~180-day-old scores (the HRV/RHR
+    /// `latestQuantity` path already cuts off at 7 days; history never
+    /// got one). `yyyy-MM-dd` keys compare chronologically as strings,
+    /// so the window is a string bound — no re-parsing, no timezone
+    /// drift. The Gregorian calendar is fixed (same host-independence
+    /// as the keys themselves).
+    private static let gregorian = Calendar(identifier: .gregorian)
+    private static let windowDays = 30
+
+    private static func cutoffString(today: Date) -> String {
+        // `date(byAdding:)` is total for day units; the fallback is
+        // fail-open (include all) on the impossible nil.
+        let cutoff = gregorian.date(byAdding: .day, value: -windowDays, to: today) ?? .distantPast
+        return dayString(cutoff)
+    }
+
     /// Scores for the engine's `recentScores` (today excluded — the delta
-    /// compares against prior mornings, not itself).
+    /// compares against prior mornings, not itself — plus the 30-day
+    /// window floor).
     func recentScores(today: Date = Date()) -> [Int] {
-        Self.load(from: defaults).filter { $0.day != Self.dayString(today) }.map(\.score)
+        let todayString = Self.dayString(today)
+        let cutoff = Self.cutoffString(today: today)
+        return Self.load(from: defaults)
+            .filter { $0.day != todayString && $0.day >= cutoff }
+            .map(\.score)
     }
 
     func record(score: Int, today: Date = Date()) {
-        var entries = Self.load(from: defaults).filter { $0.day != Self.dayString(today) }
-        entries.append(Entry(day: Self.dayString(today), score: score))
-        defaults.set(Array(entries.suffix(30)).map { [$0.day, String($0.score)] }, forKey: Self.defaultsKey)
+        let todayString = Self.dayString(today)
+        let cutoff = Self.cutoffString(today: today)
+        // Same-day replace + age prune + 31-entry cap. The cap is 31,
+        // not 30 (round-9 item 10): a full 30-day window plus today is
+        // 31 rows — capping at 30 drops the oldest IN-WINDOW day, so
+        // the average covers 29 while the caption promises 30. The
+        // window (not the cap) is the semantic; the cap only bounds a
+        // pathological clock (31 rows max, one per day by construction
+        // — same-day replaces, so 31 distinct days is the ceiling).
+        var entries = Self.load(from: defaults).filter { $0.day != todayString && $0.day >= cutoff }
+        entries.append(Entry(day: todayString, score: score))
+        defaults.set(Array(entries.suffix(31)).map { [$0.day, String($0.score)] }, forKey: Self.defaultsKey)
     }
 
     private struct Entry: Equatable {

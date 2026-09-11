@@ -21,6 +21,7 @@
 // row renders its "No data yet" empty state (WP-33 step 4) -- the screen
 // never errors.
 
+import CoreModel
 import Foundation
 import HealthKit
 
@@ -55,11 +56,11 @@ final class TodayMetricsProvider {
         case .activeEnergy:
             return await todaySum(.activeEnergyBurned, unit: .kilocalorie(), from: startOfDay, to: now)
         case .heart:
-            return await latestSample(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()))
+            return await latestSample(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), now: now)
         case .bloodOxygen:
-            return await latestSample(.oxygenSaturation, unit: .percent())
+            return await latestSample(.oxygenSaturation, unit: .percent(), now: now)
         case .weight:
-            return await latestSample(.bodyMass, unit: .gramUnit(with: .kilo))
+            return await latestSample(.bodyMass, unit: .gramUnit(with: .kilo), now: now)
         case .sleep:
             return await lastNightAsleepSeconds(now: now, startOfDay: startOfDay)
         }
@@ -91,12 +92,34 @@ final class TodayMetricsProvider {
         }
     }
 
-    private func latestSample(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit) async -> TodayMetricReading? {
+    /// A reading counts as current only inside this window (round-10
+    /// item 4): without a bound, a months-old HR/SpO2/weight sample
+    /// renders as a fresh "Latest" reading. Older samples yield no
+    /// reading, so the row shows its "No data yet" empty state — a
+    /// stale UI state, never a fresh-looking number. The shared
+    /// freshness doctrine (round-10 fix N2), not a second 7.
+    nonisolated static let latestSampleRecency: TimeInterval =
+        TimeInterval(CoreModel.healthFactsFreshDays) * 24 * 3600
+
+    /// Testable recency rule (the query predicate below enforces the
+    /// same bound — HealthKit predicates aren't unit-observable without
+    /// a store, so the Swift-side check carries the pin).
+    nonisolated static func isFresh(_ reading: TodayMetricReading, now: Date) -> Bool {
+        guard let date = reading.date else { return false }
+        return now.timeIntervalSince(date) <= latestSampleRecency
+    }
+
+    private func latestSample(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, now: Date) async -> TodayMetricReading? {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { return nil }
+        let predicate = HKQuery.predicateForSamples(
+            withStart: now.addingTimeInterval(-Self.latestSampleRecency),
+            end: now,
+            options: []
+        )
         return await withCheckedContinuation { (continuation: CheckedContinuation<TodayMetricReading?, Never>) in
             let query = HKSampleQuery(
                 sampleType: type,
-                predicate: nil,
+                predicate: predicate,
                 limit: 1,
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
             ) { _, samples, _ in
@@ -104,12 +127,11 @@ final class TodayMetricsProvider {
                     continuation.resume(returning: nil)
                     return
                 }
-                continuation.resume(
-                    returning: TodayMetricReading(
-                        value: sample.quantity.doubleValue(for: unit),
-                        date: sample.endDate
-                    )
+                let reading = TodayMetricReading(
+                    value: sample.quantity.doubleValue(for: unit),
+                    date: sample.endDate
                 )
+                continuation.resume(returning: Self.isFresh(reading, now: now) ? reading : nil)
             }
             healthStore.execute(query)
         }

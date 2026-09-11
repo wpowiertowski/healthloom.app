@@ -114,7 +114,11 @@ public actor BackfillCoordinator {
     /// installing a new loop: without this, `stop()`'s suspension on the
     /// old loop lets a concurrent `start()` pass the `nil` guard first and
     /// two loops walk one cursor.
+    /// Generation of the currently-published handle (round-8 item 9):
+    /// the trailing clear in `stop()` keys off this, not the shared
+    /// `runLoopGeneration` (which concurrent stops also bump).
     private var retiredLoop: Task<Void, Never>?
+    private var retiredGeneration = 0
 
     public init(
         types: [GoogleDataType],
@@ -130,8 +134,10 @@ public actor BackfillCoordinator {
         horizonStore: any BackfillHorizonRecordStore = UserDefaultsBackfillHorizonRecordStore(),
         busyProbe: any BackfillBusyProbe = AlwaysAvailableBusyProbe(),
         configuration: BackfillConfiguration = BackfillConfiguration(),
-        horizon: BackfillHorizon = .defaultHorizon
+        horizon: BackfillHorizon = .defaultHorizon,
+        isQuiesced: @escaping @Sendable () -> Bool = { false }
     ) {
+        self.isQuiesced = isQuiesced
         self.types = types
         self.client = client
         self.writer = writer
@@ -178,11 +184,21 @@ public actor BackfillCoordinator {
         horizon = newHorizon
     }
 
+    /// Quiesce probe (round-10 item 1): a latched wipe stops new loops
+    /// until relaunch (a post-wipe walk would write `LocalSample` +
+    /// `SyncState` rows over cleared state). Init-injected (default
+    /// inert) so tests script it without touching process state. The
+    /// wipe ALSO stops a running loop via `stop()` — this guard covers
+    /// restarts (view re-appears, resume paths).
+    private let isQuiesced: @Sendable () -> Bool
+
     /// Starts (or restarts) the `.utility`-priority background walk (WP-15
     /// step 2). No-op if already running or currently paused. `async`
     /// because it first awaits a loop `stop()` retired (all callers already
     /// call it with `await`).
     public func start() async {
+        // Round-10 item 1: quiesced loops never (re)start.
+        guard !isQuiesced() else { return }
         // Serialize with an in-flight stop: `stop()` nils the handle before
         // the old loop actually exits, so without this await the guard
         // below passes while the old loop is still walking the cursor.
@@ -190,6 +206,16 @@ public actor BackfillCoordinator {
         // newer loop while one await suspends.
         while let retired = retiredLoop {
             await retired.value
+            // Round-8 item 9 (liveness): awaiting an already-completed
+            // task can return WITHOUT yielding the executor — without
+            // this explicit yield, a momentarily-stale handle spins a
+            // tight non-yielding loop that can starve the very tasks
+            // (exiting loop, trailing clear) that would clear it,
+            // wedging the drain under pool pressure. Each pass
+            // re-reads the handle, so a clear still lands promptly;
+            // the yield only guarantees the waiter never pins a thread
+            // while waiting for it.
+            await Task.yield()
         }
         guard runLoopTask == nil, !isPaused else { return }
         runLoopGeneration += 1
@@ -218,12 +244,30 @@ public actor BackfillCoordinator {
         old?.cancel()
         // Publish before awaiting: a `start()` arriving during this
         // suspension must see (and await) the retiring loop, not sail past
-        // the `nil` handle into a second concurrent walk.
-        retiredLoop = old
-        await old?.value
-        // Clear only if still ours: a newer `stop()` bumps the generation
-        // again and publishes its own retired loop, which must survive.
-        if runLoopGeneration == myGeneration {
+        // the `nil` handle into a second concurrent walk. Round-8 item 9:
+        // publish ONLY a live handle, and clear ONLY our own publication
+        // — a second `stop()` with a nil handle must neither erase the
+        // first stop's publication (the hole: `start()` then launched a
+        // concurrent walk over the same cursor, which the generation
+        // guard cannot repair) nor clear it on the way out. Ownership
+        // keys off `retiredGeneration` (set only alongside a publish),
+        // never the shared `runLoopGeneration` other stops also bump —
+        // and a stale DONE handle can never linger: every publication
+        // is cleared exactly once by its publisher, so `start()`'s
+        // `while let` always terminates.
+        if let old {
+            retiredLoop = old
+            retiredGeneration = myGeneration
+        }
+        // Round-9 item 14: drain WHATEVER is published — including a
+        // previous stop's still-draining loop when this call arrived
+        // with no handle of its own — so `stop()` returns only when no
+        // loop is running, on EVERY path. The old `await old?.value`
+        // skipped the drain entirely on the nil-handle path, breaking
+        // the postcondition for stop-then-wipe callers (a wipe issued
+        // right after a handle-less stop could race the draining walk).
+        await retiredLoop?.value
+        if retiredGeneration == myGeneration {
             retiredLoop = nil
         }
     }
@@ -414,14 +458,41 @@ public actor BackfillCoordinator {
             // Re-acquire after: rollback may undo a first-ever insert.
             context.rollback()
             let syncState = fetchOrCreateSyncState(for: type, context: context)
+            // Round-10 item 14: commit the completed pages' `.localOnly`
+            // rows even though the chunk failed (upserted here, on this
+            // executor, ahead of the error-row saves below that commit
+            // them — the cursor still holds, so the next chunk re-pulls
+            // idempotently around the persisted rows; the chunk outcome
+            // carries no count, so no arithmetic is owed). Unwrap for
+            // the cancellation branch below (same wrapper hazard as
+            // SyncEngine's catch).
+            let effective = (error as? PageWalkPartial)?.underlying ?? error
+            if let walk = error as? PageWalkPartial {
+                for point in walk.localOnly {
+                    try? PagePipeline.upsertLocalSample(for: point, context: context)
+                }
+            }
+            // Round-8 item 12 + round-9 item 7: drain on the failure
+            // path too (converging on SyncEngine's catch shape) —
+            // otherwise a failed chunk leaks the coverage index +
+            // run entry. But drain WITHOUT applying or persisting:
+            // the old shape applied the drained links and then `try?`
+            // saved them onto SURVIVING (pre-existing) rows — and the
+            // upsert never resets `linkedWatchWorkoutUUID`, so a stale
+            // link went PERMANENT, contradicting the 'drops silently'
+            // contract. Drained here means DROPPED here.
+            _ = await conflictFilter.drainDeferredSessionLinks(for: type)
+            _ = await conflictFilter.drainSuppressedCount(for: type)
             // Cancellation is a stop, not a failure: no error status, the
             // cursor stays where the last durable save left it.
-            if error is CancellationError || (error as? GoogleHealthClientError) == .cancelled {
+            if effective is CancellationError || (effective as? GoogleHealthClientError) == .cancelled {
                 syncState.backfillStatus = SyncStatus.cancelled.rawValue
                 try? context.save()
                 return .suspendedCancelled
             }
-            let message = SyncLogRedactor.redact(String(describing: error))
+            // `effective`, not the wrapper (same ledger-hygiene reason
+            // as SyncEngine's catch).
+            let message = SyncLogRedactor.redact(String(describing: effective))
             syncState.backfillStatus = SyncStatus.error.rawValue
             syncState.backfillError = message
             try? context.save()
@@ -502,28 +573,29 @@ public actor BackfillCoordinator {
 
         var totalItemCount = 0
         // Round-6 item 8: the bounded shared walk (see PagePipeline);
-        // `.localOnly` upserts stay here. Partial progress on a
-        // throwing page still counts (same contract as SyncEngine).
-        do {
-            let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
-                .processPages(knownExternalIDs: knownExternalIDs) { token in
-                    try await client.reconcile(type: type, since: start, until: end, pageToken: token)
-                }
-            for point in walked.localOnly {
-                PagePipeline.upsertLocalSample(for: point, context: context)
+        // `.localOnly` upserts stay here (round-10 item 14: same
+        // executor-confinement reason as SyncEngine — context work never
+        // crosses into the pipeline). A throwing page propagates
+        // `PageWalkPartial` to `runNextChunk`'s catch, which commits the
+        // completed pages' rows there.
+        let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
+            .processPages(knownExternalIDs: knownExternalIDs) { token in
+                try await client.reconcile(type: type, since: start, until: end, pageToken: token)
             }
-            totalItemCount += walked.total
-            // Fix-round N3: see SyncEngine's identical log — a cap-hit
-            // commits partial progress, and the remainder is
-            // lookback-bound.
-            if walked.hitPageCap {
-                DiagnosticsLog.backfill.notice(
-                    "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial chunk committed; remainder beyond lookback overlap will not be revisited."
-                )
-            }
-        } catch let walk as PageWalkPartial {
-            totalItemCount += walk.total
-            throw walk.underlying
+        for point in walked.localOnly {
+            // Round-8 item 13: throws on unencodable payloads (no
+            // silent zero-byte rows) — into the run's existing
+            // failure path (cursor unmoved, error surfaced).
+            try PagePipeline.upsertLocalSample(for: point, context: context)
+        }
+        totalItemCount += walked.total
+        // Fix-round N3: see SyncEngine's identical log — a cap-hit
+        // commits partial progress, and the remainder is
+        // lookback-bound.
+        if walked.hitPageCap {
+            DiagnosticsLog.backfill.notice(
+                "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial chunk committed; remainder beyond lookback overlap will not be revisited."
+            )
         }
 
         // WP-12b: stamp deferred-session links onto the LocalSample rows the

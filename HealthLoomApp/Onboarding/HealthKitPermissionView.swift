@@ -97,15 +97,15 @@ struct HealthKitPermissionView: View {
                 // single sheet, same invisible-denial posture: a denied
                 // read just renders that row's "No data yet" state.
                 try await appEnvironment.healthKitAuth.requestShareAndRead(
-                    share: AppEnvironment.p0Types,
-                    read: [
-                        .exercise, .heartRate, .steps, .sleep, .weight,
-                        .oxygenSaturation, .distance, .activeEnergyBurned,
-                    ],
-                    // Workout saves (and their cycling/swimming/rowing
-                    // distance attachments) need share types no
-                    // `GoogleDataType` maps to -- unioned into this same
-                    // single sheet, derived from the writer's table.
+                    share: SyncPreferences.healthKitWritableTypes,
+                    read: SyncPreferences.healthKitReadTypes,
+                    // Round-8 item 1: share spans the FULL writable set
+                    // (not just P0) — the pipeline writes ~18 types and
+                    // an unshared type denies forever with a frozen
+                    // cursor. Workout saves (and their distance
+                    // attachments) need share types no `GoogleDataType`
+                    // maps to -- unioned into this same single sheet,
+                    // derived from the writer's table.
                     includingWorkoutShare: true
                 )
                 isRequesting = false
