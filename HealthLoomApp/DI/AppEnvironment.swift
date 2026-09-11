@@ -199,17 +199,21 @@ final class AppEnvironment {
     #if compiler(>=6.4)
     let refreshTrigger: KnowledgeRefreshTrigger?
 
-    /// History-observed refresh construction (round-10 item 3;
-    /// `nil` when observation is unavailable). Factored (not inline
-    /// in `init`) so tests drive the real factory method against
-    /// in-memory deps — presence pinned, firing excepted
-    /// (`HistoryObserver` offers no seam).
+    /// History-observed refresh construction (round-10 item 3 +
+    /// fix N1; `nil` when observation is unavailable OR under UI
+    /// tests). Factored (not inline in `init`) so tests drive the
+    /// real factory method against in-memory deps — BOTH legs pinned
+    /// (presence AND the UITest-nil gate), firing excepted
+    /// (`HistoryObserver` offers no seam). The gate lives HERE (not
+    /// at the call site) so it can't be bypassed by a second caller.
     @MainActor
     static func makeRefreshTrigger(
         modelContainer: ModelContainer,
-        knowledgeStore: KnowledgeStore
+        knowledgeStore: KnowledgeStore,
+        isUITest: Bool
     ) -> KnowledgeRefreshTrigger? {
-        try? KnowledgeRefreshTrigger(modelContainer: modelContainer) { [weak knowledgeStore] in
+        guard !isUITest else { return nil }
+        return try? KnowledgeRefreshTrigger(modelContainer: modelContainer) { [weak knowledgeStore] in
             Task { _ = try? await knowledgeStore?.refresh() }
         }
     }
@@ -414,11 +418,11 @@ final class AppEnvironment {
         // derivation and drops non-correction fixture fields, so
         // observation actively fights fixture determinism there.
         #if compiler(>=6.4)
-        if !launchConfiguration.isUITest {
-            self.refreshTrigger = Self.makeRefreshTrigger(modelContainer: container, knowledgeStore: knowledgeStore)
-        } else {
-            self.refreshTrigger = nil
-        }
+        self.refreshTrigger = Self.makeRefreshTrigger(
+            modelContainer: container,
+            knowledgeStore: knowledgeStore,
+            isUITest: launchConfiguration.isUITest
+        )
         #endif
         if launchConfiguration.seedYouTab {
             Self.seedYouTabFixtures(in: container)

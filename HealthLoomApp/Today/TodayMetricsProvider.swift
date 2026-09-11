@@ -21,6 +21,7 @@
 // row renders its "No data yet" empty state (WP-33 step 4) -- the screen
 // never errors.
 
+import CoreModel
 import Foundation
 import HealthKit
 
@@ -95,8 +96,10 @@ final class TodayMetricsProvider {
     /// item 4): without a bound, a months-old HR/SpO2/weight sample
     /// renders as a fresh "Latest" reading. Older samples yield no
     /// reading, so the row shows its "No data yet" empty state — a
-    /// stale UI state, never a fresh-looking number.
-    nonisolated static let latestSampleRecency: TimeInterval = 7 * 24 * 3600
+    /// stale UI state, never a fresh-looking number. The shared
+    /// freshness doctrine (round-10 fix N2), not a second 7.
+    nonisolated static let latestSampleRecency: TimeInterval =
+        TimeInterval(CoreModel.healthFactsFreshDays) * 24 * 3600
 
     /// Testable recency rule (the query predicate below enforces the
     /// same bound — HealthKit predicates aren't unit-observable without

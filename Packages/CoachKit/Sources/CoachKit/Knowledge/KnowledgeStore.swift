@@ -63,7 +63,9 @@ public final class KnowledgeStore {
     // one compiler-tied constant, not two numbers to keep in sync.
     static let sleepWindowNights = 14
     static let workoutsWindowDays = 30
-    private static let localOnlyWindowDays = 7
+    // Round-10 fix N2: the shared freshness doctrine (not a second 7)
+    // — see `CoreModel.healthFactsFreshDays`.
+    private static let localOnlyWindowDays = CoreModel.healthFactsFreshDays
 
     private let modelContainer: ModelContainer
     private let healthReadStore: HealthReadStore

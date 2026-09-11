@@ -1229,9 +1229,11 @@ struct KnowledgeRefreshTriggerTests {
         )
         // App launch order: trigger FIRST, then fixture seeding, then
         // the toggle — a trigger that breaks later writes must surface
-        // here, not only in the UI suite.
-        let trigger = AppEnvironment.makeRefreshTrigger(modelContainer: container, knowledgeStore: store)
+        // here, not only in the UI suite. Round-10 fix N1: the UITest
+        // leg returns nil through this same factory method.
+        let trigger = AppEnvironment.makeRefreshTrigger(modelContainer: container, knowledgeStore: store, isUITest: false)
         #expect(trigger != nil)
+        #expect(AppEnvironment.makeRefreshTrigger(modelContainer: container, knowledgeStore: store, isUITest: true) == nil)
         let seed = ModelContext(container)
         seed.insert(KnowledgeProfile(sections: [
             ProfileField(key: "steps.dailyAverage", displayText: "~8,200 steps/day", source: "HealthKit", asOf: .now),

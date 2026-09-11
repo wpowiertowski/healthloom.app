@@ -23,6 +23,19 @@ public enum CoreModel {
         ContextSnapshot.self,
     ]
 
+    /// Shared health-data freshness horizon, in days (round-10 fix
+    /// N2): health facts older than this are stale. `KnowledgeStore`'s
+    /// derivation window and `TodayMetricsProvider`'s latest-sample
+    /// recency are two mechanisms over this ONE doctrine, so it lives
+    /// here (both modules' common foundation) instead of as two
+    /// coincident 7s that could drift silently. A future change that
+    /// genuinely wants them independent must split them explicitly —
+    /// not by editing one literal.
+    // `nonisolated` (the `BackgroundSync.identifier` precedent): a pure
+    // value, safe from any isolation — including `nonisolated` statics
+    // like `TodayMetricsProvider.latestSampleRecency`.
+    nonisolated public static let healthFactsFreshDays = 7
+
     /// Builds the app's `ModelContainer`.
     ///
     /// - Parameter inMemory: `true` for tests/previews — nothing touches disk, no file
