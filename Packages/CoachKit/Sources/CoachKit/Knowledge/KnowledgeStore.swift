@@ -439,9 +439,15 @@ public final class KnowledgeStore {
     /// to the derivation default.
     public func setExcludedFromAI(_ excluded: Bool, forKey key: String) throws {
         let context = ModelContext(modelContainer)
-        guard let profile = try Self.fetchProfile(from: context),
-              let index = profile.sections.firstIndex(where: { $0.key == key })
-        else { return }
+        // Round-10 item 12: fetch-or-create (a first-run user has no
+        // profile yet) and THROW on a missing key — the old silent
+        // `return` discarded the privacy intent (toggle snapped back,
+        // no message). The You tab surfaces this through its existing
+        // error banner.
+        let profile = try fetchOrCreateProfile(context: context)
+        guard let index = profile.sections.firstIndex(where: { $0.key == key }) else {
+            throw KnowledgeStoreError.unknownKey(key)
+        }
         profile.sections[index].excludedFromAI = excluded
         try context.save()
         cachedExcludedKeys = profile.sections.excludedKeys
@@ -577,5 +583,21 @@ public final class KnowledgeStore {
         ].compactMap { $0 }
         guard !fields.isEmpty else { return "No recent vitals available." }
         return joinedDisplayText(fields)
+    }
+}
+
+/// Errors from the funneled KnowledgeStore write paths (round-10 item
+/// 12): never silent — the You tab renders these through its existing
+/// error banner instead of snapping the toggle back with no message.
+public enum KnowledgeStoreError: Error, Equatable, Sendable, LocalizedError {
+    /// Exclusion targeted a field key the profile doesn't have (a
+    /// first-run profile is empty until the first refresh/sync).
+    case unknownKey(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unknownKey:
+            return "That health field isn't in your profile yet — sync first, then try again."
+        }
     }
 }

@@ -134,8 +134,10 @@ public actor BackfillCoordinator {
         horizonStore: any BackfillHorizonRecordStore = UserDefaultsBackfillHorizonRecordStore(),
         busyProbe: any BackfillBusyProbe = AlwaysAvailableBusyProbe(),
         configuration: BackfillConfiguration = BackfillConfiguration(),
-        horizon: BackfillHorizon = .defaultHorizon
+        horizon: BackfillHorizon = .defaultHorizon,
+        isQuiesced: @escaping @Sendable () -> Bool = { false }
     ) {
+        self.isQuiesced = isQuiesced
         self.types = types
         self.client = client
         self.writer = writer
@@ -182,11 +184,21 @@ public actor BackfillCoordinator {
         horizon = newHorizon
     }
 
+    /// Quiesce probe (round-10 item 1): a latched wipe stops new loops
+    /// until relaunch (a post-wipe walk would write `LocalSample` +
+    /// `SyncState` rows over cleared state). Init-injected (default
+    /// inert) so tests script it without touching process state. The
+    /// wipe ALSO stops a running loop via `stop()` — this guard covers
+    /// restarts (view re-appears, resume paths).
+    private let isQuiesced: @Sendable () -> Bool
+
     /// Starts (or restarts) the `.utility`-priority background walk (WP-15
     /// step 2). No-op if already running or currently paused. `async`
     /// because it first awaits a loop `stop()` retired (all callers already
     /// call it with `await`).
     public func start() async {
+        // Round-10 item 1: quiesced loops never (re)start.
+        guard !isQuiesced() else { return }
         // Serialize with an in-flight stop: `stop()` nils the handle before
         // the old loop actually exits, so without this await the guard
         // below passes while the old loop is still walking the cursor.
@@ -446,6 +458,20 @@ public actor BackfillCoordinator {
             // Re-acquire after: rollback may undo a first-ever insert.
             context.rollback()
             let syncState = fetchOrCreateSyncState(for: type, context: context)
+            // Round-10 item 14: commit the completed pages' `.localOnly`
+            // rows even though the chunk failed (upserted here, on this
+            // executor, ahead of the error-row saves below that commit
+            // them — the cursor still holds, so the next chunk re-pulls
+            // idempotently around the persisted rows; the chunk outcome
+            // carries no count, so no arithmetic is owed). Unwrap for
+            // the cancellation branch below (same wrapper hazard as
+            // SyncEngine's catch).
+            let effective = (error as? PageWalkPartial)?.underlying ?? error
+            if let walk = error as? PageWalkPartial {
+                for point in walk.localOnly {
+                    try? PagePipeline.upsertLocalSample(for: point, context: context)
+                }
+            }
             // Round-8 item 12 + round-9 item 7: drain on the failure
             // path too (converging on SyncEngine's catch shape) —
             // otherwise a failed chunk leaks the coverage index +
@@ -459,12 +485,14 @@ public actor BackfillCoordinator {
             _ = await conflictFilter.drainSuppressedCount(for: type)
             // Cancellation is a stop, not a failure: no error status, the
             // cursor stays where the last durable save left it.
-            if error is CancellationError || (error as? GoogleHealthClientError) == .cancelled {
+            if effective is CancellationError || (effective as? GoogleHealthClientError) == .cancelled {
                 syncState.backfillStatus = SyncStatus.cancelled.rawValue
                 try? context.save()
                 return .suspendedCancelled
             }
-            let message = SyncLogRedactor.redact(String(describing: error))
+            // `effective`, not the wrapper (same ledger-hygiene reason
+            // as SyncEngine's catch).
+            let message = SyncLogRedactor.redact(String(describing: effective))
             syncState.backfillStatus = SyncStatus.error.rawValue
             syncState.backfillError = message
             try? context.save()
@@ -545,31 +573,29 @@ public actor BackfillCoordinator {
 
         var totalItemCount = 0
         // Round-6 item 8: the bounded shared walk (see PagePipeline);
-        // `.localOnly` upserts stay here. Partial progress on a
-        // throwing page still counts (same contract as SyncEngine).
-        do {
-            let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
-                .processPages(knownExternalIDs: knownExternalIDs) { token in
-                    try await client.reconcile(type: type, since: start, until: end, pageToken: token)
-                }
-            for point in walked.localOnly {
-                // Round-8 item 13: throws on unencodable payloads (no
-                // silent zero-byte rows) — into the run's existing
-                // failure path (cursor unmoved, error surfaced).
-                try PagePipeline.upsertLocalSample(for: point, context: context)
+        // `.localOnly` upserts stay here (round-10 item 14: same
+        // executor-confinement reason as SyncEngine — context work never
+        // crosses into the pipeline). A throwing page propagates
+        // `PageWalkPartial` to `runNextChunk`'s catch, which commits the
+        // completed pages' rows there.
+        let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
+            .processPages(knownExternalIDs: knownExternalIDs) { token in
+                try await client.reconcile(type: type, since: start, until: end, pageToken: token)
             }
-            totalItemCount += walked.total
-            // Fix-round N3: see SyncEngine's identical log — a cap-hit
-            // commits partial progress, and the remainder is
-            // lookback-bound.
-            if walked.hitPageCap {
-                DiagnosticsLog.backfill.notice(
-                    "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial chunk committed; remainder beyond lookback overlap will not be revisited."
-                )
-            }
-        } catch let walk as PageWalkPartial {
-            totalItemCount += walk.total
-            throw walk.underlying
+        for point in walked.localOnly {
+            // Round-8 item 13: throws on unencodable payloads (no
+            // silent zero-byte rows) — into the run's existing
+            // failure path (cursor unmoved, error surfaced).
+            try PagePipeline.upsertLocalSample(for: point, context: context)
+        }
+        totalItemCount += walked.total
+        // Fix-round N3: see SyncEngine's identical log — a cap-hit
+        // commits partial progress, and the remainder is
+        // lookback-bound.
+        if walked.hitPageCap {
+            DiagnosticsLog.backfill.notice(
+                "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial chunk committed; remainder beyond lookback overlap will not be revisited."
+            )
         }
 
         // WP-12b: stamp deferred-session links onto the LocalSample rows the

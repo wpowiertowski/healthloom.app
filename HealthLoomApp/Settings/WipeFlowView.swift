@@ -235,6 +235,13 @@ struct WipeFlowView: View {
         let authManager = appEnvironment.googleAuthManager
         let keys = appEnvironment.cloudKeys
         return WipeCoordinator.Dependencies(
+            // Round-10 item 1: latch FIRST (the coordinator calls this
+            // before revoke) + stop a running backfill loop — from here
+            // until relaunch every writer trigger no-ops.
+            quiesceWriters: {
+                WipeQuiesce.latch()
+                Task { await appEnvironment.backfillCoordinator.stop() }
+            },
             // Revocation failure is recorded in the ledger, never thrown
             // out: the keychain step clears the same secrets locally
             // (`GoogleAuthError` is log-safe by design).

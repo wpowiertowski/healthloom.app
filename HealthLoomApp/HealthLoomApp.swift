@@ -111,7 +111,10 @@ struct HealthLoomApp: App {
             Task {
                 await appEnvironment.tipStore.begin()
             }
-            if !appEnvironment.launchConfiguration.isUITest {
+            // Round-10 item 7: foreground min-interval gate (same
+            // 15-min semantics as the background planner) — rapid
+            // re-foregrounds skip the full reconcile.
+            if !appEnvironment.launchConfiguration.isUITest, appEnvironment.foregroundReconcileIfDue() {
                 Task {
                     await appEnvironment.cloudSync.syncNow()
                 }
@@ -306,6 +309,15 @@ enum HealthLoomBackgroundSync {
 
     /// The `BGAppRefreshTask` launch handler proper.
     nonisolated private static func handleLaunch(_ task: BGAppRefreshTask, context: BackgroundSyncLaunchContext) {
+        // Round-10 item 1: quiesced (wipe ran, relaunch pending) — do NO
+        // work and schedule NOTHING (relaunch re-registers): the store
+        // file is gone and any write would go through an unlinked
+        // handle or resurrect cleared records. `false` also backs the
+        // identifier off until that relaunch.
+        if WipeQuiesce.isLatched {
+            task.setTaskCompleted(success: false)
+            return
+        }
         // Unconditional, before any work starts -- see this enum's header
         // comment for why this dominates "reschedule in the success branch
         // and the failure branch."

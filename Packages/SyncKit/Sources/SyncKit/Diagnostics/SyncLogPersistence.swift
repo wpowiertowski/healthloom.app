@@ -33,6 +33,19 @@ import Foundation
 nonisolated public protocol SyncLogPersisting: Sendable {
     nonisolated func load() -> [SyncLogEntry]
     nonisolated func save(_ entries: [SyncLogEntry])
+    /// O(1) single-entry persist (round-10 item 13): the default
+    /// read-modify-write preserves the old behavior for fakes that
+    /// only implement `load`/`save`; the file conformer overrides
+    /// with a true append-line.
+    nonisolated func append(_ entry: SyncLogEntry)
+}
+
+public extension SyncLogPersisting {
+    nonisolated func append(_ entry: SyncLogEntry) {
+        var entries = load()
+        entries.append(entry)
+        save(entries)
+    }
 }
 
 /// Test/preview double: never touches disk, `load()` always returns `[]`.
@@ -42,6 +55,7 @@ nonisolated public struct NullSyncLogPersistence: SyncLogPersisting {
     public init() {}
     public func load() -> [SyncLogEntry] { [] }
     public func save(_ entries: [SyncLogEntry]) {}
+    public func append(_ entry: SyncLogEntry) {}
 }
 
 /// Production store: one JSON file, `Application Support/HealthLoom/SyncLog.json`
@@ -78,14 +92,53 @@ nonisolated public final class FileSyncLogPersistence: SyncLogPersisting, @unche
         lock.lock()
         defer { lock.unlock() }
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        return (try? JSONDecoder().decode([SyncLogEntry].self, from: data)) ?? []
+        // Old format first (whole-array JSON — a lines file can never
+        // decode as an array, so this order is unambiguous; a value
+        // containing an embedded newline must not misroute). Then JSON
+        // lines, one entry per line. Self-migrating: the next `save`
+        // rewrites in the new shape.
+        if let array = try? JSONDecoder().decode([SyncLogEntry].self, from: data) {
+            return array
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        let decoder = JSONDecoder()
+        return text.split(separator: "\n").compactMap { line in
+            try? decoder.decode(SyncLogEntry.self, from: Data(line.utf8))
+        }
     }
 
     public func save(_ entries: [SyncLogEntry]) {
         lock.lock()
         defer { lock.unlock() }
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        let encoder = JSONEncoder()
+        var text = ""
+        for entry in entries {
+            guard let data = try? encoder.encode(entry),
+                  let line = String(data: data, encoding: .utf8) else { continue }
+            text += line + "\n"
+        }
+        try? text.write(to: fileURL, atomically: true, encoding: .utf8)
+        applyCompleteFileProtection()
+    }
+
+    /// True O(1) append (round-10 item 13): one small encode + one
+    /// trailing write — no re-encode of the whole ring, no atomic
+    /// full-file rewrite. Durability matches `save` (every entry hits
+    /// disk before `append` returns); over-cap line buildup is the
+    /// STORE's compaction job (`save` above), not this method's.
+    public func append(_ entry: SyncLogEntry) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data = try? JSONEncoder().encode(entry),
+              let line = String(data: data, encoding: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            guard let handle = try? FileHandle(forWritingTo: fileURL) else { return }
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            _ = try? handle.write(contentsOf: Data((line + "\n").utf8))
+        } else {
+            try? (line + "\n").write(to: fileURL, atomically: true, encoding: .utf8)
+        }
         applyCompleteFileProtection()
     }
 

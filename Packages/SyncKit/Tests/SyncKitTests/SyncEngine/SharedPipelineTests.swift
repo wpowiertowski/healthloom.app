@@ -647,6 +647,33 @@ import Testing
         }
     }
 
+    @Test func mismatchedWorkoutStampThrowsLoudly() throws {
+        // Round-10 item 9: the `.workout` arm's equivalent gate — the
+        // spec must carry exactly the point's base UUID (workout-level
+        // metadata keeps the base, never a suffix). A missing or
+        // drifted stamp would rewrite every sync, silently (the
+        // UnstampedSample-loud class). Unreachable through
+        // `processPage` (the mapper always stamps `point.id`), so
+        // pinned here at the gate itself.
+        func workout(stamp: String) -> MappedWorkout {
+            MappedWorkout(
+                activityType: .running,
+                start: Self.fixedNow,
+                end: Self.fixedNow,
+                distanceMeters: nil,
+                energyKilocalories: nil,
+                metadata: MappedMetadata(externalUUID: stamp, externalID: stamp, sourceDevice: nil)
+            )
+        }
+        try PagePipeline.checkedWorkoutUUID(workout(stamp: "w-1"), baseID: "w-1")
+        #expect(throws: UnstampedSample.self) {
+            try PagePipeline.checkedWorkoutUUID(workout(stamp: ""), baseID: "w-1")
+        }
+        #expect(throws: UnstampedSample.self) {
+            try PagePipeline.checkedWorkoutUUID(workout(stamp: "w-1#distance"), baseID: "w-1")
+        }
+    }
+
     // MARK: - Item 10, failed completion save surfaces
 
     struct SaveBoom: Error {}

@@ -139,6 +139,10 @@ struct TierSwitcherTests {
             prompts: PromptManager(modelContainer: container),
             assembler: ContextAssembler(modelContainer: container),
             factory: factory,
+            // Round-10 item 11: this fixture's scripted factory answers
+            // every tier BY DESIGN (per-tier chunks) — stated explicitly
+            // instead of riding the production onDevice-only default.
+            wiredTiers: Set(ModelTier.allCases),
             availability: FixedCoachAvailabilityChecker(availability: .available),
             tierSettings: settings,
             tierCatalog: catalog
@@ -358,6 +362,72 @@ struct TierSwitcherTests {
         #expect(viewModel.turns.count == 2)
         #expect(viewModel.turns[1].content == "Hello world.")
         #expect(viewModel.turns[1].provider == ModelTier.onDevice.rawValue)
+        #expect(viewModel.errorMessage == nil)
+    }
+
+    @Test("unwired tier hits the orchestrator guard, never the factory")
+    func unwiredTierHitsGuard() async throws {
+        // Round-10 item 11: per-tier scripted factory (on-device
+        // answers, PCC fail-closes like production) + production-
+        // default wiredTiers. A PCC turn must throw tierUnavailable
+        // WITHOUT consulting the factory (guard fires) — the old
+        // complete map answered scripted and persisted a false cloud
+        // provider. An on-device turn serves and stamps TRUE.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let ephemeral = try EphemeralDefaults(prefix: "tierswitcher")
+        let settings = TierSettingsStore(defaults: ephemeral.defaults)
+        let gates = CloudGateCache()
+        let catalog = ModelCatalog(
+            onDeviceAvailable: { true },
+            hasConsent: { gates.hasConsent($0) },
+            hasKey: { gates.hasKey($0) },
+            pccAvailable: { true },
+            pccQuota: { .ok },
+            liveTiers: [.onDevice, .privateCloudCompute]
+        )
+        let store = KnowledgeStore(
+            modelContainer: container,
+            healthReadStore: EmptyReadStore(),
+            healthKitAuth: HealthKitAuth()
+        )
+        // Sendable box: the build closure is `@MainActor @Sendable`,
+        // so tier observations can't mutate a captured local (same
+        // reason the fixture boxes instructions in `InstructionLog`).
+        final class TierLog: Sendable {
+            private let lock = NSLock()
+            private var tiers: [ModelTier] = []
+            func append(_ tier: ModelTier) { lock.withLock { tiers.append(tier) } }
+            func clear() { lock.withLock { tiers.removeAll() } }
+            var all: [ModelTier] { lock.withLock { tiers } }
+        }
+        let builtTiers = TierLog()
+        let factory = CoachSessionFactory(build: { tier, _, _ in
+            builtTiers.append(tier)
+            if tier == .onDevice { return TestCoachSession() }
+            return UnwiredTierSession(tier: tier)
+        })
+        let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
+            container: container,
+            store: store,
+            prompts: PromptManager(modelContainer: container),
+            assembler: ContextAssembler(modelContainer: container),
+            factory: factory,
+            availability: FixedCoachAvailabilityChecker(availability: .available),
+            tierSettings: settings,
+            tierCatalog: catalog
+        ))
+        enable(.privateCloudCompute, settings: settings, gates: gates)
+        #expect(viewModel.selectTier(.privateCloudCompute) == true)
+        builtTiers.clear()
+        #expect(viewModel.send("hi") == true)
+        try await waitForCondition({ !viewModel.isResponding })
+        #expect(viewModel.errorMessage == "Apple cloud (PCC) isn't available right now (\(UnwiredTierSession.unwiredReason)).")
+        #expect(viewModel.turns.count == 1)
+        #expect(!builtTiers.all.contains(.privateCloudCompute))
+        #expect(viewModel.selectTier(.onDevice) == true)
+        #expect(viewModel.send("yo") == true)
+        try await waitForCondition({ !viewModel.isResponding })
+        #expect(viewModel.turns.last?.provider == ModelTier.onDevice.rawValue)
         #expect(viewModel.errorMessage == nil)
     }
 

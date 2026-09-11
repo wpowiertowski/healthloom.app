@@ -395,6 +395,80 @@ actor StopFlag {
         #expect(await resolver.trackedRunCount() == 0)
     }
 
+    @Test func midWalkFailureKeepsCompletedPagesRows() async throws {
+        // Round-10 item 14: 4 single-point local-only pages, then a
+        // failing 5th. Pages 1-4 rows persist (upserted on the failure
+        // path ahead of the error-row save, cursor unmoved) — the old
+        // shape counted them and persisted none. The chunk outcome
+        // carries no count, so the rows themselves are the assertion.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        for i in 0..<4 {
+            let point = GoogleDataPoint(
+                id: "am-\(i)",
+                dataType: .activeMinutes,
+                start: BackfillTestFixtures.date("2026-07-09T00:00:0\(i)Z"),
+                end: BackfillTestFixtures.date("2026-07-09T00:00:1\(i)Z"),
+                source: DataSource(
+                    platform: "IOS",
+                    deviceDisplayName: "Apple Watch",
+                    recordingMethod: "AUTOMATICALLY_RECORDED"
+                ),
+                values: [:]
+            )
+            mock.setScript(
+                type: .activeMinutes,
+                pageToken: i == 0 ? nil : "p\(i)",
+                results: [.success(Page(points: [point], nextPageToken: "p\(i + 1)"))]
+            )
+        }
+        mock.setScript(
+            type: .activeMinutes,
+            pageToken: "p4",
+            results: [.failure(.server(status: 500))]
+        )
+        let coordinator = BackfillCoordinator(
+            types: [.activeMinutes],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
+            horizon: .days90
+        )
+        let outcome = await coordinator.runNextChunk(for: .activeMinutes)
+        guard case .failed = outcome else {
+            Issue.record("expected failed, got \(outcome)")
+            return
+        }
+        let rows = try ModelContext(container).fetch(FetchDescriptor<LocalSample>())
+        #expect(rows.count == 4)
+        #expect(Set(rows.map(\.externalID)) == ["am-0", "am-1", "am-2", "am-3"])
+    }
+
+    @Test func quiescedStartLaunchesNothing() async throws {
+        // Round-10 item 1: a latched wipe stops new loops until
+        // relaunch (view re-appears, resume paths) — `start()` is a
+        // no-op and no fetch fires.
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        let coordinator = BackfillCoordinator(
+            types: [.steps],
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            clock: clock,
+            horizonStore: InMemoryBackfillHorizonRecordStore(),
+            horizon: .days90,
+            isQuiesced: { true }
+        )
+        await coordinator.start()
+        #expect(!(await coordinator.isLoopRunning))
+        #expect(mock.callCount(type: .steps, pageToken: nil) == 0)
+    }
+
     @Test func stopWaitsForDrainOnAllPaths() async throws {
         // Round-9 item 14: stop#1 publishes the draining loop; stop#2
         // (nil handle) must ALSO wait for it — not return while the

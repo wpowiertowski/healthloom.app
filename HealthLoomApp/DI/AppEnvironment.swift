@@ -83,6 +83,36 @@ final class AppEnvironment {
     let isStoreEphemeral: Bool
     let cloudSync: CloudSyncEngine
 
+    /// Last foreground reconcile (round-10 item 7): mirrors
+    /// `BackgroundSyncConfiguration.minInterval` — every foreground
+    /// transition reconciled unconditionally (fetches + an uncapped
+    /// transcript walk), so rapid app-switching burned quota and
+    /// pulled up to 20k records per flip. In-memory (a fresh launch
+    /// always reconciles once — data may be stale; only rapid
+    /// re-foregrounds skip).
+    private(set) var lastForegroundReconcile: Date?
+
+    /// Pure gate for the foreground trigger (unit-pinned; the call
+    /// site stamps via `noteForegroundReconcile`).
+    nonisolated static func foregroundReconcileDue(
+        now: Date,
+        last: Date?,
+        minInterval: TimeInterval = BackgroundSyncConfiguration().minInterval
+    ) -> Bool {
+        guard let last else { return true }
+        return now.timeIntervalSince(last) >= minInterval
+    }
+
+    /// Records a foreground reconcile (and reports whether one was
+    /// due — the trigger fires `syncNow` only on `true`).
+    func foregroundReconcileIfDue(now: Date = Date()) -> Bool {
+        guard Self.foregroundReconcileDue(now: now, last: lastForegroundReconcile) else {
+            return false
+        }
+        lastForegroundReconcile = now
+        return true
+    }
+
     /// Opens the store, falling back LOUDLY (round-6 item 3) — decided:
     /// launch on a memory store (availability) + published flag + fault
     /// log (honesty), never a silent discard and never a hard crash on
@@ -162,6 +192,28 @@ final class AppEnvironment {
     /// convention as WP-15/WP-18) because `YouView` builds its view model
     /// from it.
     let knowledgeStore: KnowledgeStore
+    /// History-observed refresh trigger (round-10 item 3; `nil` when
+    /// observation is unavailable — same posture as no trigger at all).
+    /// Held (not just constructed): `withObservationTracking` goes quiet
+    /// if the trigger deallocates.
+    #if compiler(>=6.4)
+    let refreshTrigger: KnowledgeRefreshTrigger?
+
+    /// History-observed refresh construction (round-10 item 3;
+    /// `nil` when observation is unavailable). Factored (not inline
+    /// in `init`) so tests drive the real factory method against
+    /// in-memory deps — presence pinned, firing excepted
+    /// (`HistoryObserver` offers no seam).
+    @MainActor
+    static func makeRefreshTrigger(
+        modelContainer: ModelContainer,
+        knowledgeStore: KnowledgeStore
+    ) -> KnowledgeRefreshTrigger? {
+        try? KnowledgeRefreshTrigger(modelContainer: modelContainer) { [weak knowledgeStore] in
+            Task { _ = try? await knowledgeStore?.refresh() }
+        }
+    }
+    #endif
     /// The chat session factory, shared by the chat view model and the
     /// prompt editor (which busts the cached conversation on every
     /// successful write -- round-2 #1).
@@ -221,7 +273,15 @@ final class AppEnvironment {
         // Live CloudKit adapter; hermetic stub injected in tests. Launch
         // auto-sync is gated on `!isUITest` at the call site
         // (HealthLoomApp root `.task`) so UI tests never touch CloudKit.
-        self.cloudSync = CloudSyncEngine(container: container, database: LiveCloudDatabase())
+        // Round-10 item 1: every writer trigger reads the wipe latch
+        // (quiesced until relaunch) — engine, insight host, and
+        // backfill loop alike.
+        self.cloudSync = CloudSyncEngine(
+            container: container,
+            database: LiveCloudDatabase(),
+            isQuiesced: { WipeQuiesce.isLatched }
+        )
+        InsightRunnerHost.quiesceCheck = { WipeQuiesce.isLatched }
         self.healthKitAuth = HealthKitAuth()
 
         let authConfig = GoogleAuthConfig(
@@ -311,7 +371,10 @@ final class AppEnvironment {
             // as the foreground sync) — a mid-walk toggle takes effect
             // without rebuilding anything.
             disabledTypes: { SyncPreferences().disabledTypes },
-            busyProbe: syncEngine
+            busyProbe: syncEngine,
+            // Round-10 item 1: no new loops once a wipe has latched
+            // (a running loop is stopped by the wipe's quiesce step).
+            isQuiesced: { WipeQuiesce.isLatched }
         )
 
         if launchConfiguration.seedDashboardData {
@@ -335,6 +398,28 @@ final class AppEnvironment {
             healthKitAuth: healthKitAuth
         )
         self.knowledgeStore = knowledgeStore
+        // Round-10 item 3: the trigger that feeds non-Coach users —
+        // sync writes (`SyncState`/`LocalSample` history) refresh the
+        // profile WITHOUT opening chat, so insights and the You tab
+        // stop starving. Trigger-only (no launch refresh): a launch
+        // read would run pre-authorization (empty) and burn launch
+        // budget; the trigger fires exactly when sync lands data.
+        // `try?`: a trigger that can't observe degrades to today's
+        // posture (Coach warm-up still refreshes), never a launch
+        // failure. Pinned present (not firing — `HistoryObserver`
+        // offers no seam) by the test below.
+        // Not created under UI tests (proven by YouTab failure): UI
+        // flows never sync (nothing to observe) and seed hermetic
+        // fixtures — any observer fire rebuilds the profile from
+        // derivation and drops non-correction fixture fields, so
+        // observation actively fights fixture determinism there.
+        #if compiler(>=6.4)
+        if !launchConfiguration.isUITest {
+            self.refreshTrigger = Self.makeRefreshTrigger(modelContainer: container, knowledgeStore: knowledgeStore)
+        } else {
+            self.refreshTrigger = nil
+        }
+        #endif
         if launchConfiguration.seedYouTab {
             Self.seedYouTabFixtures(in: container)
         }
@@ -353,7 +438,17 @@ final class AppEnvironment {
             coachSessionFactory = CoachSessionFactory()
             availabilityChecker = LiveCoachAvailabilityChecker()
         case .scripted:
-            coachSessionFactory = CoachSessionFactory(build: { _, _, _ in UITestScriptedCoachSession() })
+            // Round-10 item 11: tier-AWARE scripted factory — on-device
+            // answers scripted (provider stamps honestly); every other
+            // tier fail-closes exactly like production's default factory
+            // (the old tier-blind shape answered PCC/Claude turns
+            // on-device and persisted a false cloud provider).
+            coachSessionFactory = CoachSessionFactory(build: { tier, _, _ in
+                if tier == .onDevice {
+                    return UITestScriptedCoachSession()
+                }
+                return UnwiredTierSession(tier: tier)
+            })
             availabilityChecker = FixedCoachAvailabilityChecker(availability: .available)
         case .forced(let availability):
             coachSessionFactory = CoachSessionFactory()

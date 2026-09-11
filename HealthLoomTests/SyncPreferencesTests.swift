@@ -220,6 +220,14 @@ struct ManualSyncTypesTests {
         #expect(readRefs >= 3)
     }
 
+    @Test func readSetCoversTopWeightedSignals() {
+        // Round-10 item 2: resting HR + HRV feed the top readiness
+        // weights — a future edit dropping them from the read set
+        // silently starves the engine (share is not read).
+        #expect(SyncPreferences.healthKitReadTypes.contains(.dailyRestingHeartRate))
+        #expect(SyncPreferences.healthKitReadTypes.contains(.heartRateVariability))
+    }
+
     @Test func shareRequestCoversFullWritableSet() throws {
         // Round-8 item 1: the share funnel resolves (no throw — a
         // naive all-syncable funnel would break on `.localOnly`

@@ -12,16 +12,18 @@
 //   missing-field records are skipped without touching local state.
 // - turns: new turns push once (watermark advances); existing records
 //   are never rewritten; pull inserts missing turns, skips present ones.
-// - account/offline: no account → silent local-only + queued outbox;
-//   undetermined → queued; retryable → queued + "will retry" status;
-//   structural failure → surfaced, NOT queued; outage→recovery flushes.
+// - account/offline: no account → silent local-only + retry flag;
+//   undetermined → flagged; retryable → flagged + "will retry" status;
+//   structural failure → surfaced, NOT flagged; outage→recovery clears.
 // - privacy: HealthKit-shaped fields are rejected by the allowlist, and
 //   a source grep-test proves no HK symbol exists in the sync directory.
 
 import CloudKit
+import CoachKit
 import CoreModel
 import Foundation
 import SwiftData
+import SyncKit
 import Testing
 @testable import HealthLoom
 
@@ -210,9 +212,9 @@ struct CloudSyncHarness {
         return CloudSyncHarness(container: container, db: db, now: now, ephemeral: ephemeral)
     }
 
-    func engine() -> CloudSyncEngine {
+    func engine(isQuiesced: @escaping () -> Bool = { false }) -> CloudSyncEngine {
         let now = self.now
-        return CloudSyncEngine(container: container, defaults: defaults, database: db, now: { now })
+        return CloudSyncEngine(container: container, defaults: defaults, database: db, now: { now }, isQuiesced: isQuiesced)
     }
 
     func seedTurn(role: String = "user", content: String, at date: Date) throws {
@@ -858,6 +860,36 @@ struct CloudSyncTests {
         })
     }
 
+    @Test("pathological edge group defers whole, never splits")
+    func pathologicalEdgeGroupDefersWhole() async throws {
+        // Round-10 item 8: 600 same-date turns (alternating roles) —
+        // the edge group alone exceeds a full page. Pushing it whole
+        // unbounds the batch; pushing part strands the rest past the
+        // watermark. So the whole group defers: zero pushed, watermark
+        // unmoved, rows intact, stable across syncs (no hang, no
+        // growth, no dupes). Full push is impossible here regardless
+        // (same-date same-role turns share a turnID and collapse
+        // server-side — round-9 proof); every REACHABLE group (at most
+        // one pair) pushes atomically, pinned by the straddling-pair
+        // test.
+        let harness = try CloudSyncHarness.make()
+        let at = harness.now.addingTimeInterval(-1000)
+        let context = ModelContext(harness.container)
+        for i in 0..<600 {
+            context.insert(ChatTurn(
+                role: i.isMultiple(of: 2) ? "user" : "assistant",
+                content: "flood \(i)",
+                createdAt: at
+            ))
+        }
+        try context.save()
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 0)
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 0)
+        #expect(try harness.localTurnCount() == 600)
+    }
+
     @Test("hostile fresh cursor terminates the wipe loudly")
     func hostileCursorTerminatesWipe() async throws {
         // Round-9 item 3: a server returning a fresh-but-unequal cursor
@@ -1001,7 +1033,9 @@ struct CloudSyncTests {
         let engine = harness.engine()
         await engine.syncNow()
         if case .synced(_, let pending) = engine.status {
-            #expect(pending == 2)
+            // Round-10 item 10: the retry FLAG (0/1), not the old 2-op
+            // count — the queue is gone, the intent remains.
+            #expect(pending == 1)
         } else {
             Issue.record("expected queued pending status, got \(engine.status)")
         }
@@ -1045,7 +1079,7 @@ struct CloudSyncTests {
         #expect(engine.pendingOutboxCount == 0)
     }
 
-    @Test("outage then recovery flushes the outbox")
+    @Test("outage then recovery clears the retry flag")
     func outageRecoveryFlushes() async throws {
         let harness = try CloudSyncHarness.make()
         await harness.db.setAccount(.noAccount)
@@ -1174,5 +1208,91 @@ struct CloudSyncTests {
 final class LockedBox: Sendable {
     nonisolated(unsafe) var value: Bool
     init(_ value: Bool) { self.value = value }
+}
+
+#if compiler(>=6.4)
+@Suite("Knowledge refresh trigger")
+@MainActor
+struct KnowledgeRefreshTriggerTests {
+    @Test func refreshTriggerConstructs() async throws {
+        // Round-10 item 3: the history-observed trigger feeding
+        // non-Coach users constructs against the real factory method
+        // (firing isn't drivable — `HistoryObserver` offers no seam;
+        // the sync→profile leg itself is pinned by KnowledgeStore's
+        // refresh tests, which yield a non-empty profile with no chat
+        // opened).
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let store = KnowledgeStore(
+            modelContainer: container,
+            healthReadStore: EmptyReadStore(),
+            healthKitAuth: HealthKitAuth()
+        )
+        // App launch order: trigger FIRST, then fixture seeding, then
+        // the toggle — a trigger that breaks later writes must surface
+        // here, not only in the UI suite.
+        let trigger = AppEnvironment.makeRefreshTrigger(modelContainer: container, knowledgeStore: store)
+        #expect(trigger != nil)
+        let seed = ModelContext(container)
+        seed.insert(KnowledgeProfile(sections: [
+            ProfileField(key: "steps.dailyAverage", displayText: "~8,200 steps/day", source: "HealthKit", asOf: .now),
+        ]))
+        try seed.save()
+        try store.setExcludedFromAI(true, forKey: "steps.dailyAverage")
+        let check = ModelContext(container)
+        let fetched = try check.fetch(FetchDescriptor<KnowledgeProfile>())
+        #expect(fetched.first?.sections.first?.excludedFromAI == true)
+        // The hazard the `!isUITest` gate guards: a fired refresh
+        // rebuilds sections from derivation, dropping non-correction
+        // fixture fields (production-correct — placeholders shouldn't
+        // exist there — but fatal to hermetic UI fixtures).
+        _ = try await store.refresh()
+        let afterRefresh = try ModelContext(container).fetch(FetchDescriptor<KnowledgeProfile>())
+        let postRefresh = try #require(afterRefresh.first)
+        #expect(!postRefresh.sections.contains(where: { $0.key == "steps.dailyAverage" }))
+    }
+}
+#endif
+
+@Suite("Wipe quiesce")
+struct WipeQuiesceTests {
+    @Test func latchHoldsUntilReset() {
+        // Round-10 item 1: the one-way latch itself (production never
+        // resets — only relaunch clears; tests reset explicitly).
+        WipeQuiesce.resetForTesting()
+        #expect(!WipeQuiesce.isLatched)
+        WipeQuiesce.latch()
+        #expect(WipeQuiesce.isLatched)
+        WipeQuiesce.resetForTesting()
+        #expect(!WipeQuiesce.isLatched)
+    }
+
+    @Test("quiesced syncNow writes nothing and claims nothing")
+    func quiescedSyncNowNoOps() async throws {
+        // Round-10 item 1: post-wipe foreground/background must cause
+        // zero writes/re-pushes — a latched engine returns before even
+        // claiming (status untouched, server untouched).
+        let harness = try CloudSyncHarness.make()
+        try harness.seedTurn(content: "doomed", at: harness.now)
+        let engine = harness.engine(isQuiesced: { true })
+        await engine.syncNow()
+        #expect(await harness.db.savedRecords.isEmpty)
+        if case .syncing = engine.status {
+            Issue.record("quiesced sync claimed the engine")
+        }
+    }
+}
+
+@Suite("Foreground reconcile gate")
+struct ForegroundReconcileGateTests {
+    @Test func rapidReforegroundSkipsReconcile() {
+        // Round-10 item 7: launch (no stamp) always reconciles; a
+        // flip seconds later skips; a flip past the background
+        // planner's interval reconciles again.
+        let now = Date()
+        #expect(AppEnvironment.foregroundReconcileDue(now: now, last: nil))
+        #expect(!AppEnvironment.foregroundReconcileDue(now: now, last: now))
+        #expect(!AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-60)))
+        #expect(AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-16 * 60)))
+    }
 }
 

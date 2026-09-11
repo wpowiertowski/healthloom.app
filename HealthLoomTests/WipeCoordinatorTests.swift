@@ -447,6 +447,57 @@ struct WipeCoordinatorTests {
         #expect(detail.contains("skipped"))
         #expect(coordinator.failedSteps.isEmpty)
     }
+
+    @Test("quiesce runs before every step")
+    func quiesceRunsFirst() async throws {
+        // Round-10 item 1: writers latch before the first destructive
+        // step — a racing writer must not resurrect records mid-wipe.
+        var order: [String] = []
+        let coordinator = WipeCoordinator(
+            deps: WipeCoordinator.Dependencies(
+                quiesceWriters: { order.append("quiesce") },
+                revokeGoogle: { order.append("revoke"); return .revoked },
+                deleteAllKeys: { order.append("keys") },
+                deleteHealthKit: { order.append("hk"); return [:] },
+                deleteCloudKit: { order.append("cloud"); return 0 },
+                deleteStore: { order.append("store"); return [] },
+                resetDefaults: { order.append("defaults") }
+            ),
+            includeHealthKit: true
+        )
+        await coordinator.run()
+        #expect(order.first == "quiesce")
+        #expect(order == ["quiesce", "revoke", "keys", "hk", "cloud", "store", "defaults"])
+    }
+
+    @Test("hostile step error is redacted in the ledger")
+    func hostileStepErrorRedacted() async throws {
+        // Round-10 item 6: step ledgers render in-app — a dependency
+        // error carrying token-shaped secrets must arrive redacted
+        // (D11), never via a raw `String(describing:)`.
+        struct HostileRevokeError: Error {
+            let detail: String
+        }
+        let token = "ya29.hostileToken0123456789"
+        let coordinator = WipeCoordinator(
+            deps: WipeCoordinator.Dependencies(
+                revokeGoogle: { throw HostileRevokeError(detail: "revoke failed: \(token)") },
+                deleteAllKeys: {},
+                deleteHealthKit: { [:] },
+                deleteCloudKit: { 0 },
+                deleteStore: { [] },
+                resetDefaults: {}
+            ),
+            includeHealthKit: true
+        )
+        await coordinator.run()
+        guard case .failed(let message) = coordinator.states[.revokeGoogle] else {
+            Issue.record("expected revokeGoogle failed")
+            return
+        }
+        #expect(message.contains("[REDACTED]"))
+        #expect(!message.contains(token))
+    }
 }
 
 @Suite("WipeableTypes derivation")

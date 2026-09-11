@@ -286,3 +286,21 @@ struct TodayHeaderModelTests {
         #expect(TodayGreeting.text(hour: 2) == "Good evening")
     }
 }
+
+@Suite("TodayMetricsProvider recency")
+struct TodayRecencyTests {
+    @Test func ancientSampleIsStale() {
+        // Round-10 item 4: a months-old sample must not render as a
+        // fresh "Latest" reading — the provider yields nothing (the
+        // row's "No data yet" empty state), never a stale number.
+        let now = Date()
+        func reading(daysAgo: Double) -> TodayMetricReading {
+            TodayMetricReading(value: 72, date: now.addingTimeInterval(-daysAgo * 24 * 3600))
+        }
+        #expect(TodayMetricsProvider.isFresh(reading(daysAgo: 1), now: now))
+        #expect(TodayMetricsProvider.isFresh(reading(daysAgo: 7), now: now))
+        #expect(!TodayMetricsProvider.isFresh(reading(daysAgo: 8), now: now))
+        #expect(!TodayMetricsProvider.isFresh(reading(daysAgo: 90), now: now))
+        #expect(!TodayMetricsProvider.isFresh(TodayMetricReading(value: 72, date: nil), now: now))
+    }
+}

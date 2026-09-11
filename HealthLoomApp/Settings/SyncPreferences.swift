@@ -165,6 +165,12 @@ final class SyncPreferences {
     static let healthKitReadTypes: [GoogleDataType] = [
         .exercise, .heartRate, .steps, .sleep, .weight,
         .oxygenSaturation, .distance, .activeEnergyBurned,
+        // Round-10 item 2: resting HR + HRV are the highest-weighted
+        // readiness signals (and vitals fields) — omitting them from
+        // the READ set left them permanently unreadable (share is not
+        // read, and the denial is invisible). Both sheets share this
+        // one source, so they land everywhere at once.
+        .dailyRestingHeartRate, .heartRateVariability,
     ]
 
     /// The manual-Sync-Now type list (round-6 item 9): every SYNCABLE

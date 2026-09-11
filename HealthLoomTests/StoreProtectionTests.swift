@@ -78,4 +78,21 @@ struct StoreProtectionTests {
         #expect(!FileManager.default.fileExists(atPath: stale.path))
         #expect(try Data(contentsOf: url) == payload)
     }
+
+    @Test("dismissal sweep empties the staged inventory")
+    func dismissalSweepEmptiesInventory() throws {
+        // Round-10 item 15: the staged file must not survive past
+        // dismissal — the view sweeps on disappear + re-prepare via
+        // `deleteExportFiles`. Stage, sweep, prove the inventory empty.
+        let url = try ExportBuilder.stageForSharing(Data("payload".utf8))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        _ = try StoreDeleter.deleteExportFiles()
+        let remaining = try FileManager.default.contentsOfDirectory(
+            at: FileManager.default.temporaryDirectory,
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix("healthloom-export-") && $0.pathExtension == "json"
+        }
+        #expect(remaining.isEmpty)
+    }
 }

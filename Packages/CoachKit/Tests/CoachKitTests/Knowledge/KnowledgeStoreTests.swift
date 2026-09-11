@@ -396,3 +396,19 @@ struct KnowledgeStoreExclusionDurabilityTests {
         #expect(field?.excludedFromAI == false)
     }
 }
+
+@Suite("KnowledgeStore exclusion errors")
+@MainActor
+struct KnowledgeStoreExclusionErrorTests {
+    @Test("exclusion of a missing key throws instead of silently dropping")
+    func missingKeyExclusionThrows() throws {
+        // Round-10 item 12: the old silent `return` discarded the
+        // privacy intent (toggle snapped back, no message). A fresh
+        // store has no profile at all — the write path creates one,
+        // then throws the keyed error the You tab banners.
+        let (store, _) = try makeStore()
+        #expect(throws: KnowledgeStoreError.unknownKey("no-such-key")) {
+            try store.setExcludedFromAI(true, forKey: "no-such-key")
+        }
+    }
+}

@@ -88,6 +88,18 @@ nonisolated struct PagePipeline: Sendable {
     /// window retried. Internal so the unit test pins it directly
     /// (unreachable through `processPage` — every emitter stamps —
     /// which is exactly why it needs its own pin).
+    /// Workout-spec stamp gate (round-10 item 9): the `.workout` arm's
+    /// equivalent of `checkedUUIDs` — the spec must carry exactly the
+    /// point's base UUID (workout-level metadata keeps the base, never
+    /// a suffix). Internal so the unit test pins it directly
+    /// (unreachable through `processPage` — the mapper always stamps
+    /// `point.id` — which is exactly why it needs its own pin).
+    static func checkedWorkoutUUID(_ workout: MappedWorkout, baseID: String) throws {
+        guard workout.metadata.externalUUID == baseID else {
+            throw UnstampedSample(pointID: baseID)
+        }
+    }
+
     static func checkedUUIDs<T: HKObject>(_ objects: [T], baseID: String) throws -> [String] {
         let uuids = objects.compactMap(emittedUUID)
         guard uuids.count == objects.count else {
@@ -114,13 +126,18 @@ nonisolated struct PagePipeline: Sendable {
     /// discards it exactly like the old per-page commit (which never
     /// escaped a failed run either — retries re-query fresh).
     /// `.localOnly` points accumulate for the CALLER to upsert on its
-    /// own executor. On a throwing page, throws `PageWalkPartial`
-    /// (instead of the raw page error) carrying whatever was processed
-    /// before the failure — the runs' informational-count contract
-    /// (partial progress reported on failed runs) survives the
-    /// extraction. Callers add `partial.total` to their count and
-    /// rethrow `partial.underlying` (which preserves cancellation
-    /// identity for the stop-not-failure branches).
+    /// own executor — and that confinement is why `.localOnly` points
+    /// ACCUMULATE here instead of committing per page (round-10 item
+    /// 14): this pipeline resumes off-actor after its awaits, and
+    /// `ModelContext` is not thread-safe, so context writes stay with
+    /// the caller. The accumulation is bounded by the page cap above
+    /// and points are small value types — a deliberate trade, stated
+    /// here instead of hidden. On a throwing page, throws
+    /// `PageWalkPartial` (instead of the raw page error) carrying the
+    /// completed pages' count AND their `.localOnly` points — callers
+    /// upsert those rows on their own executor (committing completed
+    /// pages even on failure) and unwrap `partial.underlying` for the
+    /// cancellation identity the stop-not-failure branches need.
     func processPages(
         knownExternalIDs: Set<String>,
         fetch: @Sendable (String?) async throws -> Page
@@ -152,7 +169,7 @@ nonisolated struct PagePipeline: Sendable {
                 guard let next = page.nextPageToken, next != token else { break }
                 token = next
             } catch {
-                throw PageWalkPartial(total: total, underlying: error)
+                throw PageWalkPartial(total: total, localOnly: localOnly, underlying: error)
             }
         }
         return (total, localOnly, hitPageCap)
@@ -234,6 +251,16 @@ nonisolated struct PagePipeline: Sendable {
                 // identical (query-side existence diff, same set).
                 // Anything reaching here already passed D13's conflict
                 // resolution above.
+                // Round-10 item 9: the same UUID-presence enforcement
+                // as every other arm — the spec's stamp is what the
+                // existence query matches post-save (workout-level
+                // metadata keeps the BASE uuid), so a missing or
+                // drifted stamp would rewrite every sync, silently
+                // (the UnstampedSample-loud class). `checkedUUIDs`
+                // reads built objects and the workout isn't built until
+                // `saveWorkout`, so the equivalent gate runs on the
+                // spec's stamp here (same error, same fail-loud).
+                try Self.checkedWorkoutUUID(workout, baseID: point.id)
                 guard !known.contains(point.id) else { continue }
                 _ = try await writer.saveWorkout(workout)
                 known.insert(point.id)
@@ -332,8 +359,15 @@ nonisolated struct PagePipeline: Sendable {
 /// before the throwing page, plus the underlying error (rethrow target —
 /// preserves cancellation identity and the redacted error row). Never
 /// constructed outside `PagePipeline.processPages`.
+/// Partial progress from a failed page walk (round-10 item 14): the
+/// completed pages' count plus their `.localOnly` points, so callers
+/// can commit those rows on their own executor even though the walk
+/// failed. `underlying` is the page error (callers unwrap it for
+/// cancellation identity — a bare `is CancellationError` check on the
+/// wrapper itself would misclassify every cancelled walk as failed).
 struct PageWalkPartial: Error {
     var total: Int
+    var localOnly: [GoogleDataPoint]
     var underlying: any Error
 }
 

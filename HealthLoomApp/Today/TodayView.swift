@@ -205,6 +205,10 @@ struct TodayView: View {
     private func refreshReadiness() async {
         let inputs = ReadinessInputsProvider.assemble(await readinessProvider.aggregates())
         let result = ReadinessEngine.score(inputs: inputs, recentScores: scoreHistory.recentScores())
+        // Round-10 item 5: this record is the TOGGLE-INDEPENDENT path
+        // — daily Today opens accumulate history (and the delta)
+        // whether or not morning insights is enabled; the runner is a
+        // second writer, not the only one.
         if result.signalsUsed > 0 {
             scoreHistory.record(score: result.score)
         }

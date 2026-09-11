@@ -90,6 +90,30 @@ struct ReadinessScoreHistoryTests {
         #expect(history.recentScores(today: day(0)) == [80])
     }
 
+    @Test func insightsOffDailyOpensAccumulateHistory() throws {
+        // Round-10 item 5: drives the view path's exact calls
+        // (assemble -> score -> record) across three days with
+        // signals and NO MorningInsightRunner anywhere — history
+        // accumulates from Today opens alone and the delta appears,
+        // independent of the morning-insights toggle.
+        let ephemeral6 = try makeDefaults()
+        let history = ReadinessScoreHistory(defaults: ephemeral6.defaults)
+        let inputs = ReadinessInputsProvider.assemble(ReadinessAggregates(
+            hrvLatestMs: 60, hrvBaselineMs: 50,
+            restingHRLatestBpm: 62, restingHRBaselineBpm: 60,
+            sleepSeconds: 7.5 * 3600, sleepEfficiency: 0.92,
+            priorDayWorkoutKcal: 400
+        ))
+        for offset in [-2, -1, 0] {
+            let result = ReadinessEngine.score(inputs: inputs, recentScores: history.recentScores(today: day(offset)))
+            #expect(result.signalsUsed > 0)
+            history.record(score: result.score, today: day(offset))
+        }
+        #expect(history.recentScores(today: day(0)).count == 2)
+        let final = ReadinessEngine.score(inputs: inputs, recentScores: history.recentScores(today: day(0)))
+        #expect(final.deltaVsAverage != nil)
+    }
+
     @Test func fullWindowCoversThirtyDays() throws {
         // Round-9 item 10: 31 consecutive days recorded — the average
         // must cover exactly the 30 promised (today excluded, oldest

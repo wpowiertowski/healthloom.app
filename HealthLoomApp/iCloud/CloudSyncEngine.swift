@@ -19,15 +19,20 @@
 // local-newer overwrites server, equal content skips the write,
 // newer-schema/malformed records are skipped without touching local.
 //
-// Offline: a persisted outbox (UserDefaults JSON) holds push intent when
-// the account is undetermined or the network fails; it flushes on the
-// next successful sync. Local state is always the source of truth, so a
-// failed sync loses nothing — the status surface says so honestly.
+// Offline: a persisted retry flag holds push intent when the account
+// is undetermined or the network fails; it clears on the next
+// successful sync. There is deliberately NO op queue (round-10 item
+// 10): `syncNow` always runs the full push+pull, so queued ops could
+// never gate work — the old `[CloudOutboxOp]` list was count theater
+// (always 0-or-2) around a Bool. Local state is always the source of
+// truth, so a failed sync loses nothing — the status surface says so
+// honestly.
 //
 // Account mapping: no account / restricted → `.localOnly`, SILENT (the
 // user did nothing wrong); undetermined (transient daemon state) →
-// queue silently and retry later; anything else that fails → surfaced
-// `.failed` message + outbox (retryable) or surface-only (structural).
+// flag silently and retry later; anything else that fails → surfaced
+// `.failed` message + retry flag (retryable) or surface-only
+// (structural).
 
 import CloudKit
 import CoreModel
@@ -199,22 +204,15 @@ nonisolated struct LiveCloudDatabase: CloudDatabase {
     }
 }
 
-/// What Settings shows. `pending` counts queued outbox ops; `failed`
-/// carries the surfaced message. Local data is never at risk in any of
-/// these states — the outbox (or the local store itself) holds everything.
+/// What Settings shows. `pending` is 0 or 1 (a retry is owed, not
+/// an op count — see the retry-flag note above); `failed` carries the
+/// surfaced message. Local data is never at risk in any of these states
+/// — the local store itself holds everything.
 nonisolated enum CloudSyncStatus: Equatable, Sendable {
     case localOnly
     case syncing
     case synced(at: Date?, pending: Int)
     case failed(message: String)
-}
-
-/// Persisted push intent. `pushSingletons` always covers settings + prefs
-/// together (both are one small record; no reason to version them
-/// separately). `pushTurns` replays "everything since the watermark".
-nonisolated enum CloudOutboxOp: String, Codable, Sendable {
-    case pushSingletons
-    case pushTurns
 }
 
 extension Notification.Name {
@@ -248,15 +246,24 @@ final class CloudSyncEngine {
 
     var status: CloudSyncStatus = .synced(at: nil, pending: 0)
 
-    /// Queued push intent, for tests (structural failures must NOT queue;
-    /// retryable ones must). Status already surfaces the count to users.
-    var pendingOutboxCount: Int { outbox.count }
+    /// Retry intent, for tests (structural failures must NOT flag;
+    /// retryable ones must). 0 or 1 — the old op count is gone with the
+    /// op queue (round-10 item 10). Status already surfaces it to users.
+    var pendingOutboxCount: Int { retryPending ? 1 : 0 }
+
+    /// Quiesce probe (round-10 item 1): when a wipe has latched, EVERY
+    /// trigger no-ops until relaunch (writes would resurrect cleared
+    /// records/markers or go through the unlinked store handle).
+    /// Injected (production reads `WipeQuiesce.isLatched`) so tests
+    /// script it without touching the process-wide latch.
+    private let isQuiesced: () -> Bool
 
     init(
         container: ModelContainer,
         defaults: UserDefaults = .standard,
         database: any CloudDatabase,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        isQuiesced: @escaping () -> Bool = { false }
     ) {
         self.container = container
         self.defaults = defaults
@@ -264,7 +271,8 @@ final class CloudSyncEngine {
         self.now = now
         self.syncPreferences = SyncPreferences(defaults: defaults)
         self.insightPrefs = InsightPreferences(defaults: defaults)
-        let pending = outbox.count
+        self.isQuiesced = isQuiesced
+        let pending = retryPending ? 1 : 0
         if pending > 0 {
             self.status = .synced(at: lastSync, pending: pending)
         } else if let last = lastSync {
@@ -275,6 +283,11 @@ final class CloudSyncEngine {
     /// Full push + pull. Safe to call whenever (launch, Sync Now): the
     /// account gate runs first, and re-entrancy is a no-op.
     func syncNow() async {
+        // Round-10 item 1: quiesced (wipe latched, relaunch pending) —
+        // return before even claiming. A post-wipe sync would re-push
+        // empty state, rewrite cleared markers, and read through the
+        // unlinked store handle; the UI asks for relaunch instead.
+        guard !isQuiesced() else { return }
         // Round-4-sync item 3: claim BEFORE the first await — guard and
         // claim are suspension-free on this actor, so no second caller
         // can slip between them. The old shape guarded, then awaited
@@ -288,8 +301,7 @@ final class CloudSyncEngine {
             status = .localOnly
             return
         case .undetermined:
-            enqueue(.pushSingletons)
-            enqueue(.pushTurns)
+            retryPending = true
             refreshStatus()
             return
         case .available:
@@ -308,7 +320,7 @@ final class CloudSyncEngine {
             try await pushNewTurns()
             try await pullSingletons()
             try await pullMissingTurns()
-            clearOutbox()
+            retryPending = false
             lastSync = now()
             status = .synced(at: lastSync, pending: 0)
         } catch {
@@ -468,14 +480,28 @@ final class CloudSyncEngine {
         } catch {
             throw CloudSyncError.failed(error.localizedDescription)
         }
-        // The batch is the FULL first page plus the edge extension
-        // (minus rows already on the page — the dedupe that was inert
-        // across two contexts now actually filters, killing intra-batch
-        // double-pushes; totals and the watermark are unchanged).
+        // Round-10 item 8: a pathological edge group (bigger than a
+        // full page) defers WHOLE — pushing part of it would strand
+        // the rest past the watermark (the loss the atomic-group rule
+        // exists to prevent), and pushing all of it unbounds the batch
+        // (the `500/sync` pacing the header promises). The watermark
+        // then lands on the last pre-edge row, so the group retries
+        // whole next sync — never split, never stranded. Unreachable
+        // in practice (distinct server records need distinct
+        // `time-role` turnIDs, capping real groups at one pair — the
+        // pair test pins that path); pure defense against clock games.
         var seen = Set(first.map { Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt) })
         var rows = first
-        rows += edgeRows.filter {
-            seen.insert(Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt)).inserted
+        if edgeRows.count <= limit {
+            rows += edgeRows.filter {
+                seen.insert(Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt)).inserted
+            }
+        } else {
+            // Pathological-group deferral (see above): drop the whole
+            // edge group from this batch (it was never added — `rows`
+            // is exactly the first page), then strip any partial group
+            // tail so the watermark lands strictly before the group.
+            rows = rows.filter { $0.createdAt < edge }
         }
         return rows.map {
             // Synthetic turnID, kept deliberately (third-party N1): a
@@ -698,11 +724,11 @@ final class CloudSyncEngine {
         }
     }
 
-    /// Clears every persisted sync marker (watermarks, outbox, last
-    /// sync) after a wipe. Private to the wipe path — normal syncs
+    /// Clears every persisted sync marker (watermarks, retry flag,
+    /// last sync) after a wipe. Private to the wipe path — normal syncs
     /// advance these, never clear them.
     private func resetSyncState() {
-        outbox = []
+        retryPending = false
         lastSync = nil
         seenSettingsAt = Date(timeIntervalSince1970: 0)
         seenPrefsAt = Date(timeIntervalSince1970: 0)
@@ -773,32 +799,16 @@ final class CloudSyncEngine {
         }
     }
 
-    // MARK: - Outbox + persisted state
+    // MARK: - Retry flag + persisted state
 
-    private var outbox: [CloudOutboxOp] {
-        get {
-            guard let data = defaults.data(forKey: Self.outboxKey),
-                  let ops = try? JSONDecoder().decode([CloudOutboxOp].self, from: data)
-            else {
-                return []
-            }
-            return ops
-        }
-        set {
-            defaults.set(try? JSONEncoder().encode(newValue), forKey: Self.outboxKey)
-        }
-    }
-
-    private func enqueue(_ op: CloudOutboxOp) {
-        var ops = outbox
-        if !ops.contains(op) {
-            ops.append(op)
-            outbox = ops
-        }
-    }
-
-    private func clearOutbox() {
-        outbox = []
+    /// Whether a retry is owed (round-10 item 10: the `[CloudOutboxOp]`
+    /// queue is gone — no op ever gated work, so the persisted shape is
+    /// the honest Bool). Same defaults key (an unreadable legacy value
+    /// reads back `false`, self-migrating; the flag only ever means
+    /// "sync again soon").
+    private var retryPending: Bool {
+        get { defaults.bool(forKey: Self.outboxKey) }
+        set { defaults.set(newValue, forKey: Self.outboxKey) }
     }
 
     private var lastSync: Date? {
@@ -842,7 +852,7 @@ final class CloudSyncEngine {
     }
 
     private func refreshStatus() {
-        status = .synced(at: lastSync, pending: outbox.count)
+        status = .synced(at: lastSync, pending: retryPending ? 1 : 0)
     }
 
     private func handle(_ error: CloudSyncError) {
@@ -850,8 +860,7 @@ final class CloudSyncEngine {
         case .noAccount:
             status = .localOnly
         case .retryable(let message):
-            enqueue(.pushSingletons)
-            enqueue(.pushTurns)
+            retryPending = true
             status = .failed(message: "iCloud unreachable — will retry. \(message)")
         case .failed(let message):
             status = .failed(message: message)
