@@ -172,7 +172,10 @@ final class SyncPreferences {
     }
 
     /// Every syncable type with a HealthKit write destination (round-8
-    /// item 1): THE share-request set. `.localOnly` types persist to
+    /// item 1): THE write-destination set feeding the share-request funnel.
+    /// `HealthKitAuth.authorizedShareTypes` derives the actual `toShare` subset
+    /// (third-party r9: share-disallowed correlations such as Food are excluded
+    /// there structurally — never by callers filtering this list). `.localOnly` types persist to
     /// `LocalSample`, never HealthKit, so requesting share for them
     /// would throw (no mapping) — but requesting only P0 left ~14
     /// writable types (floors, RHR, SpO2, resp-rate, VO2, height,

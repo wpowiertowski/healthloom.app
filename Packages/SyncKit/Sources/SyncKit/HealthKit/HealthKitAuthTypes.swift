@@ -57,6 +57,15 @@ public enum HealthKitAuthError: Error, Sendable, Equatable, CustomStringConverti
     /// doesn't yet recognize; both need updating together.
     case unresolvedIdentifier(dataType: GoogleDataType, identifier: String)
 
+    /// `dataType` resolves to a HealthKit type HealthKit forbids requesting share
+    /// (write) authorization for — correlation types such as Food: passing one in
+    /// `toShare` throws an uncatchable `NSInvalidArgumentException` ("Authorization
+    /// to share ... is disallowed") that terminates the app, NOT a Swift error.
+    /// Thrown by `requestWrite(for:)` (fail loud, naming the type) instead of
+    /// crashing; the combined `requestShareAndRead` routes such types to `read`
+    /// instead (see `HealthKitAuth.partitionedAuthorization`).
+    case sharingDisallowed(dataType: GoogleDataType, identifier: String)
+
     /// The underlying `HKHealthStore` call itself failed. Carries only the
     /// error's string description (matches architecture.md D11's redaction
     /// posture: no health values, no tokens — and there are none to leak here
@@ -71,6 +80,8 @@ public enum HealthKitAuthError: Error, Sendable, Equatable, CustomStringConverti
             return "HealthKitAuthError.noHealthKitMapping(\(dataType))"
         case .unresolvedIdentifier(let dataType, let identifier):
             return "HealthKitAuthError.unresolvedIdentifier(dataType: \(dataType), identifier: \"\(identifier)\")"
+        case .sharingDisallowed(let dataType, let identifier):
+            return "HealthKitAuthError.sharingDisallowed(dataType: \(dataType), identifier: \"\(identifier)\")"
         case .underlying(let message):
             return "HealthKitAuthError.underlying(\(message))"
         }

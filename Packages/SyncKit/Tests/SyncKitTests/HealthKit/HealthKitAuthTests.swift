@@ -140,5 +140,69 @@ import Testing
     @Test func p0WriteTypesMatchesSpec() {
         #expect(HealthKitAuth.p0WriteTypes == [.steps, .heartRate, .weight, .sleep])
     }
+
+    // MARK: - Third-party r9: Food-correlation share crash
+    //
+    // `requestAuthorization(toShare:)` with `HKCorrelationTypeIdentifierFood`
+    // terminates the app (`NSInvalidArgumentException`, uncatchable) — the
+    // onboarding crash. These pin the structural fix at the seam, without ever
+    // prompting (same `isAvailable == false` host posture as the tests above).
+
+    @Test func shareSetNeverContainsCorrelationTypes() throws {
+        // Catches: `healthKitWritableTypes` (the onboarding share list) includes
+        // `.food`/`.nutritionLog`; the old `authorizedShareTypes` passed the Food
+        // correlation straight into `toShare` and the app terminated on the sheet.
+        let auth = HealthKitAuth()
+        let share = try auth.authorizedShareTypes(
+            sharing: [.food, .nutritionLog, .steps, .hydrationLog],
+            includingWorkoutShare: true
+        )
+        #expect(share.allSatisfy { !($0 is HKCorrelationType) })
+        // Nothing silently lost: quantities still share-requested, workout union intact.
+        #expect(share.contains { $0 == HKObjectType.quantityType(forIdentifier: .stepCount) })
+        #expect(share.contains { $0 == HKObjectType.workoutType() })
+    }
+
+    @Test func partitionMovesCorrelationToRead() throws {
+        // Catches: filtering must not DROP the type — share-listed correlations land
+        // in `read` (read-only), so the sheet still covers Food without crashing.
+        let auth = HealthKitAuth()
+        let food = try auth.resolveSampleType(for: .food)
+        let steps = try auth.resolveSampleType(for: .steps)
+        let sleep = try auth.resolveSampleType(for: .sleep)
+        let (toShare, toRead) = HealthKitAuth.partitionedAuthorization(
+            share: [food, steps],
+            read: [sleep]
+        )
+        #expect(!toShare.contains { $0 is HKCorrelationType })
+        #expect(toShare.contains(steps))
+        let readIDs = Set(toRead.map(\.identifier))
+        #expect(readIDs.contains(food.identifier))
+        #expect(readIDs.contains(sleep.identifier))
+    }
+
+    @Test func requestWriteThrowsSharingDisallowedForFood() async {
+        // Catches: the standalone share path fails LOUD (typed error naming the
+        // type) instead of crashing — checked before the availability gate so it
+        // fails identically on every platform, including this host.
+        let auth = HealthKitAuth()
+        await #expect {
+            try await auth.requestWrite(for: [.food])
+        } throws: { error in
+            guard case .sharingDisallowed(.food, _) = error as? HealthKitAuthError else {
+                return false
+            }
+            return true
+        }
+    }
+
+    @Test func resolveAllIncludesCorrelationForWipe() throws {
+        // Pins the wipe side of the split: the unfiltered resolve set still carries
+        // Food (deletion needs no share grant) — deriving wipe membership from the
+        // share set would strand Food samples outside the wipe.
+        let auth = HealthKitAuth()
+        let all = try auth.resolveAllSampleTypes(for: [.food, .steps])
+        #expect(all.contains { $0 is HKCorrelationType })
+    }
 }
 #endif

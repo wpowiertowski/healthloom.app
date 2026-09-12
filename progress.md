@@ -5096,3 +5096,28 @@ Full matrix green under global strictness: app `xcodebuild build test` 281/281 o
 27.0 sim; per-package `swift test -Xswiftc -warnings-as-errors` SyncKit 311, CoreModel 24,
 Secrets 14, GHC 45, CoachKit 29; `warning:` grep clean (only Apple tool noise).
 Project regenerated (`make xcode` equivalent) and committed (new test files).
+
+## Third-party r9 amendment · HealthKit Food share crash (same branch)
+
+Crash: onboarding `requestShareAndRead` terminated the app (`NSInvalidArgumentException`:
+"Authorization to share the following types is disallowed: HKCorrelationTypeIdentifierFood").
+Root cause: `SyncPreferences.healthKitWritableTypes` (the onboarding share list) includes
+`.food`/`.nutritionLog`, which resolve to the Food `HKCorrelationType` — a type HealthKit
+forbids in `toShare`. The exception is uncatchable (ObjC), so the fix is structural at the
+seam, not per-caller memory. `HealthKitAuth` now owns the invariant three ways:
+`isShareRequestable(_)` (correlations fail-closed — exhaustive, since the mapping seam only
+produces quantity/category/workout/correlation kinds); `authorizedShareTypes` filters to the
+shareable subset (the crash fix — no caller can reintroduce Food into `toShare`);
+`partitionedAuthorization(share:read:)` (pure, pinned directly) moves share-listed
+correlations to `read` instead of dropping them — `requestShareAndRead` resolves then
+partitions, so Food lands read-only. `requestWrite(for:)` throws typed
+`.sharingDisallowed(dataType:identifier)` (fail loud, pre-gate, same-everywhere posture)
+instead of crashing. The wipe keeps the UNFILTERED set (`resolveAllSampleTypes(for:)` —
+deletion needs no share grant), so Food samples stay covered; the wipe-set equality test
+is amended to share ∪ funnel-correlations with a subset pin (share ⊆ wipe can never
+regress to authorized-but-never-wiped).
+
+**Tests:** SyncKit 311→315 (+4 crash pins: share-never-correlation, partition-moves-to-read,
+requestWrite-disallowed, resolveAll-keeps-food); mutation-checked (filter removed → share
+test fails). App 281/281 green, zero non-tool warnings. `healthKitWritableTypes` doc now
+names the funnel vs. share-subset split.
