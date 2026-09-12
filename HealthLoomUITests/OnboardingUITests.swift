@@ -50,6 +50,39 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(getStarted.isHittable, "Get Started exists but is not hittable")
     }
 
+    /// Onboarding-skip-Google: consent, skip, Google-less first sync, Continue,
+    /// Today — with zero OAuth. Launches AT consent (-UITestOnboardingGoogle) to
+    /// stay decoupled from the quarantined HealthKit sheet below; ends with a
+    /// reset-flag relaunch proving cleanup (seeded Dashboard shows no connect
+    /// panel, so later suites never inherit the flag).
+    @MainActor
+    func testOnboardingSkipGooglePath() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestStubGoogle", "-UITestOnboardingGoogle"]
+        app.launch()
+
+        let skip = app.buttons["onboarding.google.skip"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 10), "Google consent screen never appeared")
+        XCTAssertTrue(app.buttons["onboarding.google.signIn"].exists)
+        skip.tap()
+
+        XCTAssertTrue(app.staticTexts["You're Set Up"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["onboarding.firstSync.progress"].exists)
+        let cont = app.buttons["onboarding.firstSync.continue"]
+        XCTAssertTrue(cont.exists)
+        cont.tap()
+
+        let anyElement = app.descendants(matching: .any)
+        XCTAssertTrue(anyElement["tabbar.today"].waitForExistence(timeout: 10))
+
+        app.terminate()
+        app.launchArguments = ["-UITestResetGoogleSkip", "-UITestSeedData"]
+        app.launch()
+        let reseeded = app.descendants(matching: .any)
+        XCTAssertTrue(reseeded["dashboard.syncNow"].waitForExistence(timeout: 10))
+        XCTAssertFalse(reseeded["dashboard.googleConnectPanel"].exists)
+    }
+
     @MainActor
     func testOnboardingHappyPathWithStubbedGoogle() throws {
         // QUARANTINED (2026-07), not deleted: this test drives HealthKit's

@@ -40,6 +40,12 @@ struct DashboardView: View {
     @Query(sort: \SyncState.dataType) private var syncStates: [SyncState]
     @Query(sort: \LocalSample.dataType) private var localSamples: [LocalSample]
     @State private var isSyncing = false
+    @State private var isConnectingGoogle = false
+    @State private var connectError: String?
+
+    /// Onboarding-skip-Google: read live from defaults every render (no cached copy
+    /// to go stale across the Settings connect flow).
+    private var googleSkipped: Bool { GoogleConnectionSetting().isSkipped }
 
     private var orderedRows: [(GoogleDataType, SyncState?)] {
         AppEnvironment.p0Types.map { type in
@@ -87,6 +93,7 @@ struct DashboardView: View {
                 .disabled(isSyncing)
             } content: {
                 ephemeralStoreWarning
+                googleConnectPanel
                 freshnessHeader
                     .padding(.top, 18)
 
@@ -151,11 +158,81 @@ struct DashboardView: View {
         }
     }
 
+    /// Google-not-connected panel (onboarding-skip-Google): an inline Connect
+    /// affordance INSTEAD of red per-type errors. Per-type rows below stay in their
+    /// never-synced idle state (no `syncAll` ever runs while skipped, so no error
+    /// rows can mint); this panel is the honest state + the way back.
+    @ViewBuilder
+    private var googleConnectPanel: some View {
+        if googleSkipped {
+            ThemedPanel {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Google isn't connected")
+                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .foregroundStyle(Theme.ink)
+                    Text("Your daily activity lives in Google — connect the account linked to your Fitbit or Pixel Watch to start syncing.")
+                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let connectError {
+                        Text(connectError)
+                            .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                            .foregroundStyle(Theme.accentDeep)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Button {
+                        connectGoogle()
+                    } label: {
+                        Text(isConnectingGoogle ? "Connecting…" : "Connect Google")
+                            .font(Theme.font(15, .semibold, relativeTo: .callout))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accent))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isConnectingGoogle || isSyncing)
+                    .accessibilityIdentifier("dashboard.connectGoogle")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+            .padding(.top, 18)
+            .accessibilityIdentifier("dashboard.googleConnectPanel")
+        }
+    }
+
+    private func connectGoogle() {
+        isConnectingGoogle = true
+        connectError = nil
+        let scopes = Array(Set(AppEnvironment.p0Types.map(\.scope)))
+        Task {
+            let result = await appEnvironment.consentCoordinator.beginConsent(scopes: scopes)
+            isConnectingGoogle = false
+            switch result {
+            case .success:
+                GoogleConnectionSetting().clearSkipped()
+                syncNow()
+            case .workspaceUnsupported:
+                connectError = "Google Workspace (work or school) accounts aren't supported — try a personal account."
+            case .cancelled:
+                break
+            case .failure(let message):
+                connectError = message
+            }
+        }
+    }
+
     private func syncNow() {
         // Third-party r9: quiesced (wipe latched, relaunch pending) — never dispatch.
         // `SyncEngine.sync` also guards structurally; this cheap check keeps the UI
         // from flashing a sync pass that can only return stopped.
         guard !WipeQuiesce.isLatched else { return }
+        // Onboarding-skip-Google: without credentials `syncAll` would only mint
+        // per-type `.unauthorized` error rows — stay quiet, the panel above owns
+        // this state. (`SyncEngine` has no credentials notion; the gate lives with
+        // the skip flag that caused it.)
+        guard !googleSkipped else { return }
         isSyncing = true
         // Round-6 item 9: every syncable type (not just P0) minus
         // disabled — an enabled non-P0 row updates on demand, not only

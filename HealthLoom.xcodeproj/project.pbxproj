@@ -147,11 +147,13 @@
 		E1D3068908C1839151F64348 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 352DEBD107C79BE367ADD1D8 /* SettingsView.swift */; };
 		E23C03AD088C288485C90DCA /* syncRow-neverSynced-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = F7AEAEDB546DBA1E5F66E370 /* syncRow-neverSynced-light-XS.png */; };
 		E474E7D473F0A60ED8F5440A /* SyncKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7FC443E094B0B544DFCE2D9F /* SyncKit */; };
+		E5660E22E6F4F7B03E7170CF /* GoogleConnectionSetting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23510BBAB3D1FEF1A1074200 /* GoogleConnectionSetting.swift */; };
 		E688BEEF441479E67B08DD2C /* WipeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8D48D83A7A1852137B4A644 /* WipeCoordinator.swift */; };
 		E7853D5D048E5D96757F7273 /* coachInsight-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = CE9B573032038205A5894440 /* coachInsight-light-AXXXL.png */; };
 		E96F24CD55183D1B62A41F90 /* coachInsight-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 1023BB0803852B24F3CEF218 /* coachInsight-dark-XL.png */; };
 		E9ABD6EC69BF083C623196AE /* SnapshotAssert.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3EEDF1BFB0211784492DF9 /* SnapshotAssert.swift */; };
 		ECE6E591B88C84D7402674C7 /* syncRow-neverSynced-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 274817A936B0737083E5F9D1 /* syncRow-neverSynced-light-AXXXL.png */; };
+		EEBA41AA254A7633B5401CBE /* OnboardingSkipGoogleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB3A2A1C2BAA2EE0665FF566 /* OnboardingSkipGoogleTests.swift */; };
 		EEC508ED26EA0647A7336CD9 /* TodayComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45870B7D629E35D38ED6CD95 /* TodayComponents.swift */; };
 		EFF7B5047D177B2BC46A083F /* SyncTypeRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12AE91A823FA62783E94EA3 /* SyncTypeRow.swift */; };
 		F120E2253FC52364EA152C38 /* scoredHero-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 755F461766380A79B2F297E1 /* scoredHero-dark-XL.png */; };
@@ -209,6 +211,7 @@
 		1F411CF3B4D339BCAE5E9F4B /* OnboardingFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowView.swift; sourceTree = "<group>"; };
 		1FD7410A0B9774FEF271F549 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		20FA9FE2182F8E17B9299FBF /* pendingHero-dark-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "pendingHero-dark-AXXXL.png"; sourceTree = "<group>"; };
+		23510BBAB3D1FEF1A1074200 /* GoogleConnectionSetting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleConnectionSetting.swift; sourceTree = "<group>"; };
 		260DEF38CD6BB5D9E58E74C8 /* SyncPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPreferencesTests.swift; sourceTree = "<group>"; };
 		274817A936B0737083E5F9D1 /* syncRow-neverSynced-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "syncRow-neverSynced-light-AXXXL.png"; sourceTree = "<group>"; };
 		295F76D5D16EAEB2D59FEE2C /* Secrets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Secrets; path = Packages/Secrets; sourceTree = SOURCE_ROOT; };
@@ -321,6 +324,7 @@
 		D4DAFEA7B1FA79FF287F4DC4 /* AIModelsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModelsViewModel.swift; sourceTree = "<group>"; };
 		D4F7BE23010419DF02DA075E /* ExportBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportBuilder.swift; sourceTree = "<group>"; };
 		D5CC894BB336A5B642710AF5 /* PromptEditorViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEditorViewModel.swift; sourceTree = "<group>"; };
+		DB3A2A1C2BAA2EE0665FF566 /* OnboardingSkipGoogleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSkipGoogleTests.swift; sourceTree = "<group>"; };
 		E12AE91A823FA62783E94EA3 /* SyncTypeRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTypeRow.swift; sourceTree = "<group>"; };
 		E1D02BC2579827262BEC1FCC /* ScrollUntilExists.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollUntilExists.swift; sourceTree = "<group>"; };
 		E2921CADF9CDEABED39EEBD2 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -723,6 +727,7 @@
 				F03C2B48B04337062E5A9937 /* ExportBuilderTests.swift */,
 				9C757C1A9219A4BB6DA975B7 /* HealthLoomTests.swift */,
 				51ED544BBB6FE7133E24FCC9 /* MorningInsightTests.swift */,
+				DB3A2A1C2BAA2EE0665FF566 /* OnboardingSkipGoogleTests.swift */,
 				4DC22CFE060BA63386BB8546 /* OnboardingSnapshotTests.swift */,
 				EC3EEDF1BFB0211784492DF9 /* SnapshotAssert.swift */,
 				19ACC74CFE335BD5CAC2B60B /* StoreProtectionTests.swift */,
@@ -747,6 +752,7 @@
 		E197A9A07DF4B68B59E6584D /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				23510BBAB3D1FEF1A1074200 /* GoogleConnectionSetting.swift */,
 				CBAA1E7DA64850E3A734C4DA /* IncrementalConsentPresenter.swift */,
 				352DEBD107C79BE367ADD1D8 /* SettingsView.swift */,
 				6178D14A5880F164881EA242 /* SyncPreferences.swift */,
@@ -966,6 +972,7 @@
 				3D79AE39C3F880AF2B813D31 /* DashboardView.swift in Sources */,
 				B869E9E2038F8273FF3EDAE2 /* ExportBuilder.swift in Sources */,
 				BF7292D62CDA37326132EC88 /* FirstSyncView.swift in Sources */,
+				E5660E22E6F4F7B03E7170CF /* GoogleConnectionSetting.swift in Sources */,
 				DDB979A0F2F469D4E7A7FF4B /* GoogleConsentCoordinator.swift in Sources */,
 				7E466D111EF897B1C83D736E /* GoogleConsentView.swift in Sources */,
 				079958850E9C4341E915B5FF /* HealthKitPermissionView.swift in Sources */,
@@ -1031,6 +1038,7 @@
 				675771FDB666B124CCD20A68 /* ExportBuilderTests.swift in Sources */,
 				300EA9C544535888D0E728C9 /* HealthLoomTests.swift in Sources */,
 				F369D69D07987D4408FC0530 /* MorningInsightTests.swift in Sources */,
+				EEBA41AA254A7633B5401CBE /* OnboardingSkipGoogleTests.swift in Sources */,
 				B7FC0576916C453B17C8D688 /* OnboardingSnapshotTests.swift in Sources */,
 				37FBAE93A2A28E11618F4BED /* Probe.swift in Sources */,
 				E9ABD6EC69BF083C623196AE /* SnapshotAssert.swift in Sources */,

@@ -68,6 +68,12 @@ struct SettingsView: View {
     /// One-shot HealthKit re-request state (existing installs, see below).
     @State private var isRefreshingHealthSharing = false
     @State private var healthSharingMessage: String? = nil
+    @State private var isConnectingGoogle = false
+    @State private var googleConnectMessage: String? = nil
+
+    /// Onboarding-skip-Google: read live every render (the Dashboard connect flow
+    /// and this screen's own toggle successes clear it mid-session).
+    private var googleSkipped: Bool { GoogleConnectionSetting().isSkipped }
 
     private var groupedByScope: [(scope: GoogleDataType.Scope, types: [GoogleDataType])] {
         let grouped = Dictionary(grouping: SyncPreferences.syncableTypes, by: \.scope)
@@ -90,6 +96,47 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 18)
                 .accessibilityIdentifier("settings.disclaimer")
+
+            if googleSkipped {
+                // Onboarding-skip-Google: the way back. Per-type toggles below stay
+                // as-is (enabling one also triggers consent via `toggle(type:)` and
+                // clears the skip on success); this row is the explicit Connect
+                // action for users who skipped onboarding consent outright.
+                ThemedPanel {
+                    Button {
+                        connectGoogle()
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Connect Google")
+                                    .font(Theme.font(15, .medium, relativeTo: .callout))
+                                    .foregroundStyle(Theme.ink)
+                                Text("Sync steps, heart rate, weight, and sleep from Fitbit or Pixel Watch.")
+                                    .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                                    .foregroundStyle(Theme.secondary)
+                            }
+                            Spacer()
+                            if isConnectingGoogle {
+                                ProgressView()
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("settings.google.connect")
+                    .disabled(isConnectingGoogle)
+
+                    if let message = googleConnectMessage {
+                        ThemedErrorText(
+                            message: message,
+                            accessibilityIdentifier: "settings.google.message"
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+                    }
+                }
+                .padding(.top, 20)
+            }
 
             ThemedPanel {
                 ThemedNavRow(
@@ -623,6 +670,10 @@ struct SettingsView: View {
                 if consentAttempts[type] == attempt {
                     consentAttempts[type] = nil
                 }
+                // A fresh consent means Google is connected — a prior onboarding
+                // skip no longer describes this device (single source: the flag
+                // only ever means "skipped AND never since consented").
+                GoogleConnectionSetting().clearSkipped()
             } catch {
                 // Revert the optimistic toggle ONLY if no newer flip
                 // superseded this attempt: otherwise a stalled first attempt
@@ -632,6 +683,27 @@ struct SettingsView: View {
                 consentAttempts[type] = nil
                 preferences.setEnabled(false, for: type)
                 scopeErrors[type] = "Couldn't confirm Google access for \(displayName(type)): \(SyncLogRedactor.redact(String(describing: error)))"
+            }
+        }
+    }
+
+    /// Explicit Google connect (onboarding-skip-Google): requests the P0 scopes via
+    /// the same incremental `ensure` the toggles use, then clears the skip flag so
+    /// Dashboard/background sync resume. Failure renders inline, never throws out.
+    private func connectGoogle() {
+        isConnectingGoogle = true
+        googleConnectMessage = nil
+        let scopes = Array(Set(AppEnvironment.p0Types.map(\.scope)))
+        Task {
+            defer { isConnectingGoogle = false }
+            do {
+                try await appEnvironment.googleAuthManager.ensure(
+                    scopes: scopes,
+                    presentationContextProvider: consentPresenter
+                )
+                GoogleConnectionSetting().clearSkipped()
+            } catch {
+                googleConnectMessage = "Couldn't connect Google: \(SyncLogRedactor.redact(String(describing: error)))"
             }
         }
     }

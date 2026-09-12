@@ -5140,3 +5140,38 @@ readDisallowed pin); mutation-checked (read filter removed → partition test fa
 Food). App unit 281/281 green, zero non-tool warnings (Xcode 27.0 sim; UI bundle skipped
 locally after a wedged simulator stalled the full `build test` twice — sim shutdown+reboot
 resolved it; UI files untouched by this change, CI runs the full matrix).
+## Onboarding-skip-Google (branch `onboarding-skip-google` from origin/main e199f6f)
+
+Testers without a Google account were stuck at onboarding consent (no path past OAuth).
+`GoogleConsentView` gains a secondary "Continue without Google" (`onSkip` reports intent
+only — persistence/routing stay with the caller; primary sign-in untouched).
+`OnboardingStep.firstSync(googleSkipped:)` carries the skip STRUCTURALLY (exhaustive switch;
+no loose Bool): consented → `false` (P0 `syncAll` as before); skip → persist
+`GoogleConnectionSetting` (new single-source UserDefaults flag: explicit-skip only —
+"connected" is Keychain token presence, never flag absence) then `true` (`FirstSyncView`
+renders "You're Set Up" Google-less copy, never calls `syncAll`, Continue straight
+through). Dashboard shows a "Google isn't connected" panel with inline Connect (P0
+`beginConsent` → clear skip → auto-sync; Workspace/failure render inline) INSTEAD of red
+rows, and `syncNow` early-returns while skipped. Settings shows a Connect Google row while
+skipped (same `ensure` the toggles use) and every toggle-ensure success clears the skip.
+Background sync gates FIRST on live token presence (`GoogleAuthManager.
+hasStoredRefreshToken()` presence probe, fail-closed toward quiet; injected
+`hasGoogleCredentials` closure, default-present so existing constructions behave as
+before) — a Google-less wake returns `[]` (counts as success, never throttles).
+
+**Tests:** `OnboardingSkipGoogleTests` (flag round-trip + key isolation from
+SyncPreferences; background `[]`/zero-pulls without creds + normal run with creds);
+launch-matrix extended (`.onboardingGoogle` route/step mapping, reset flag);
+`hasStoredRefreshToken` probe test (GHC 45→46); UI `testOnboardingSkipGooglePath`
+(consent → skip → "You're Set Up" (no progress element) → Continue → Today → reset-flag
+relaunch proves seeded Dashboard has syncNow and NO connect panel). New test-only route
+`-UITestOnboardingGoogle` (starts AT consent, decoupled from the quarantined HK sheet)
++ `-UITestResetGoogleSkip` cleanup (mirrors `resetTodayMetrics`). Mutation-checked:
+background gate removed → quiescence test fails (calls + outcomes non-empty).
+Full unit bundle 275/275 + skip UI test green on Xcode 27.0 sim, zero non-tool warnings;
+project regenerated + committed.
+
+**Rebase onto merged r9 (b75e698):** `DashboardView.syncNow` conflicted textually with
+the WipeQuiesce guard in the same function — kept BOTH guards (wipe latch first, then
+skip flag; order irrelevant, reviewer-confirmed). No other overlap
+(`HealthKitSourceDeleter`/auth files untouched here).

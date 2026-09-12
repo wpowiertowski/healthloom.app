@@ -102,6 +102,27 @@ struct GoogleAuthManagerTests {
         ])
     }
 
+    // MARK: - Refresh-token presence probe
+
+    @Test("hasStoredRefreshToken reflects the store without networking")
+    func storedRefreshTokenPresence() async {
+        // Catches (onboarding-skip-Google): the background gate reads this, not a
+        // throwing token fetch — absent reads false with zero network, present reads
+        // true without triggering a refresh.
+        let empty = GoogleAuthManager(
+            config: Self.testConfig,
+            httpSession: RecordingHTTPSession { _, _ in fatalError("no network expected") },
+            tokenStore: FakeTokenStore()
+        )
+        #expect(await empty.hasStoredRefreshToken() == false)
+        let seeded = GoogleAuthManager(
+            config: Self.testConfig,
+            httpSession: RecordingHTTPSession { _, _ in fatalError("no network expected") },
+            tokenStore: FakeTokenStore(refreshToken: "refresh-abc")
+        )
+        #expect(await seeded.hasStoredRefreshToken() == true)
+    }
+
     // MARK: - Refresh single-flight
 
     @Test("10 concurrent validAccessToken() calls with no cached token trigger exactly one refresh request")

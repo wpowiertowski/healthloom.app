@@ -20,6 +20,10 @@ struct GoogleConsentView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
     var onWorkspaceUnsupported: () -> Void
     var onSuccess: () -> Void
+    /// Secondary escape hatch (onboarding-skip-Google): testers/users without a
+    /// Google account proceed without OAuth. Reports intent only — the caller
+    /// persists the skip (`GoogleConnectionSetting`) and routes forward.
+    var onSkip: () -> Void = {}
 
     @State private var isConsenting = false
     @State private var errorMessage: String?
@@ -44,6 +48,12 @@ struct GoogleConsentView: View {
                 isLoading: isConsenting,
                 accessibilityIdentifier: "onboarding.google.signIn",
                 action: beginConsent
+            )
+            .disabled(isConsenting)
+            OnboardingSecondaryButton(
+                title: "Continue without Google",
+                accessibilityIdentifier: "onboarding.google.skip",
+                action: onSkip
             )
             .disabled(isConsenting)
         }

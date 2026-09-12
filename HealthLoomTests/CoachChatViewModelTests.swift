@@ -261,6 +261,18 @@ struct CoachRoundTwoTests {
         #expect(config.initialRoute == .default)
         #expect(config.useInMemoryContainer == true)
 
+        // Onboarding-skip-Google: consent-step entry for the skip-path UI test
+        // (onboards — never matches the past-onboarding routes — hermetic store).
+        config = LaunchConfiguration.resolve(arguments: ["-UITestStubGoogle", "-UITestOnboardingGoogle"])
+        #expect(config.initialRoute == .onboardingGoogle)
+        #expect(config.initialRoute.onboardingStep == .googleConsent)
+        #expect(config.useInMemoryContainer == true)
+        #expect(InitialRoute.default.onboardingStep == .welcome)
+        #expect(InitialRoute.data.onboardingStep == nil)
+        #expect(config.resetGoogleSkip == false)
+        config = LaunchConfiguration.resolve(arguments: ["-UITestResetGoogleSkip", "-UITestSeedData"])
+        #expect(config.resetGoogleSkip == true)
+
         // Scripted coach: Coach tab, ON-DISK store (relaunch leg), scripted.
         config = LaunchConfiguration.resolve(arguments: ["-UITestScriptedCoach"])
         #expect(config.initialRoute == .coach)
