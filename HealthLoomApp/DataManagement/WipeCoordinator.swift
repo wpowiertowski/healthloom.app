@@ -68,7 +68,13 @@ final class WipeCoordinator {
         /// explicit init — see below — and a default in both places is a
         /// double-initialization error. The default lives on the init
         /// parameter.)
-        let quiesceWriters: () -> Void
+        /// Third-party r9: `async` (was `() -> Void`) — the quiesce step must
+        /// AWAIT `BackfillCoordinator.stop()`'s "no loop is running"
+        /// postcondition. The old fire-and-forget `Task { await stop() }` let an
+        /// in-flight chunk keep writing HealthKit samples and store rows while
+        /// the wipe deleted them. A `Void` type structurally cannot await; the
+        /// `await` here is the fix. Sync closures still convert implicitly.
+        let quiesceWriters: () async -> Void
         /// Google token revocation. Throws on transport/endpoint failure;
         /// `.nothingStored` is success (never consented / already wiped).
         let revokeGoogle: () async throws -> RevocationOutcome
@@ -95,7 +101,7 @@ final class WipeCoordinator {
         /// needs a hand-written init to stay both defaulted and
         /// passable.
         init(
-            quiesceWriters: @escaping () -> Void = {},
+            quiesceWriters: @escaping () async -> Void = {},
             revokeGoogle: @escaping () async throws -> RevocationOutcome,
             deleteAllKeys: @escaping () async throws -> Void,
             deleteHealthKit: @escaping () async throws -> [HKObjectType: Result<Int, Error>],
@@ -144,11 +150,12 @@ final class WipeCoordinator {
             isFinished = true
         }
 
-        // 0. Quiesce first of all (round-10 item 1): from here until
-        // relaunch, no trigger may write — racing writers would
+        // 0. Quiesce first of all (round-10 item 1, third-party r9: awaited):
+        // from here until relaunch, no trigger may write — racing writers would
         // resurrect records mid-wipe and write through the unlinked
-        // store handle after it.
-        deps.quiesceWriters()
+        // store handle after it. Awaited so a draining backfill loop is actually
+        // stopped before revoke/keychain/HealthKit steps run.
+        await deps.quiesceWriters()
 
         // 1. Revoke first: the only step that needs a live secret.
         await perform(.revokeGoogle) {

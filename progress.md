@@ -5031,3 +5031,68 @@ GoogleHealthClient: `revokeRefreshToken()` (RFC 7009 POST to `oauth2.googleapis.
 ## Bundle-ID rename · com.healthloom.app → app.healthloom
 
 Owner directive, post-WP-38. project.yml PRODUCT_BUNDLE_IDENTIFIER → app.healthloom (+ regenerated project), Makefile simctl line, all os.Logger subsystems (app/Coach/MorningInsight + SyncKit DiagnosticsLog 4x). DELIBERATELY UNCHANGED: OAuth custom URL scheme (com.healthloom.app — independent of bundle ID; rotating it would force Google-console churn for nothing), BG task ID (com.healthloom.sync.refresh — declared ID, works regardless), all persisted com.healthloom.* keys (keychain service, UserDefaults, backfill markers). Human follow-up: the Google Cloud iOS OAuth client is bundle-bound — if one was already created with com.healthloom.app it must be updated to app.healthloom in the console.
+
+## Third-party findings r9 (15 findings, branch `third-party-findings-r9` from e199f6f)
+
+Structural fixes, one per finding (AGENTS.md design rules: quiesce awaited at the type level,
+single-source watermarks/protection/snapshots, fail-loud fetches, invalid states
+unrepresentable, seams at I/O only, thin adapters for server metadata):
+
+- **Wipe quiesce (F1+F9+F2):** `WipeCoordinator.Dependencies.quiesceWriters` is now
+  `() async -> Void` and `run()` awaits it before revoke — the old fire-and-forget
+  `Task { await backfillCoordinator.stop() }` let an in-flight chunk rewrite samples
+  mid-wipe (WipeFlowView now `await`s `stop()` directly). `BackfillCoordinator.runNextChunk`
+  (the documented choke point) enforces the latch (`.suspendedCancelled`); `SyncEngine`
+  gained the missing `isQuiesced` seam (quiesced `sync`/`syncAll` return `.cancelled`
+  without touching client/store), wired to `WipeQuiesce.isLatched` in `AppEnvironment`,
+  plus a cheap early-return in `DashboardView.syncNow`.
+- **CloudKit turns (F3):** an equal-dated group bigger than the page with nothing before it
+  pushed the whole group (as its distinct turnIDs only — same-date same-role rows share a
+  name) instead of returning `[]` and stalling every newer turn forever; the pre-edge
+  prefix deferral is preserved when a prefix exists. `pushNewTurns` also dedupes by record
+  name in-batch (a repeated name is a wasted Live overwrite / stub `serverRecordChanged`
+  throw). The round-10-item-8 "defers whole" test is rewritten to the amended contract
+  plus a new prefix-deferral test.
+- **File protection (F4):** store class `.complete` →
+  `.completeUntilFirstUserAuthentication` (`CoreModel.storeProtection`, alias kept;
+  architecture.md D11 updated) — BG tasks run locked, so `.complete` failed every
+  overnight save.
+- **Push arms (F5):** `settingsPushDecision`/`prefsPushDecision` distinguish
+  `.newerSchema` (skip push, advance watermark on server truth only — never overwrite v2
+  state) from genuinely corrupt records (overwrite). Pull keeps decode-and-skip.
+- **Disabled-type forward safety (F6):** `SyncPreferences` carries
+  `unknownDisabledRawValues` verbatim through persist/snapshot/replace/reload — the old
+  `compactMap` dropped them and the next push re-enabled the type.
+- **Backfill page cap (F7):** a cap-hit throws `PageWalkPartial(underlying:
+  BackfillPageCapHit)` into the existing failure path (cursor held, `.failed`, partial
+  rows committed) instead of advancing past unwalked data as `.processedChunk`.
+- **Split atomicity (F8):** `WatchConflictResolver` split arm is all-or-nothing — any
+  unbuildable slice drops the whole point to `.skip` (nothing written, nothing marked
+  known) instead of sealing a short pro-rated total that `isKnown` blocks forever.
+- **Fail-loud fetches (F10+F11+F15):** `StoreDeleter.deleteExportFiles` enumeration
+  throws (new `in:` seam, default tmp); `PagePipeline.upsertLocalSample` fetch throws
+  (no fall-through duplicate); `SyncEngine`/`BackfillCoordinator`
+  `fetchOrCreateSyncState` throw (run/chunk fails, no second cursor row; error-row writes
+  stay best-effort).
+- **Clock-skew LWW (F12):** push/pull ordering prefers CloudKit `modificationDate`
+  (server truth; `serverOrderDate` override for tests since fabricated records carry no
+  server metadata), falling back to the `updatedAt` field; own-write watermark advance
+  uses the saved record's server date, never a future-dated local `now()`.
+- **Turn-push batching (F13):** one paged `turnPage` existence walk replaces up to 500
+  sequential pre-save `fetchRecord`s (empty batch skips the walk).
+- **KnowledgeStore (F14):** `cachedLocalSamples` (live `@Model` rows pinning a throwaway
+  context for app lifetime) is now a `performRefresh` local; only value-type
+  `cachedExerciseSupplements` is retained.
+
+**Tests:** SyncKit 311 total (+6 new: quiesce ×3, backfill quiesce/cap ×3); CoreModel 24 total
+(protection pin updated); app 281 total incl. 9 new `ThirdPartyR9Tests` (wipe-await,
+unknown-round-trip ×2, sweep-throw + sweep-success, equal-group-advance, newerSchema ×2
+arms + malformed pin, server-truth ordering, batched-existence) + rewritten pathological
+test + new prefix-deferral test. Mutation-checked: F3 fallback removed → 3 edge-group
+tests fail; F5 newerSchema collapsed → newerSchema test fails; F7 throw removed →
+cap test fails with `.processedChunk`. F8/F11/F15 arms unreachable with valid/in-memory
+inputs — verified by inspection + green suite (stated in code comments, not faked).
+Full matrix green under global strictness: app `xcodebuild build test` 281/281 on Xcode
+27.0 sim; per-package `swift test -Xswiftc -warnings-as-errors` SyncKit 311, CoreModel 24,
+Secrets 14, GHC 45, CoachKit 29; `warning:` grep clean (only Apple tool noise).
+Project regenerated (`make xcode` equivalent) and committed (new test files).

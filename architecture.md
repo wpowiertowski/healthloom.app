@@ -186,8 +186,11 @@ not editable. The Prompt Editor shows the exact final string — nothing hidden.
 
 **D11 — Privacy posture.**
 - Tokens and API keys: Keychain, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
-- SwiftData store: `NSFileProtectionComplete` (it holds `LocalSample` clinical events and
-  chat history).
+- SwiftData store: `NSFileProtectionCompleteUntilFirstUserAuthentication` (it holds
+  `LocalSample` clinical events and chat history). Third-party r9: `.complete`
+  evicts file keys on lock and fails every locked-background save (BG tasks run
+  locked), so the overnight sync/insight never landed; `...UntilFirstUserAuthentication`
+  keeps passcode-derived at-rest protection while allowing background access.
 - Logs / analytics / crash reports carry counts, types, and timestamps — never health
   values, never tokens.
 - Network egress allowlist: `health.googleapis.com`, `oauth2.googleapis.com`, plus —

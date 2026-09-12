@@ -83,7 +83,12 @@ public final class KnowledgeStore {
     private var cachedSleepSegments: [SleepStageSegment] = []
     private var cachedWorkouts: [WorkoutRecord] = []
     private var cachedExerciseSupplements: [ExerciseSupplement] = []
-    private var cachedLocalSamples: [LocalSample] = []
+    // Third-party r9: NO `cachedLocalSamples` — the previous stored array retained
+    // live `@Model` rows (and through them their throwaway `ModelContext`) for the
+    // store's whole lifetime, although it was only ever read inside the same
+    // `performRefresh` call that wrote it. `LocalSample` rows are now a local of
+    // that call; `cachedExerciseSupplements` (plain value types, read later by
+    // `workoutsSummary`) is the shape that actually needs caching.
 
     /// The `now` most recently passed to `refresh(now:)` -- code review
     /// (2026-08-28) finding #5: the tool-facing summaries below must window
@@ -268,7 +273,6 @@ public final class KnowledgeStore {
         cachedHeartRateVariability = fetchedHeartRateVariability
         cachedSleepSegments = fetchedSleepSegments
         cachedWorkouts = fetchedWorkouts
-        cachedLocalSamples = fetchedLocalSamples
         cachedExerciseSupplements = fetchedExerciseSupplements
         referenceNow = now
 
@@ -303,7 +307,7 @@ public final class KnowledgeStore {
         for type in GoogleDataType.allCases where type.writability == .localOnly {
             if let field = KnowledgeDerivation.localOnlyField(
                 dataType: type,
-                samples: cachedLocalSamples,
+                samples: fetchedLocalSamples,
                 windowStart: localOnlyStart,
                 windowDays: Self.localOnlyWindowDays,
                 asOf: now

@@ -117,15 +117,22 @@ enum StoreDeleter {
     /// complete health-data JSON must not survive a wipe in sandbox tmp,
     /// and re-exports must not accumulate. Prefix-scoped so unrelated tmp
     /// files are never touched.
+    /// Seamed over `directory` (default: sandbox tmp) so tests drive the failure
+    /// arm without touching the real tmp: a throwing enumeration fails loudly.
     @discardableResult
-    static func deleteExportFiles() throws -> [URL] {
-        let tmp = FileManager.default.temporaryDirectory
-        let staged = (try? FileManager.default.contentsOfDirectory(
+    static func deleteExportFiles(in directory: URL? = nil) throws -> [URL] {
+        let tmp = directory ?? FileManager.default.temporaryDirectory
+        // Third-party r9: the enumeration THROWS (never `try? ?? []`). The old
+        // fall-through reported success with zero files removed when the tmp
+        // listing failed — leaving a complete health-data export JSON behind a
+        // "cannot be undone" wipe while the ledger claimed success. Catches: a
+        // throwing enumeration must fail the step loudly, not sweep nothing.
+        let staged = try FileManager.default.contentsOfDirectory(
             at: tmp,
             includingPropertiesForKeys: nil
-        ))?.filter {
+        ).filter {
             $0.lastPathComponent.hasPrefix("healthloom-export-") && $0.pathExtension == "json"
-        } ?? []
+        }
         for url in staged {
             try FileManager.default.removeItem(at: url)
         }

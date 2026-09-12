@@ -349,7 +349,11 @@ final class AppEnvironment {
                 writer: syncWriter,
                 preference: UserDefaultsWatchPriorityPreference()
             ),
-            runRecorder: SyncEngineLogRecorder(store: syncLogStore)
+            runRecorder: SyncEngineLogRecorder(store: syncLogStore),
+            // Third-party r9: post-wipe Sync Now no-ops (a foreground sync would
+            // resurrect wiped HealthKit samples and write through the unlinked
+            // store handle). Same latch every other writer trigger reads.
+            isQuiesced: { WipeQuiesce.isLatched }
         )
         self.syncEngine = syncEngine
 

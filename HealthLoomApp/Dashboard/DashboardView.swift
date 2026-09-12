@@ -152,6 +152,10 @@ struct DashboardView: View {
     }
 
     private func syncNow() {
+        // Third-party r9: quiesced (wipe latched, relaunch pending) — never dispatch.
+        // `SyncEngine.sync` also guards structurally; this cheap check keeps the UI
+        // from flashing a sync pass that can only return stopped.
+        guard !WipeQuiesce.isLatched else { return }
         isSyncing = true
         // Round-6 item 9: every syncable type (not just P0) minus
         // disabled — an enabled non-P0 row updates on demand, not only

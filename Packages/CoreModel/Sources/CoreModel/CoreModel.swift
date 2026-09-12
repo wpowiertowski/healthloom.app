@@ -40,9 +40,18 @@ public enum CoreModel {
     ///
     /// - Parameter inMemory: `true` for tests/previews — nothing touches disk, no file
     ///   protection to apply. `false` opens (creating if needed) the on-disk store
-    ///   under Application Support/HealthLoom, with `NSFileProtectionComplete` applied
-    ///   to the store file (architecture.md D11 — the store holds `LocalSample`
-    ///   clinical events and chat history, nothing more sensitive belongs in it per D2).
+    ///   under Application Support/HealthLoom, with
+    ///   `NSFileProtectionCompleteUntilFirstUserAuthentication` applied to the store
+    ///   file (architecture.md D11 — the store holds `LocalSample` clinical events
+    ///   and chat history, nothing more sensitive belongs in it per D2).
+    ///
+    ///   `completeUntilFirstUserAuthentication` (not `.complete`): background tasks
+    ///   (BGAppRefresh, BGProcessingTask) routinely open and save this store while
+    ///   the device is locked. Under `.complete` the file keys are evicted on lock
+    ///   and every locked-background save fails, so the overnight sync and insight
+    ///   this app schedules would never land. `completeUntilFirstUserAuthentication`
+    ///   keeps the class's at-rest protection (keys derived from the passcode,
+    ///   files encrypted) while allowing background access after first unlock.
     ///
     ///   Round-6 item 12 (SQLite-correct reasoning): stamping ONLY the
     ///   `.store` file leaves SQLite's `-wal`/`-shm` sidecars at the
@@ -85,12 +94,12 @@ public enum CoreModel {
             // The store file itself, plus any sidecars SQLite already
             // created (round-6 item 12 — see below for why the directory
             // stamp alone is not enough on upgrade).
-            try applyCompleteFileProtection(at: onDiskURL)
+            try applyStoreFileProtection(at: onDiskURL)
             // Sidecars, present or not (WAL pair + rollback journal —
             // whichever journal mode the store runs under, the
             // newest-rows file gets the class; absence is success).
             for suffix in ["-wal", "-shm", "-journal"] {
-                try applyCompleteFileProtectionIfPresent(at: URL(fileURLWithPath: onDiskURL.path + suffix))
+                try applyStoreFileProtectionIfPresent(at: URL(fileURLWithPath: onDiskURL.path + suffix))
             }
         }
 
@@ -112,17 +121,23 @@ public enum CoreModel {
         // Round-6 item 12: stamp the DIRECTORY (SQLite-correct — see
         // `makeContainer`'s doc): files SQLite creates later inside it
         // (-wal/-shm on checkpoint restarts) INHERIT this class.
-        try applyCompleteFileProtectionIfPresent(at: directory)
+        try applyStoreFileProtectionIfPresent(at: directory)
         return directory.appending(path: "CoreModel.store", directoryHint: .notDirectory)
     }
 
-    /// The protection class every store file gets (round-6 item 12):
+    /// The protection class every store file gets (round-6 item 12, third-party
+    /// r9: `.completeUntilFirstUserAuthentication` — see `makeContainer`'s doc):
     /// a named constant so tests pin the DECISION anywhere — actual
     /// enforcement is iOS-only (see below), so no test can observe the
     /// class on macOS or (empirically) the simulator; devices enforce.
-    static let completeProtection = FileProtectionType.complete
+    static let storeProtection = FileProtectionType.completeUntilFirstUserAuthentication
 
-    /// Applies `NSFileProtectionComplete` (architecture.md D11) to the on-disk store.
+    /// Retained alias for the pre-r9 name (same value source): grep-proven no
+    /// production caller uses the old name; kept only so the rename never
+    /// silently reverts the decision. Prefer `storeProtection`.
+    static var completeProtection: FileProtectionType { storeProtection }
+
+    /// Applies the store protection class (architecture.md D11) to the on-disk store.
     ///
     /// Data Protection classes are an iOS concept enforced by the Secure Enclave/
     /// passcode-derived keys. This package's tests also run natively on macOS (per
@@ -131,10 +146,10 @@ public enum CoreModel {
     /// there, but setting it is a documented no-op, not a real guarantee. Guarding to
     /// iOS keeps this call honest about what it actually does per platform, per the
     /// WP-02 spec's own note that this API "may be a no-op or unavailable" on macOS.
-    private static func applyCompleteFileProtection(at url: URL) throws {
+    private static func applyStoreFileProtection(at url: URL) throws {
         #if os(iOS)
         try FileManager.default.setAttributes(
-            [.protectionKey: completeProtection],
+            [.protectionKey: storeProtection],
             ofItemAtPath: url.path
         )
         #endif
@@ -142,9 +157,9 @@ public enum CoreModel {
 
     /// Same stamp, skipping absent paths (sidecars and just-created
     /// directories may not exist yet — absence is success, not failure).
-    private static func applyCompleteFileProtectionIfPresent(at url: URL) throws {
+    private static func applyStoreFileProtectionIfPresent(at url: URL) throws {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
-        try applyCompleteFileProtection(at: url)
+        try applyStoreFileProtection(at: url)
     }
 }
 

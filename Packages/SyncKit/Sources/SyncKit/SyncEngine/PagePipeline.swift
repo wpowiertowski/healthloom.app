@@ -317,7 +317,13 @@ nonisolated struct PagePipeline: Sendable {
         let dataTypeKey = point.dataType.rawValue
 
         let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
-        if let existing = try? context.fetch(descriptor).first {
+        // Third-party r9: a fetch failure must FAIL LOUDLY, never fall through to
+        // insert. The old `try?` turned a busy/locked-store fetch error into `nil`
+        // and minted a duplicate row for the same externalID — defeating this
+        // method's own "never a blind reinsert" contract and splitting
+        // `linkedWatchWorkoutUUID` across duplicates. Catches: a throwing fetch
+        // must surface, not duplicate.
+        if let existing = try context.fetch(descriptor).first {
             existing.dataType = dataTypeKey
             existing.payloadJSON = payloadJSON
             existing.start = point.start
