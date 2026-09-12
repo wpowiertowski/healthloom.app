@@ -163,22 +163,38 @@ import Testing
         #expect(share.contains { $0 == HKObjectType.workoutType() })
     }
 
-    @Test func partitionMovesCorrelationToRead() throws {
-        // Catches: filtering must not DROP the type — share-listed correlations land
-        // in `read` (read-only), so the sheet still covers Food without crashing.
+    @Test func partitionExcludesCorrelationFromBothSets() throws {
+        // Catches (second crash): the first fix moved share-listed Food to `read` —
+        // this platform disallows it there too (same termination frame), so
+        // correlations reach NEITHER set. Requestable types still land correctly.
         let auth = HealthKitAuth()
         let food = try auth.resolveSampleType(for: .food)
         let steps = try auth.resolveSampleType(for: .steps)
         let sleep = try auth.resolveSampleType(for: .sleep)
         let (toShare, toRead) = HealthKitAuth.partitionedAuthorization(
             share: [food, steps],
-            read: [sleep]
+            read: [sleep, food]
         )
         #expect(!toShare.contains { $0 is HKCorrelationType })
         #expect(toShare.contains(steps))
         let readIDs = Set(toRead.map(\.identifier))
-        #expect(readIDs.contains(food.identifier))
+        #expect(!readIDs.contains(food.identifier))
         #expect(readIDs.contains(sleep.identifier))
+    }
+
+    @Test func requestReadThrowsReadDisallowedForFood() async {
+        // Catches: the standalone read path fails LOUD (typed error) instead of
+        // crashing — checked before the availability gate so it fails identically
+        // on every platform, including this host.
+        let auth = HealthKitAuth()
+        await #expect {
+            try await auth.requestRead([.food])
+        } throws: { error in
+            guard case .readDisallowed(.food, _) = error as? HealthKitAuthError else {
+                return false
+            }
+            return true
+        }
     }
 
     @Test func requestWriteThrowsSharingDisallowedForFood() async {

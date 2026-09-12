@@ -5121,3 +5121,22 @@ regress to authorized-but-never-wiped).
 requestWrite-disallowed, resolveAll-keeps-food); mutation-checked (filter removed → share
 test fails). App 281/281 green, zero non-tool warnings. `healthKitWritableTypes` doc now
 names the funnel vs. share-subset split.
+
+## Third-party r9 amendment 2 · Food READ-share crash (same branch)
+
+Follow-up crash: excluding Food from `toShare` merely relocated the termination — this
+platform disallows `HKCorrelationTypeIdentifierFood` in `read:` too (same
+`_throwIfAuthorizationDisallowedForSharing` frame). `HealthKitAuth` now gates both halves:
+`isReadRequestable(_)` (same fail-closed `HKCorrelationType` check, same exhaustiveness
+argument — the mapping seam yields only 4 kinds); `partitionedAuthorization` excludes
+correlations from BOTH sets (Food is unauthorizable on this platform, full stop — writes
+fail at save with an auth error, reads return empty, both pre-existing graceful postures);
+`requestRead(_:)` throws typed `.readDisallowed` pre-gate (fail loud, same-everywhere).
+Wipe/deletion untouched (`resolveAllSampleTypes` — verified `HealthKitSourceDeleter` never
+routes through `requestAuthorization`; only HealthKitAuth's three store calls do).
+
+**Tests:** SyncKit 315→316 (partition test rewritten to both-sets-excluded + new
+readDisallowed pin); mutation-checked (read filter removed → partition test fails naming
+Food). App unit 281/281 green, zero non-tool warnings (Xcode 27.0 sim; UI bundle skipped
+locally after a wedged simulator stalled the full `build test` twice — sim shutdown+reboot
+resolved it; UI files untouched by this change, CI runs the full matrix).
