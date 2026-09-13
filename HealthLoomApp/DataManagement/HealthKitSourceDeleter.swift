@@ -185,20 +185,20 @@ extension HealthKitSourceDeleter {
     // authorized-but-never-wiped, contradicting the
     // share-and-wipe-or-neither invariant.
     static func wipeableTypes(requesting: [GoogleDataType] = SyncPreferences.healthKitWritableTypes) throws -> [HKSampleType] {
-        // Membership comes from the shared share-set computation (F10):
-        // whatever onboarding authorizes, the wipe covers — no parallel
-        // source to drift. Order is imposed here (request order, then
-        // historical, then the writer-table order) because no source
-        // promises sequence.
+        // Membership comes from the shared resolution computation (F10, amended
+        // third-party r9): whatever onboarding authorizes, the wipe covers — no
+        // parallel source to drift. It is deliberately the UNFILTERED resolve set,
+        // not `authorizedShareTypes`: the share-request set excludes correlations
+        // (HealthKit terminates the app for a share-requested Food type), but
+        // deletion requires no share grant — deriving membership from the share set
+        // would strand Food samples outside the wipe. Order is imposed here
+        // (request order, then historical, then the writer-table order) because no
+        // source promises sequence.
         let auth = HealthKitAuth()
-        let current = try auth.authorizedShareTypes(
-            sharing: requesting,
-            includingWorkoutShare: true
-        )
-        let historical = try auth.authorizedShareTypes(
-            sharing: historicalRequestTypes,
-            includingWorkoutShare: true
-        )
+        let current = try auth.resolveAllSampleTypes(for: requesting)
+            .union(HealthKitWriter.workoutShareTypes)
+        let historical = try auth.resolveAllSampleTypes(for: historicalRequestTypes)
+            .union(HealthKitWriter.workoutShareTypes)
         let allowed = current.union(historical)
         var ordered: [HKSampleType] = []
         var seen = Set<HKSampleType>()

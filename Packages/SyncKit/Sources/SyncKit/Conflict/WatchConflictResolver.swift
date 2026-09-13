@@ -196,6 +196,7 @@ public actor WatchConflictResolver: ConflictFiltering {
                 // Same-run coverage is stable (no flip-flop within a
                 // run at all).
                 let suffixed = slices.count > 1
+                var droppedSlices = 0
                 for (index, slice) in slices.enumerated() {
                     var part = pure
                     part.start = slice.start
@@ -206,10 +207,21 @@ public actor WatchConflictResolver: ConflictFiltering {
                     }
                     if let hkSample = part.makeHKQuantitySample() {
                         parts.append(hkSample)
+                    } else {
+                        droppedSlices += 1
                     }
                 }
                 runs[point.dataType]?.suppressedCount += 1 // partially deferred -- the covered portion
-                guard !parts.isEmpty else { return .skip }
+                // Third-party r9: all-or-nothing. A partially-built split must NOT
+                // emit the surviving slices as `.quantities(parts)`: the pipeline
+                // would count the point fully written and `isKnown`'s split-base
+                // check would then block the missing share forever — silent
+                // permanent under-counting (HealthKit holds a short pro-rated total).
+                // Dropping the whole point to `.skip` writes nothing, marks nothing
+                // known, and counts a skip (not a write); the window's lookback
+                // overlap re-drives it next run instead of sealing a short total.
+                // Catches: a split with any unbuildable slice must skip whole.
+                guard droppedSlices == 0, !parts.isEmpty else { return .skip }
                 return .quantities(parts)
             }
 

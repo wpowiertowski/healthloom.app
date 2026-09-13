@@ -66,9 +66,20 @@ final class SyncPreferences {
     /// which never had a settings screen to disable anything).
     private(set) var disabledTypes: Set<GoogleDataType>
 
+    /// Raw disabled-type values no `GoogleDataType` case in THIS build recognizes
+    /// (third-party r9: forward-safety). A newer device may disable a type this
+    /// build never heard of; dropping it on pull and pushing the narrowed set back
+    /// would silently re-enable sync for it — a privacy-relevant opt-out reverted.
+    /// Unknown values are carried verbatim: persisted, snapshotted, and re-pushed
+    /// untouched, never offered as toggles. Single-sourced with `disabledTypes`
+    /// (both persist through `persist()` and load through `loadDisabledTypes`).
+    private(set) var unknownDisabledRawValues: Set<String>
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.disabledTypes = Self.loadDisabledTypes(from: defaults)
+        let loaded = Self.loadDisabledTypes(from: defaults)
+        self.disabledTypes = loaded.known
+        self.unknownDisabledRawValues = loaded.unknown
     }
 
     // MARK: - Instance API (SettingsView / call sites)
@@ -108,23 +119,38 @@ final class SyncPreferences {
 
     /// Raw disabled-type values for the cloud snapshot (sorted for stable
     /// encoding). Unknown future cases survive as strings — see
-    /// `SyncSettingsSnapshot`.
+    /// `SyncSettingsSnapshot`. Third-party r9: the union of known + carried
+    /// unknown values (never the narrowed known-only set).
     func snapshotRawValues() -> [String] {
-        disabledTypes.map(\.rawValue).sorted()
+        (disabledTypes.map(\.rawValue) + unknownDisabledRawValues).sorted()
     }
 
-    /// Applies a cloud-pulled snapshot. Unknown raw values are dropped
-    /// (a case this app version renamed cannot be toggled anyway); the
-    /// instance persists immediately so a force-quit cannot lose it.
+    /// Applies a cloud-pulled snapshot. Unknown raw values are PRESERVED verbatim
+    /// (third-party r9 — was `compactMap`, dropping them): a case this app version
+    /// renamed or never knew cannot be toggled, but must round-trip untouched so
+    /// this device's next push does not narrow the server set. The instance
+    /// persists immediately so a force-quit cannot lose it.
     func replaceDisabledTypes(with rawValues: [String]) {
-        disabledTypes = Set(rawValues.compactMap(GoogleDataType.init(rawValue:)))
+        var known: Set<GoogleDataType> = []
+        var unknown: Set<String> = []
+        for raw in rawValues {
+            if let type = GoogleDataType(rawValue: raw) {
+                known.insert(type)
+            } else {
+                unknown.insert(raw)
+            }
+        }
+        disabledTypes = known
+        unknownDisabledRawValues = unknown
         persist()
     }
 
     /// Re-reads from defaults (a pull applied through the sync engine's
     /// own instance; mirrors `InsightPreferences.reload`).
     func reload() {
-        disabledTypes = Self.loadDisabledTypes(from: defaults)
+        let loaded = Self.loadDisabledTypes(from: defaults)
+        disabledTypes = loaded.known
+        unknownDisabledRawValues = loaded.unknown
     }
 
     // MARK: - Pure functions (WP-17's required tests target these directly --
@@ -146,7 +172,11 @@ final class SyncPreferences {
     }
 
     /// Every syncable type with a HealthKit write destination (round-8
-    /// item 1): THE share-request set. `.localOnly` types persist to
+    /// item 1): THE write-destination set feeding the share-request funnel.
+    /// `HealthKitAuth.authorizedShareTypes` derives the actual `toShare` subset and
+    /// `partitionedAuthorization` the `read:` subset (third-party r9: correlations
+    /// such as Food are excluded from BOTH structurally — never by callers filtering
+    /// this list). `.localOnly` types persist to
     /// `LocalSample`, never HealthKit, so requesting share for them
     /// would throw (no mapping) — but requesting only P0 left ~14
     /// writable types (floors, RHR, SpO2, resp-rate, VO2, height,
@@ -187,11 +217,20 @@ final class SyncPreferences {
     // MARK: - Persistence
 
     private func persist() {
-        defaults.set(disabledTypes.map(\.rawValue), forKey: Self.disabledTypesDefaultsKey)
+        defaults.set(disabledTypes.map(\.rawValue) + unknownDisabledRawValues, forKey: Self.disabledTypesDefaultsKey)
     }
 
-    private static func loadDisabledTypes(from defaults: UserDefaults) -> Set<GoogleDataType> {
+    private static func loadDisabledTypes(from defaults: UserDefaults) -> (known: Set<GoogleDataType>, unknown: Set<String>) {
         let rawValues = defaults.stringArray(forKey: disabledTypesDefaultsKey) ?? []
-        return Set(rawValues.compactMap(GoogleDataType.init(rawValue:)))
+        var known: Set<GoogleDataType> = []
+        var unknown: Set<String> = []
+        for raw in rawValues {
+            if let type = GoogleDataType(rawValue: raw) {
+                known.insert(type)
+            } else {
+                unknown.insert(raw)
+            }
+        }
+        return (known, unknown)
     }
 }

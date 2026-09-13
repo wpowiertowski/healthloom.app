@@ -238,9 +238,12 @@ struct WipeFlowView: View {
             // Round-10 item 1: latch FIRST (the coordinator calls this
             // before revoke) + stop a running backfill loop — from here
             // until relaunch every writer trigger no-ops.
+            // Third-party r9: awaited (was fire-and-forget `Task { await stop() }`).
+            // The coordinator awaits this before revoke, so the backfill loop's
+            // "no loop is running" postcondition holds before any delete step.
             quiesceWriters: {
                 WipeQuiesce.latch()
-                Task { await appEnvironment.backfillCoordinator.stop() }
+                await appEnvironment.backfillCoordinator.stop()
             },
             // Revocation failure is recorded in the ledger, never thrown
             // out: the keychain step clears the same secrets locally

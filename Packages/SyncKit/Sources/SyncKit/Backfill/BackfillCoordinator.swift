@@ -281,7 +281,10 @@ public actor BackfillCoordinator {
     public func status(for type: GoogleDataType) async -> BackfillTypeStatus {
         let context = ModelContext(modelContainer)
         let now = clock.now()
-        let syncState = fetchSyncState(for: type, context: context)
+        // Read-only probe (never inserts): a fetch failure reads as absent, surfacing
+        // no error row — the chunk path above owns failure reporting. No duplicate
+        // risk here since this never creates a row.
+        let syncState = try? fetchSyncState(for: type, context: context)
         let horizonDate = horizon.horizonDate(now: now)
         let completed = horizonStore.completedHorizon(for: type)
         let isComplete = syncState?.backfillCursor == nil
@@ -354,10 +357,24 @@ public actor BackfillCoordinator {
         if await disabledTypes().contains(type) { return .suspendedDisabled }
         if isPaused { return .suspendedPaused }
         if await busyProbe.isBusy(for: type) { return .suspendedBusy }
+        // Third-party r9: the documented per-chunk choke point enforces the wipe
+        // latch like every other writer trigger (CloudSyncEngine, MorningInsightRunner,
+        // HealthLoomApp BG handler). A round already in progress that latches mid-walk
+        // must stop writing here — `stop()` cancellation alone is not enough since
+        // the wipe never awaits it (WipeFlowView finding) and the loop only probes
+        // cancellation between rounds. A stop, not a failure: no error row.
+        if isQuiesced() { return .suspendedCancelled }
 
         let context = ModelContext(modelContainer)
         let now = clock.now()
-        let syncState = fetchOrCreateSyncState(for: type, context: context)
+        // Third-party r9: cursor fetch throws into a loud `.failed` (never a silent
+        // duplicate row — same contract as `SyncEngine.fetchOrCreateSyncState`).
+        let syncState: SyncState
+        do {
+            syncState = try fetchOrCreateSyncState(for: type, context: context)
+        } catch {
+            return .failed(SyncLogRedactor.redact(String(describing: error)))
+        }
         let horizonDate = horizon.horizonDate(now: now)
         let completed = horizonStore.completedHorizon(for: type)
 
@@ -407,12 +424,18 @@ public actor BackfillCoordinator {
                 // The cursor is untouched on disk, so the next round
                 // retries this same branch.
                 context.rollback()
-                let syncState = fetchOrCreateSyncState(for: type, context: context)
-                let message = SyncLogRedactor.redact(String(describing: error))
-                syncState.backfillStatus = SyncStatus.error.rawValue
-                syncState.backfillError = message
-                try? context.save()
-                return .failed(message)
+                // Best-effort error row: if the fetch itself throws, the row cannot be
+                // persisted — report the original failure without masking it.
+                do {
+                    let syncState = try fetchOrCreateSyncState(for: type, context: context)
+                    let message = SyncLogRedactor.redact(String(describing: error))
+                    syncState.backfillStatus = SyncStatus.error.rawValue
+                    syncState.backfillError = message
+                    try? context.save()
+                    return .failed(message)
+                } catch {
+                    return .failed(SyncLogRedactor.redact(String(describing: error)))
+                }
             }
             horizonStore.setCompletedHorizon(horizon, for: type)
             return .alreadyDone
@@ -456,8 +479,15 @@ public actor BackfillCoordinator {
             // the cursor already advanced in memory, and the error-row save
             // below would commit it despite the "left untouched" contract.
             // Re-acquire after: rollback may undo a first-ever insert.
+            // Best-effort: if the fetch itself throws, the error row cannot be
+            // persisted — fall through with no row write and still report `.failed`.
             context.rollback()
-            let syncState = fetchOrCreateSyncState(for: type, context: context)
+            let syncState: SyncState
+            do {
+                syncState = try fetchOrCreateSyncState(for: type, context: context)
+            } catch {
+                return .failed(SyncLogRedactor.redact(String(describing: error)))
+            }
             // Round-10 item 14: commit the completed pages' `.localOnly`
             // rows even though the chunk failed (upserted here, on this
             // executor, ahead of the error-row saves below that commit
@@ -589,13 +619,20 @@ public actor BackfillCoordinator {
             try PagePipeline.upsertLocalSample(for: point, context: context)
         }
         totalItemCount += walked.total
-        // Fix-round N3: see SyncEngine's identical log — a cap-hit
-        // commits partial progress, and the remainder is
-        // lookback-bound.
+        // Third-party r9: a cap-hit FAILS the chunk (cursor held) — it must never
+        // advance `backfillCursor` past the whole window. Unlike incremental sync
+        // (which recovers the remainder through lookback overlap), backfill walks
+        // strictly backwards with no overlap, so advancing would permanently lose
+        // every point past the cap. Throwing `PageWalkPartial` reuses the existing
+        // failure path: completed pages' `.localOnly` rows still commit, HK partial
+        // writes stand idempotently, the cursor holds for a loud retry. Catches: a
+        // dense 30-day window exceeding 100 pages must surface as `.failed`, never
+        // report `.processedChunk` past unwalked data.
         if walked.hitPageCap {
             DiagnosticsLog.backfill.notice(
-                "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial chunk committed; remainder beyond lookback overlap will not be revisited."
+                "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — chunk failed without advancing the cursor; the window will retry."
             )
+            throw PageWalkPartial(total: totalItemCount, localOnly: walked.localOnly, underlying: BackfillPageCapHit(typeName: type.rawValue))
         }
 
         // WP-12b: stamp deferred-session links onto the LocalSample rows the
@@ -612,20 +649,31 @@ public actor BackfillCoordinator {
 
     // MARK: - SwiftData bookkeeping (mirrors SyncEngine.swift's own helpers)
 
-    private func fetchSyncState(for type: GoogleDataType, context: ModelContext) -> SyncState? {
+    private func fetchSyncState(for type: GoogleDataType, context: ModelContext) throws -> SyncState? {
+        // Third-party r9: throws (never `try?`) — a fetch failure must fail the chunk,
+        // not silently read "absent" and mint a duplicate cursor row.
         let key = type.rawValue
         let descriptor = FetchDescriptor<SyncState>(predicate: #Predicate { $0.dataType == key })
-        return try? context.fetch(descriptor).first
+        return try context.fetch(descriptor).first
     }
 
-    private func fetchOrCreateSyncState(for type: GoogleDataType, context: ModelContext) -> SyncState {
-        if let existing = fetchSyncState(for: type, context: context) {
+    private func fetchOrCreateSyncState(for type: GoogleDataType, context: ModelContext) throws -> SyncState {
+        if let existing = try fetchSyncState(for: type, context: context) {
             return existing
         }
         let created = SyncState(dataType: type.rawValue)
         context.insert(created)
         return created
     }
+}
+
+/// Page-cap hit inside a backfill chunk (third-party r9): the `underlying` error
+/// `pullMapWrite` wraps in `PageWalkPartial` when a chunk window exceeds
+/// `PagePipeline.maxPages`. Log-safe by construction (type name only, never payloads).
+/// Surfaces through `runNextChunk`'s catch as `.failed` with the cursor held —
+/// the window retries instead of being skipped past.
+nonisolated struct BackfillPageCapHit: Error, Sendable {
+    var typeName: String
 }
 
 #endif

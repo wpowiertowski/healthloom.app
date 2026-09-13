@@ -138,11 +138,16 @@ struct ContainerRoundTripTests {
 
 @Suite("Store file protection decision")
 struct StoreProtectionDecisionTests {
-    @Test("store files are stamped Complete")
+    @Test("store files are stamped CompleteUntilFirstUserAuthentication")
     func completeProtectionPinned() {
         // Round-6 item 12: pins the DECISION (named constant) anywhere —
         // enforcement itself is iOS-only, unobservable on macOS and
         // (empirically) the simulator, enforced on device.
-        #expect(CoreModel.completeProtection == FileProtectionType.complete)
+        // Third-party r9: `.complete` evicts keys on lock and fails every
+        // locked-background save (BG tasks run locked); without first-unlock
+        // access the overnight sync/insight never lands. Catches: reverting
+        // the class to `.complete` re-breaks locked background saves.
+        #expect(CoreModel.storeProtection == FileProtectionType.completeUntilFirstUserAuthentication)
+        #expect(CoreModel.completeProtection == FileProtectionType.completeUntilFirstUserAuthentication)
     }
 }

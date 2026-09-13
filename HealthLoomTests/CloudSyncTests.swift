@@ -860,18 +860,17 @@ struct CloudSyncTests {
         })
     }
 
-    @Test("pathological edge group defers whole, never splits")
-    func pathologicalEdgeGroupDefersWhole() async throws {
-        // Round-10 item 8: 600 same-date turns (alternating roles) —
-        // the edge group alone exceeds a full page. Pushing it whole
-        // unbounds the batch; pushing part strands the rest past the
-        // watermark. So the whole group defers: zero pushed, watermark
-        // unmoved, rows intact, stable across syncs (no hang, no
-        // growth, no dupes). Full push is impossible here regardless
-        // (same-date same-role turns share a turnID and collapse
-        // server-side — round-9 proof); every REACHABLE group (at most
-        // one pair) pushes atomically, pinned by the straddling-pair
-        // test.
+    @Test("pathological edge group pushes whole and advances")
+    func pathologicalEdgeGroupPushesWhole() async throws {
+        // Round-10 item 8, amended third-party r9: 600 same-date turns (alternating
+        // roles) — the edge group alone exceeds a full page. The old whole-deferral
+        // (zero pushed, watermark unmoved) stalled EVERY newer turn behind the group
+        // forever under `.synced`. Same-date same-role turns share a turnID and
+        // collapse server-side (round-9 proof), so the group pushes as its distinct
+        // IDs only (2 saves here — in-batch save-if-absent, never 600 round trips),
+        // the watermark advances past the group, rows stay intact, and the next sync
+        // is stable (no new saves, no dupes, no growth). Every REACHABLE group (at
+        // most one pair) still pushes atomically, pinned by the straddling-pair test.
         let harness = try CloudSyncHarness.make()
         let at = harness.now.addingTimeInterval(-1000)
         let context = ModelContext(harness.container)
@@ -884,10 +883,38 @@ struct CloudSyncTests {
         }
         try context.save()
         await harness.engine().syncNow()
-        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 0)
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 2)
         await harness.engine().syncNow()
-        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 0)
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 2)
         #expect(try harness.localTurnCount() == 600)
+    }
+
+    @Test("huge edge group with pre-edge rows defers the group, pushes the prefix")
+    func hugeEdgeGroupDefersWhenPrefixExists() async throws {
+        // Round-10 item 8's preserved half: when rows predate the pathological group,
+        // the batch is the pre-edge prefix and the watermark lands strictly before the
+        // group — the group retries whole next sync (pushed as its distinct IDs),
+        // never split, never stranded.
+        let harness = try CloudSyncHarness.make()
+        let base = harness.now.addingTimeInterval(-10_000)
+        let edge = harness.now.addingTimeInterval(-1000)
+        let context = ModelContext(harness.container)
+        for i in 0..<3 {
+            context.insert(ChatTurn(role: "user", content: "old \(i)", createdAt: base.addingTimeInterval(Double(i))))
+        }
+        for i in 0..<510 {
+            context.insert(ChatTurn(
+                role: i.isMultiple(of: 2) ? "user" : "assistant",
+                content: "flood \(i)",
+                createdAt: edge
+            ))
+        }
+        try context.save()
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 3)
+        await harness.engine().syncNow()
+        #expect(await harness.db.saved(ofType: CloudRecordType.coachTurn).count == 5)
+        #expect(try harness.localTurnCount() == 513)
     }
 
     @Test("hostile fresh cursor terminates the wipe loudly")

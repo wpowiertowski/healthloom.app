@@ -76,6 +76,19 @@ public final class HealthKitAuth: Sendable {
     /// silently drop that type and proceed with the rest.
     public func requestWrite(for types: [GoogleDataType]) async throws(HealthKitAuthError) {
         let sampleTypes = try resolveSampleTypes(for: types)
+        // Crash fix (third-party r9 amendment): a share-disallowed type (Food
+        // correlation) fails LOUD here with a typed error naming it — the old path
+        // passed it into `toShare` and HealthKit terminated the app with an
+        // uncatchable `NSInvalidArgumentException`. Checked before the gate so it
+        // fails identically on every platform (same posture as the mapping checks).
+        for type in types {
+            if case .healthKit(let identifier) = type.writability,
+               let resolved = try? resolveSampleType(for: type),
+               !Self.isShareRequestable(resolved)
+            {
+                throw .sharingDisallowed(dataType: type, identifier: identifier)
+            }
+        }
         guard isAvailable else { throw .healthDataUnavailable }
         do {
             try await store.requestAuthorization(toShare: sampleTypes, read: [])
@@ -95,21 +108,70 @@ public final class HealthKitAuth: Sendable {
     /// presentation can reject with a "view is not in the window
     /// hierarchy" failure. Incremental callers that only need one half
     /// keep using `requestWrite(for:)` / `requestRead(_:)`.
-    /// The exact share set `requestShareAndRead` requests (F10): the
-    /// mapped types plus the writer's workout-attachment union. Public so
-    /// WP-35's wipe derives from the same function the share sheet uses --
+    /// Whether `sampleType` may appear in a `toShare` authorization set.
+    /// HealthKit terminates the app (`NSInvalidArgumentException`, uncatchable)
+    /// when a correlation type (Food) is share-requested. The mapping seam only
+    /// ever produces quantity/category/workout/correlation kinds
+    /// (`HealthKitIdentifierClassifier`), so excluding `HKCorrelationType` here is
+    /// exhaustive over every reachable type, not ad hoc for Food — a future
+    /// correlation kind is fail-closed (read-only) until deliberately allowed.
+    public nonisolated static func isShareRequestable(_ sampleType: HKSampleType) -> Bool {
+        !(sampleType is HKCorrelationType)
+    }
+
+    /// Whether `sampleType` may appear in a `read:` authorization set. Same fail-closed
+    /// shape as `isShareRequestable`: on this platform (iOS 27 sim, crash frame still
+    /// `_throwIfAuthorizationDisallowedForSharing`) the Food correlation is disallowed
+    /// for READ too — partitioning it to read merely moved the termination. Same
+    /// exhaustiveness argument (the mapping seam yields only 4 kinds), same single
+    /// source: every `requestAuthorization` call site routes through
+    /// `partitionedAuthorization` / the single-half guards below.
+    public nonisolated static func isReadRequestable(_ sampleType: HKSampleType) -> Bool {
+        !(sampleType is HKCorrelationType)
+    }
+
+    /// The exact share set `requestShareAndRead` requests (F10, amended third-party
+    /// r9): the mapped types MINUS share-disallowed correlations, plus the writer's
+    /// workout-attachment union. The Food correlation (`GoogleDataType.food` /
+    /// `.nutritionLog`) resolves fine but must never reach `toShare` — HealthKit
+    /// terminates the app for it — nor `read` (disallowed there too on this
+    /// platform). `requestShareAndRead` excludes correlations from both sets via
+    /// `partitionedAuthorization`; the wipe still covers them via `resolveAllSampleTypes`.
+    /// Public so WP-35's wipe derives from the same function the share sheet uses --
     /// a future share extension through this function lands in the wipe
     /// automatically; one through any other channel stays visible in
     /// review (this is the only share-set computation to grep).
+    /// NOTE: the wipe needs the UNFILTERED set (deletion requires no share grant) —
+    /// it resolves via `resolveAllSampleTypes(for:)`, a superset of this set.
     public func authorizedShareTypes(
         sharing types: [GoogleDataType],
         includingWorkoutShare: Bool
     ) throws(HealthKitAuthError) -> Set<HKSampleType> {
-        var shareTypes = try resolveSampleTypes(for: types)
+        var shareTypes = try resolveSampleTypes(for: types).filter(Self.isShareRequestable)
         if includingWorkoutShare {
             shareTypes.formUnion(HealthKitWriter.workoutShareTypes)
         }
         return shareTypes
+    }
+
+    /// Pure share/read partition over resolved types (third-party r9 crash fixes):
+    /// correlations are excluded from BOTH sets — share-disallowed (first crash) AND
+    /// read-disallowed (second crash: partitioning to read merely moved the
+    /// termination, same `_throwIfAuthorizationDisallowedForSharing` frame). A Food
+    /// type is therefore unauthorizable on this platform, full stop: its writes fail
+    /// at save time with an authorization error and its reads return empty (both
+    /// graceful, existing postures), while the wipe still deletes it by predicate via
+    /// `resolveAllSampleTypes` (deletion requires no grant) — nothing is silently
+    /// dropped from the product, only from the ungrantable prompt. Pure over values
+    /// (no store, no prompt) so tests pin it directly — `requestShareAndRead` is the
+    /// thin adapter that resolves then calls.
+    public nonisolated static func partitionedAuthorization(
+        share: Set<HKSampleType>,
+        read: Set<HKSampleType>
+    ) -> (toShare: Set<HKSampleType>, toRead: Set<HKObjectType>) {
+        let toShare = share.filter(isShareRequestable)
+        let toRead = read.filter(isReadRequestable)
+        return (toShare, Set(toRead.map { $0 as HKObjectType }))
     }
 
     public func requestShareAndRead(
@@ -117,19 +179,25 @@ public final class HealthKitAuth: Sendable {
         read: [GoogleDataType],
         includingWorkoutShare: Bool = false
     ) async throws(HealthKitAuthError) {
-        let shareTypes = try authorizedShareTypes(sharing: share, includingWorkoutShare: includingWorkoutShare)
+        var shareTypes = try resolveSampleTypes(for: share)
+        if includingWorkoutShare {
+            // Workout-attachment buckets (cycling/swimming/rowing distance) are
+            // unreachable from `GoogleDataType.writability`, so no type list
+            // can ever authorize them -- without this union every cycled/swam/
+            shareTypes.formUnion(HealthKitWriter.workoutShareTypes)
+        }
         let readTypes = try resolveSampleTypes(for: read)
-        // Workout-attachment buckets (cycling/swimming/rowing distance) are
-        // unreachable from `GoogleDataType.writability`, so no type list
-        // can ever authorize them -- without this union every cycled/swam/
-        // (Workout-attachment rationale lives on `authorizedShareTypes`
-        // above -- this call site just uses the shared computation.)
+        // Third-party r9 crash fixes: partition — correlations (Food) reach NEITHER
+        // `toShare` NOR `read` (read is disallowed too on this platform; the first
+        // fix's move-to-read merely relocated the termination). Same
+        // `authorizedShareTypes` subset lands in `toShare` (workout union included);
+        // correlations stay covered by predicate deletion, never by the prompt.
+        let (toShare, toRead) = Self.partitionedAuthorization(share: shareTypes, read: readTypes)
+        // Workout-attachment rationale lives on `authorizedShareTypes`
+        // above -- this call site just uses the shared computation.
         guard isAvailable else { throw .healthDataUnavailable }
         do {
-            try await store.requestAuthorization(
-                toShare: shareTypes,
-                read: Set(readTypes.map { $0 as HKObjectType })
-            )
+            try await store.requestAuthorization(toShare: toShare, read: toRead)
         } catch {
             throw .underlying(String(describing: error))
         }
@@ -158,6 +226,18 @@ public final class HealthKitAuth: Sendable {
     /// and the call itself didn't fail.
     public func requestRead(_ types: [GoogleDataType]) async throws(HealthKitAuthError) {
         let sampleTypes = try resolveSampleTypes(for: types)
+        // Third-party r9 second crash: a read-disallowed type (Food correlation)
+        // fails LOUD here with a typed error — the old path passed it into `read:`
+        // and HealthKit terminated the app. Checked before the gate so it fails
+        // identically on every platform (same posture as `requestWrite`'s guard).
+        for type in types {
+            if case .healthKit(let identifier) = type.writability,
+               let resolved = try? resolveSampleType(for: type),
+               !Self.isReadRequestable(resolved)
+            {
+                throw .readDisallowed(dataType: type, identifier: identifier)
+            }
+        }
         guard isAvailable else { throw .healthDataUnavailable }
         let readTypes = Set(sampleTypes.map { $0 as HKObjectType })
         do {
@@ -206,6 +286,16 @@ public final class HealthKitAuth: Sendable {
             result.insert(try resolveSampleType(for: type))
         }
         return result
+    }
+
+    /// Every resolvable type in `types`, INCLUDING share-disallowed correlations
+    /// (third-party r9 crash fix): deletion requires no share grant, so the wipe
+    /// set must be a SUPERSET of the share-request set — deriving wipe membership
+    /// from `authorizedShareTypes` would strand Food samples outside the wipe.
+    public func resolveAllSampleTypes(
+        for types: [GoogleDataType]
+    ) throws(HealthKitAuthError) -> Set<HKSampleType> {
+        try resolveSampleTypes(for: types)
     }
 
     /// Maps one type the way `requestShareAndRead` does (WP-35's wipe

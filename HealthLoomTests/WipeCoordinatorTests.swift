@@ -502,18 +502,26 @@ struct WipeCoordinatorTests {
 
 @Suite("WipeableTypes derivation")
 struct WipeableTypesTests {
-    @Test("wipe set equals exactly the authorized set (F1/F2/F10)")
+    @Test("wipe set equals the authorized set plus unshareable correlations (F1/F2/F10 + r9 crash)")
     func matchesShareRequest() throws {
         // Pinned against the SHARED computation (F10), not rebuilt from
         // its sources: a future share extension through
         // `authorizedShareTypes` lands in the wipe automatically, and one
         // through any other channel breaks this equality loudly.
+        // Third-party r9 amendment: the share-request set excludes correlations
+        // (HealthKit terminates the app for a share-requested Food type), but the
+        // wipe deletes by predicate (no share grant needed) — so the wipe is the
+        // share set PLUS every correlation in the funnel, never less than share.
         let wipeable = try HealthKitSourceDeleter.wipeableTypes()
         let expected = try HealthKitAuth().authorizedShareTypes(
             sharing: SyncPreferences.healthKitWritableTypes,
             includingWorkoutShare: true
         )
-        #expect(Set(wipeable) == expected)
+        let funnelCorrelations = try HealthKitAuth().resolveAllSampleTypes(
+            for: SyncPreferences.healthKitWritableTypes
+        ).filter { $0 is HKCorrelationType }
+        #expect(Set(wipeable) == expected.union(funnelCorrelations))
+        #expect(expected.isSubset(of: Set(wipeable)))
         // Every cleanup distance bucket rides along (F2: cycling /
         // swimming / rowing distances must not survive).
         for identifier in HealthKitWriter.distanceIdentifiersForCleanup {

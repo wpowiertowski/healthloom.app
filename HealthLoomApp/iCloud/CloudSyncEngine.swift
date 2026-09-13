@@ -335,9 +335,10 @@ final class CloudSyncEngine {
     private func pushSingletons() async throws(CloudSyncError) {
         let settings = readSettings()
         let serverSettings = try await database.fetchRecord(recordName: CloudRecordType.settingsRecordName)
-        let settingsDecision = Self.settingsPushDecision(server: serverSettings, snapshot: settings, previouslySeen: seenSettingsAt)
+        let settingsDecision = Self.settingsPushDecision(server: serverSettings, snapshot: settings, previouslySeen: seenSettingsAt, serverOrderDate: serverSettings?.modificationDate)
         seenSettingsAt = settingsDecision.newSeen
         if settingsDecision.push {
+            let saved: CKRecord
             if let server = serverSettings {
                 // Round-4-sync item 2: mutate the FETCHED record — it
                 // carries the server change token. A fresh tagless build
@@ -346,29 +347,35 @@ final class CloudSyncEngine {
                 // non-retryable: every post-first push would fail
                 // forever and settings/prefs would never sync again.
                 try CloudRecordBuilder.update(server, with: settings)
-                _ = try await database.saveRecord(server)
+                saved = try await database.saveRecord(server)
             } else {
-                _ = try await database.saveRecord(try CloudRecordBuilder.record(for: settings))
+                saved = try await database.saveRecord(try CloudRecordBuilder.record(for: settings))
             }
-            // Round-8 item 6: advance past OUR OWN write — without
-            // this the next sync misreads our just-pushed record as
-            // foreign-newer (server date vs epoch seen) and suppresses
+            // Round-8 item 6 (third-party r9: server-truth ordering): advance past
+            // OUR OWN write — without this the next sync misreads our just-pushed
+            // record as foreign-newer (server date vs epoch seen) and suppresses
             // the user's intervening local change one sync late (an
-            // LWW race a second device always wins).
-            seenSettingsAt = max(seenSettingsAt, settings.updatedAt)
+            // LWW race a second device always wins). The watermark takes the
+            // SAVED record's server `modificationDate` when CloudKit provides one
+            // (Live always does) and falls back to our own `updatedAt` only for
+            // fabricated/stub records that carry no server metadata — so a
+            // fast-clock device can never poison the watermark with a future-dated
+            // local `now()` (third-party r9 clock-skew fix).
+            seenSettingsAt = max(seenSettingsAt, saved.modificationDate ?? settings.updatedAt)
         }
         let prefs = readPrefs()
         let serverPrefs = try await database.fetchRecord(recordName: CloudRecordType.insightPrefsRecordName)
-        let prefsDecision = Self.prefsPushDecision(server: serverPrefs, snapshot: prefs, previouslySeen: seenPrefsAt)
+        let prefsDecision = Self.prefsPushDecision(server: serverPrefs, snapshot: prefs, previouslySeen: seenPrefsAt, serverOrderDate: serverPrefs?.modificationDate)
         seenPrefsAt = prefsDecision.newSeen
         if prefsDecision.push {
+            let saved: CKRecord
             if let server = serverPrefs {
                 try CloudRecordBuilder.update(server, with: prefs)
-                _ = try await database.saveRecord(server)
+                saved = try await database.saveRecord(server)
             } else {
-                _ = try await database.saveRecord(try CloudRecordBuilder.record(for: prefs))
+                saved = try await database.saveRecord(try CloudRecordBuilder.record(for: prefs))
             }
-            seenPrefsAt = max(seenPrefsAt, prefs.updatedAt)
+            seenPrefsAt = max(seenPrefsAt, saved.modificationDate ?? prefs.updatedAt)
         }
     }
 
@@ -388,32 +395,69 @@ final class CloudSyncEngine {
         var newSeen: Date
     }
 
-    nonisolated static func settingsPushDecision(server: CKRecord?, snapshot: SyncSettingsSnapshot, previouslySeen: Date) -> SingletonPushDecision {
-        guard let server, let serverSnap = try? CloudRecordDecoder.settings(from: server) else {
+    /// Server ordering date for LWW (third-party r9 clock-skew fix): CloudKit's
+    /// server-stamped `modificationDate` when available (Live records always carry
+    /// it), else the explicit test override, else the client-written `updatedAt`
+    /// field. Ordering on client clocks alone lets a fast-clock device poison the
+    /// seen watermark with a future `now()` and suppress every genuinely newer
+    /// record from the other device; ordering on server truth is skew-immune.
+    /// Tests drive the skew dimension through `serverOrderDate` (a fabricated
+    /// `CKRecord` carries no server metadata, so the date must be injectable).
+    nonisolated static func settingsPushDecision(server: CKRecord?, snapshot: SyncSettingsSnapshot, previouslySeen: Date, serverOrderDate: Date? = nil) -> SingletonPushDecision {
+        guard let server else {
             return SingletonPushDecision(push: true, newSeen: previouslySeen)
         }
-        let newSeen = max(previouslySeen, serverSnap.updatedAt)
-        if serverSnap.updatedAt > previouslySeen {
-            return SingletonPushDecision(push: false, newSeen: newSeen)
+        do {
+            let serverSnap = try CloudRecordDecoder.settings(from: server)
+            let orderDate = serverOrderDate ?? server.modificationDate ?? serverSnap.updatedAt
+            let newSeen = max(previouslySeen, orderDate)
+            if orderDate > previouslySeen {
+                return SingletonPushDecision(push: false, newSeen: newSeen)
+            }
+            let differs = serverSnap.disabledTypeRawValues != snapshot.disabledTypeRawValues
+                || serverSnap.preferAppleWatch != snapshot.preferAppleWatch
+            return SingletonPushDecision(push: differs, newSeen: newSeen)
+        } catch CloudSyncError.newerSchema {
+            // Third-party r9 forward-safety: an older app must NEVER overwrite a
+            // newer schema's record (the old `try?` collapsed this into the
+            // "malformed → push:true" arm and destroyed v2 state). Skip the push;
+            // advance the watermark only on server truth (never blindly), so the
+            // record is not re-contended every sync yet never clobbered.
+            // Catches: v1 device observing a v2 record must not push.
+            if let orderDate = serverOrderDate ?? server.modificationDate {
+                return SingletonPushDecision(push: false, newSeen: max(previouslySeen, orderDate))
+            }
+            return SingletonPushDecision(push: false, newSeen: previouslySeen)
+        } catch {
+            // Genuinely corrupt (missing field, unknown type): overwrite, never preserve.
+            return SingletonPushDecision(push: true, newSeen: previouslySeen)
         }
-        let differs = serverSnap.disabledTypeRawValues != snapshot.disabledTypeRawValues
-            || serverSnap.preferAppleWatch != snapshot.preferAppleWatch
-        return SingletonPushDecision(push: differs, newSeen: newSeen)
     }
 
-    nonisolated static func prefsPushDecision(server: CKRecord?, snapshot: InsightPrefsSnapshot, previouslySeen: Date) -> SingletonPushDecision {
-        guard let server, let serverSnap = try? CloudRecordDecoder.prefs(from: server) else {
+    nonisolated static func prefsPushDecision(server: CKRecord?, snapshot: InsightPrefsSnapshot, previouslySeen: Date, serverOrderDate: Date? = nil) -> SingletonPushDecision {
+        guard let server else {
             return SingletonPushDecision(push: true, newSeen: previouslySeen)
         }
-        let newSeen = max(previouslySeen, serverSnap.updatedAt)
-        if serverSnap.updatedAt > previouslySeen {
-            return SingletonPushDecision(push: false, newSeen: newSeen)
+        do {
+            let serverSnap = try CloudRecordDecoder.prefs(from: server)
+            let orderDate = serverOrderDate ?? server.modificationDate ?? serverSnap.updatedAt
+            let newSeen = max(previouslySeen, orderDate)
+            if orderDate > previouslySeen {
+                return SingletonPushDecision(push: false, newSeen: newSeen)
+            }
+            let differs = serverSnap.morningInsightsEnabled != snapshot.morningInsightsEnabled
+                || serverSnap.lockScreenDetails != snapshot.lockScreenDetails
+                || serverSnap.insightsViaCloud != snapshot.insightsViaCloud
+                || serverSnap.lastRun != snapshot.lastRun
+            return SingletonPushDecision(push: differs, newSeen: newSeen)
+        } catch CloudSyncError.newerSchema {
+            if let orderDate = serverOrderDate ?? server.modificationDate {
+                return SingletonPushDecision(push: false, newSeen: max(previouslySeen, orderDate))
+            }
+            return SingletonPushDecision(push: false, newSeen: previouslySeen)
+        } catch {
+            return SingletonPushDecision(push: true, newSeen: previouslySeen)
         }
-        let differs = serverSnap.morningInsightsEnabled != snapshot.morningInsightsEnabled
-            || serverSnap.lockScreenDetails != snapshot.lockScreenDetails
-            || serverSnap.insightsViaCloud != snapshot.insightsViaCloud
-            || serverSnap.lastRun != snapshot.lastRun
-        return SingletonPushDecision(push: differs, newSeen: newSeen)
     }
 
     /// Oldest 500 UNPUSHED turns (round-7 item 4): the watermark goes
@@ -480,14 +524,17 @@ final class CloudSyncEngine {
         } catch {
             throw CloudSyncError.failed(error.localizedDescription)
         }
-        // Round-10 item 8: a pathological edge group (bigger than a
-        // full page) defers WHOLE — pushing part of it would strand
-        // the rest past the watermark (the loss the atomic-group rule
-        // exists to prevent), and pushing all of it unbounds the batch
-        // (the `500/sync` pacing the header promises). The watermark
-        // then lands on the last pre-edge row, so the group retries
-        // whole next sync — never split, never stranded. Unreachable
-        // in practice (distinct server records need distinct
+        // Round-10 item 8, amended third-party r9: a pathological edge group (bigger
+        // than a full page) defers WHOLE — pushing part of it would strand the rest
+        // past the watermark (the loss the atomic-group rule exists to prevent).
+        // The watermark then lands on the last pre-edge row, so the group retries
+        // whole next sync — never split, never stranded. AMENDMENT: when NOTHING
+        // predates the group (the filter below yields `[]`), deferral is a permanent
+        // stall — no turn pushes, the watermark never advances, every newer turn
+        // blocks behind it under `.synced`. In exactly that case the group pushes
+        // whole this sync (as its distinct turnIDs only — same-date same-role rows
+        // share a name, so the batch stays small; pacing yields once to progress).
+        // Unreachable in practice (distinct server records need distinct
         // `time-role` turnIDs, capping real groups at one pair — the
         // pair test pins that path); pure defense against clock games.
         var seen = Set(first.map { Self.turnDedupeKey(role: $0.role, content: $0.content, createdAt: $0.createdAt) })
@@ -502,6 +549,17 @@ final class CloudSyncEngine {
             // is exactly the first page), then strip any partial group
             // tail so the watermark lands strictly before the group.
             rows = rows.filter { $0.createdAt < edge }
+            // Third-party r9: when NOTHING predates the edge group (every row in
+            // the first page shares one `createdAt` — clock reset, bulk import,
+            // stalled device clock), the filter above yields `[]`: no turn pushes,
+            // `latest` stays nil, the watermark never advances, and every later
+            // turn behind it stalls forever under a `.synced` status. In exactly
+            // this case push the whole edge group this sync (pacing yields once to
+            // progress — the group retries whole, never split, never stranded).
+            // Catches: 601 same-dated rows oldest-first must still advance.
+            if rows.isEmpty {
+                rows = edgeRows
+            }
         }
         return rows.map {
             // Synthetic turnID, kept deliberately (third-party N1): a
@@ -523,11 +581,32 @@ final class CloudSyncEngine {
 
     private func pushNewTurns() async throws(CloudSyncError) {
         let turns = try unpushedTurnBatch(limit: 500)
+        // Third-party r9: ONE paged existence walk instead of one `fetchRecord` per
+        // turn (up to 500 sequential round trips per sync on every foreground
+        // activation past the gate — minutes on a slow link, quota burn, and a
+        // whole-batch retry on any single failure). The turn walk is already paged
+        // (`turnPage`, same bound as the pull walk); materializing the existing
+        // record-name set once up front mirrors how `pullMissingTurns` builds
+        // `localTurnKeys()` before its loop. Catches: a 500-turn backlog must push
+        // without 500 pre-save fetches.
+        let existingNames: Set<String>
+        if turns.isEmpty {
+            existingNames = []
+        } else {
+            existingNames = Set(try await pullAllTurnRecords().map(\.recordID.recordName))
+        }
+        // In-batch save-if-absent: same-date same-role turns share a synthetic turnID
+        // (round-9 proof — only date+role feed the name), so a pathological batch can
+        // name one record dozens of times. A second save of the same name is a wasted
+        // overwrite on Live and a `serverRecordChanged` throw against a token-checking
+        // store — insert into the set as you go (same pattern as `pullMissingTurns`).
+        var savedNames = existingNames
         var latest: Date?
         for turn in turns {
             let recordName = CloudRecordType.turnRecordName(for: turn.turnID)
-            if try await database.fetchRecord(recordName: recordName) == nil {
+            if !savedNames.contains(recordName) {
                 _ = try await database.saveRecord(try CloudRecordBuilder.record(for: turn))
+                savedNames.insert(recordName)
             }
             latest = max(latest ?? .distantPast, turn.createdAt)
         }
@@ -539,33 +618,44 @@ final class CloudSyncEngine {
     // MARK: - Pull (last-write-wins)
 
     private func pullSingletons() async throws(CloudSyncError) {
+        // Third-party r9: applied watermarks track the same server ordering date as
+        // the seen watermarks (modificationDate-preferred, client-field fallback) —
+        // a fast-clock peer's future-dated `updatedAt` field must not pin the applied
+        // watermark in the future and suppress genuinely newer records. The pull
+        // direction keeps `try?` decode-and-skip (newer-schema/malformed server
+        // records are never applied) — forward-safety holds here; only the push
+        // path needed distinct arms.
         if let server = try await database.fetchRecord(recordName: CloudRecordType.settingsRecordName),
-           let snap = try? CloudRecordDecoder.settings(from: server),
-           snap.updatedAt > appliedSettingsAt
+           let snap = try? CloudRecordDecoder.settings(from: server)
         {
-            // Content-equal (e.g. our own just-pushed write read back):
-            // advance the watermark silently, no redundant apply.
-            let current = readSettings()
-            if snap.disabledTypeRawValues != current.disabledTypeRawValues
-                || snap.preferAppleWatch != current.preferAppleWatch
-            {
-                applySettings(snap)
+            let orderDate = server.modificationDate ?? snap.updatedAt
+            if orderDate > appliedSettingsAt {
+                // Content-equal (e.g. our own just-pushed write read back):
+                // advance the watermark silently, no redundant apply.
+                let current = readSettings()
+                if snap.disabledTypeRawValues != current.disabledTypeRawValues
+                    || snap.preferAppleWatch != current.preferAppleWatch
+                {
+                    applySettings(snap)
+                }
+                appliedSettingsAt = orderDate
             }
-            appliedSettingsAt = snap.updatedAt
         }
         if let server = try await database.fetchRecord(recordName: CloudRecordType.insightPrefsRecordName),
-           let snap = try? CloudRecordDecoder.prefs(from: server),
-           snap.updatedAt > appliedPrefsAt
+           let snap = try? CloudRecordDecoder.prefs(from: server)
         {
-            let current = readPrefs()
-            if snap.morningInsightsEnabled != current.morningInsightsEnabled
-                || snap.lockScreenDetails != current.lockScreenDetails
-                || snap.insightsViaCloud != current.insightsViaCloud
-                || snap.lastRun != current.lastRun
-            {
-                applyPrefs(snap)
+            let orderDate = server.modificationDate ?? snap.updatedAt
+            if orderDate > appliedPrefsAt {
+                let current = readPrefs()
+                if snap.morningInsightsEnabled != current.morningInsightsEnabled
+                    || snap.lockScreenDetails != current.lockScreenDetails
+                    || snap.insightsViaCloud != current.insightsViaCloud
+                    || snap.lastRun != current.lastRun
+                {
+                    applyPrefs(snap)
+                }
+                appliedPrefsAt = orderDate
             }
-            appliedPrefsAt = snap.updatedAt
         }
     }
 

@@ -83,6 +83,11 @@ public actor SyncEngine {
     /// resolver; tests inject a thrower to prove the failure surfaces
     /// (error status + non-ok outcome, zero writes) instead of `try?`'ing
     /// into a silent green run.
+    /// Quiesce probe (third-party r9: the wipe latch — a post-wipe `syncAll` would
+    /// resurrect HealthKit samples the wipe deleted and write store rows through
+    /// the unlinked handle). Init-injected (default inert) so tests script it.
+    /// Checked in `sync(type:)` — the single choke point `syncAll` funnels through.
+    private let isQuiesced: @Sendable () -> Bool
     private let sampleTypeResolver: @Sendable @MainActor (String) throws(UnresolvedHealthKitIdentifier) -> HKSampleType
     /// WP-18 (implementation-plan.md) hook point: the **one, minimal,
     /// additive** change this WP makes to this file, following the exact
@@ -124,7 +129,8 @@ public actor SyncEngine {
         configuration: SyncConfiguration = SyncConfiguration(),
         conflictFilter: any ConflictFiltering = IdentityConflictFilter(),
         runRecorder: (any SyncRunRecording)? = nil,
-        sampleTypeResolver: @escaping @Sendable @MainActor (String) throws(UnresolvedHealthKitIdentifier) -> HKSampleType = HealthKitObjectTypeResolver.sampleType
+        sampleTypeResolver: @escaping @Sendable @MainActor (String) throws(UnresolvedHealthKitIdentifier) -> HKSampleType = HealthKitObjectTypeResolver.sampleType,
+        isQuiesced: @escaping @Sendable () -> Bool = { false }
     ) {
         self.client = client
         self.writer = writer
@@ -134,6 +140,7 @@ public actor SyncEngine {
         self.conflictFilter = conflictFilter
         self.runRecorder = runRecorder
         self.sampleTypeResolver = sampleTypeResolver
+        self.isQuiesced = isQuiesced
     }
 
     // MARK: - Public API
@@ -144,6 +151,12 @@ public actor SyncEngine {
     /// `SyncOutcome`.
     @discardableResult
     public func sync(type: GoogleDataType) async -> SyncOutcome {
+        // Third-party r9: quiesced (wipe latched, relaunch pending) — a stop, not
+        // a failure. Checked before the coalesce map so a post-wipe Sync Now
+        // returns stopped without touching HealthKit or the store.
+        if isQuiesced() {
+            return SyncOutcome(dataType: type, status: .cancelled, itemCount: 0)
+        }
         if let running = inFlight[type] {
             return await running.task.value
         }
@@ -204,12 +217,21 @@ public actor SyncEngine {
     private func performSync(type: GoogleDataType) async -> SyncOutcome {
         let context = ModelContext(modelContainer)
         let now = clock.now()
-        let syncState = fetchOrCreateSyncState(for: type, context: context)
 
         let lookback = configuration.lookback(for: type)
+        let windowEnd = now
+        // Third-party r9: cursor fetch throws (never `try?`) — a fetch failure fails
+        // the run as an error outcome with the cursor untouched, never a silent
+        // duplicate row. Early return (not the pipeline catch): nothing ran yet.
+        let syncState: SyncState
+        do {
+            syncState = try fetchOrCreateSyncState(for: type, context: context)
+        } catch {
+            let message = SyncLogRedactor.redact(String(describing: error))
+            return SyncOutcome(dataType: type, status: .error, itemCount: 0, errorMessage: message)
+        }
         let baseline = syncState.lastSyncedAt ?? now.addingTimeInterval(-configuration.initialWindow)
         let windowStart = baseline.addingTimeInterval(-lookback)
-        let windowEnd = now
 
         // `await`: `.writability` is a MainActor-isolated computed property
         // (CoreModel's `.defaultIsolation(MainActor.self)`), and this actor
@@ -328,7 +350,17 @@ public actor SyncEngine {
             context.rollback()
             // Re-acquire after the rollback: it may have undone
             // `fetchOrCreateSyncState`'s insert on a first-ever sync.
-            let syncState = fetchOrCreateSyncState(for: type, context: context)
+            // Best-effort: if the fetch itself throws here, the error row cannot
+            // be persisted — report the ORIGINAL failure without masking it.
+            let syncState: SyncState
+            do {
+                syncState = try fetchOrCreateSyncState(for: type, context: context)
+            } catch {
+                let message = SyncLogRedactor.redact(String(describing: error))
+                let outcome = SyncOutcome(dataType: type, status: .error, itemCount: totalItemCount, errorMessage: message)
+                await runRecorder?.record(outcome)
+                return outcome
+            }
 
             // Round-10 item 14: commit the completed pages' `.localOnly`
             // rows even though the walk failed (upserted here, on this
@@ -419,16 +451,21 @@ public actor SyncEngine {
 
     // MARK: - SwiftData bookkeeping
 
-    private func fetchOrCreateSyncState(for type: GoogleDataType, context: ModelContext) -> SyncState {
+    private func fetchOrCreateSyncState(for type: GoogleDataType, context: ModelContext) throws -> SyncState {
         // `.rawValue`, not `.filterName` -- identical string value, but
         // `.rawValue` is compiler-synthesized and so isn't subject to
         // CoreModel's `.defaultIsolation(MainActor.self)` inference the way
         // `.filterName` (a hand-written computed property) is -- the same
         // substitution `GoogleHealthClient`'s data client and `TypeMapper`
         // already made for the same reason (progress.md's WP-04/05 entry).
+        // Third-party r9: the fetch THROWS (never `try?`). A fetch failure must
+        // fail the run, not mint a second `SyncState` for the same type — the
+        // old fall-through split the cursor and itemCount across duplicates
+        // that later fetches returned nondeterministically. Catches: a throwing
+        // fetch must surface, not duplicate.
         let key = type.rawValue
         let descriptor = FetchDescriptor<SyncState>(predicate: #Predicate { $0.dataType == key })
-        if let existing = try? context.fetch(descriptor).first {
+        if let existing = try context.fetch(descriptor).first {
             return existing
         }
         let created = SyncState(dataType: key)
