@@ -91,8 +91,13 @@ enum InitialRoute: Sendable, Equatable {
     case settings
     /// WP-30: past onboarding, on the You tab (profile UI tests).
     case you
+    /// Onboarding-skip-Google: runs onboarding but starts AT the Google consent
+    /// step (skip-path UI test only — bypasses the out-of-process HealthKit sheet
+    /// the UI suite cannot drive, which is orthogonal to the skip flow).
+    case onboardingGoogle
 
     /// The tab a non-default route lands on (`.default` is Today).
+    /// (`.onboardingGoogle` never reads this — it runs onboarding, not HomeView.)
     var homeTab: HomeTab {
         switch self {
         case .default: .today
@@ -100,6 +105,18 @@ enum InitialRoute: Sendable, Equatable {
         case .coach: .coach
         case .settings: .settings
         case .you: .you
+        case .onboardingGoogle: .today
+        }
+    }
+
+    /// The onboarding step a route starts at (`nil` = past onboarding).
+    /// Only `.default` and `.onboardingGoogle` run onboarding at all — exhaustive,
+    /// so a future route cannot silently land on the wrong step.
+    var onboardingStep: OnboardingStep? {
+        switch self {
+        case .onboardingGoogle: .googleConsent
+        case .default: .welcome
+        case .data, .coach, .settings, .you: nil
         }
     }
 }
@@ -115,6 +132,12 @@ struct LaunchConfiguration: Sendable {
     /// and the test's own relaunch leg deliberately omits this flag to
     /// verify real persistence.
     var resetTodayMetrics: Bool
+    /// Onboarding-skip-Google: `-UITestOnboardingGoogle` runs onboarding starting
+    /// at the Google consent step (skip-path UI test — bypasses the out-of-process
+    /// HealthKit sheet, which is orthogonal to the skip flow).
+    /// `-UITestResetGoogleSkip` clears a persisted skip at launch (the skip test's
+    /// cleanup relaunch — same hermeticity rule as `resetTodayMetrics`).
+    var resetGoogleSkip: Bool
     /// WP-25: `-UITestScriptedCoach` drives the Coach tab with a scripted
     /// `CoachSession` and forced `.available` availability (deterministic
     /// regardless of the simulator's live model state), landing directly
@@ -189,7 +212,12 @@ struct LaunchConfiguration: Sendable {
         let aiModelsScenario = Self.aiModelsScenario(from: arguments)
         let seedYouTab = arguments.contains("-UITestYouTab")
         let initialRoute: InitialRoute
-        if aiModelsScenario != nil {
+        if arguments.contains("-UITestOnboardingGoogle") {
+            // Onboarding-skip-Google UI test: starts at Google consent (with
+            // `-UITestStubGoogle`'s hermetic doubles). Checked before the
+            // past-onboarding routes — this run ONBOARDS, it must not match them.
+            initialRoute = .onboardingGoogle
+        } else if aiModelsScenario != nil {
             initialRoute = .settings
         } else if seedYouTab {
             initialRoute = .you
@@ -215,6 +243,7 @@ struct LaunchConfiguration: Sendable {
             // in-memory) applies to it, so it joins the disjunction.
             useInMemoryContainer: (stubGoogle || seedDashboardData || forcedCoachAvailability != nil || aiModelsScenario != nil || seedYouTab || !tipsStub.isEmpty) && !scriptedCoach,
             resetTodayMetrics: arguments.contains("-UITestResetTodayMetrics"),
+            resetGoogleSkip: arguments.contains("-UITestResetGoogleSkip"),
             scriptedCoach: scriptedCoach,
             scrubChat: scrubChat,
             forcedCoachAvailability: forcedCoachAvailability,

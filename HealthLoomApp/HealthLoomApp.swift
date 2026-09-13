@@ -50,6 +50,10 @@ struct HealthLoomApp: App {
         // background-sync section calls is declared `nonisolated` and never
         // touches `AppEnvironment`/`MainActor` again -- see that section's
         // header comment for why.
+        // Onboarding-skip-Google: the launch context reads credentials live through
+        // the auth manager (never snapshotted — a later Settings connect must take
+        // effect on the very next wake without relaunch).
+        let googleAuthManager = environment.googleAuthManager
         let backgroundSyncContext = BackgroundSyncLaunchContext(
             modelContainer: environment.modelContainer,
             syncEngine: environment.syncEngine,
@@ -69,7 +73,8 @@ struct HealthLoomApp: App {
             // alongside the P0 four and the four `.localOnly` types, and
             // never drifts from CoreModel's table as future types are
             // added.
-            syncableTypes: GoogleDataType.allCases.filter { $0.writability != .skip }
+            syncableTypes: GoogleDataType.allCases.filter { $0.writability != .skip },
+            hasGoogleCredentials: { await googleAuthManager.hasStoredRefreshToken() }
         )
         HealthLoomBackgroundSync.registerLaunchHandler(context: backgroundSyncContext)
         HealthLoomBackgroundSync.scheduleNextRun() // "at launch" half of "schedule next... at launch AND in the handler"
@@ -412,6 +417,15 @@ enum HealthLoomBackgroundSync {
     /// the real due→filter→sync composition in-process (round-4-sync
     /// item 4) — `BGTaskScheduler` itself is not drivable in a unit host.
     nonisolated static func run(context: BackgroundSyncLaunchContext) async -> [SyncOutcome] {
+        // Onboarding-skip-Google: cheap credentials check FIRST (before the store
+        // fetch, the due computation, and any network) — a Google-less device stays
+        // quiet instead of minting per-type `.unauthorized` outcomes every wake.
+        // `[]` is the legitimate nothing-due outcome (`backgroundTaskSucceeded`
+        // counts it as success, so the system is never throttled for this).
+        guard await context.hasGoogleCredentials() else {
+            logger.log("Google credentials absent — background sync stays quiet")
+            return []
+        }
         let modelContext = ModelContext(context.modelContainer)
         var snapshots: [GoogleDataType: SyncStateSnapshot] = [:]
         snapshots.reserveCapacity(context.syncableTypes.count)
@@ -485,4 +499,12 @@ struct BackgroundSyncLaunchContext: Sendable {
     var modelContainer: ModelContainer
     var syncEngine: SyncEngine
     var syncableTypes: [GoogleDataType]
+    /// Live credentials probe (onboarding-skip-Google): without a stored refresh
+    /// token the run returns `[]` immediately — no per-type `.unauthorized` error
+    /// rows, no cursor churn, no log spam on a device that skipped (or never
+    /// granted) Google consent. Injected (default: assume present, preserving the
+    /// pre-skip behavior for every existing direct construction) so tests script
+    /// both legs without touching the Keychain; production wires
+    /// `GoogleAuthManager.hasStoredRefreshToken` below.
+    var hasGoogleCredentials: @Sendable () async -> Bool = { true }
 }

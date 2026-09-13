@@ -259,6 +259,12 @@ final class AppEnvironment {
         if launchConfiguration.resetTodayMetrics {
             TodayMetricPreferences.reset()
         }
+        // Onboarding-skip-Google: a persisted skip outlives UI-test launches (same
+        // rule as `resetTodayMetrics` above) — the skip test's cleanup relaunch
+        // passes `-UITestResetGoogleSkip` so later suites never inherit it.
+        if launchConfiguration.resetGoogleSkip {
+            GoogleConnectionSetting().clearSkipped()
+        }
 
         let container: ModelContainer
         let ephemeral: Bool

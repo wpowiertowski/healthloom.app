@@ -17,6 +17,12 @@ import SyncKit
 
 struct FirstSyncView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
+    /// Onboarding-skip-Google: when true the view renders the Google-less state
+    /// (honest copy, per-type rows replaced by the not-connected state) and NEVER
+    /// calls `syncAll` — without credentials it would only mint per-type error rows
+    /// and lie with "Pulling ... from Google" copy. Carried by `OnboardingStep.
+    /// firstSync(googleSkipped:)`; no other value is representable.
+    var googleSkipped: Bool = false
     var onFinished: () -> Void
 
     @State private var isSyncing = true
@@ -25,13 +31,20 @@ struct FirstSyncView: View {
     var body: some View {
         OnboardingScaffold(
             step: .firstSync,
-            symbol: isSyncing ? nil : "checkmark.circle",
-            title: isSyncing ? "First Sync" : "First Sync Complete",
-            message: isSyncing
-                ? "Pulling your steps, heart rate, weight, and sleep from Google."
-                : "Here's what came across. Any type that failed keeps its place and retries on the next sync."
+            symbol: googleSkipped ? "checkmark.circle" : (isSyncing ? nil : "checkmark.circle"),
+            title: googleSkipped ? "You're Set Up" : (isSyncing ? "First Sync" : "First Sync Complete"),
+            message: googleSkipped
+                ? "Google isn't connected, so there's nothing to pull yet. Health data you record on this iPhone still appears on your dashboard, and you can connect Google any time from Settings."
+                : (isSyncing
+                    ? "Pulling your steps, heart rate, weight, and sleep from Google."
+                    : "Here's what came across. Any type that failed keeps its place and retries on the next sync.")
         ) {
-            if isSyncing {
+            if googleSkipped {
+                // No spinner, no per-type rows: nothing was pulled and nothing
+                // failed. The title/message above carry the state; the skip-path
+                // UI test pins this screen by its "You're Set Up" title.
+                EmptyView()
+            } else if isSyncing {
                 HStack(spacing: 10) {
                     ProgressView().tint(Theme.accent)
                     Text("Syncing your data from Google...")
@@ -55,7 +68,7 @@ struct FirstSyncView: View {
                 .accessibilityIdentifier("onboarding.firstSync.summary")
             }
         } actions: {
-            if !isSyncing {
+            if googleSkipped || !isSyncing {
                 OnboardingPrimaryButton(
                     title: "Continue to Dashboard",
                     accessibilityIdentifier: "onboarding.firstSync.continue",
@@ -67,6 +80,9 @@ struct FirstSyncView: View {
         // would override the more specific `onboarding.firstSync.progress`/
         // `.summary`/`.continue` identifiers set on the children above.
         .task {
+            // Skipped leg: no credentials, no sync — the task is a no-op so the
+            // screen cannot flash "Pulling ... from Google" or mint error rows.
+            guard !googleSkipped else { return }
             outcomes = await appEnvironment.syncEngine.syncAll(types: AppEnvironment.p0Types)
             isSyncing = false
         }

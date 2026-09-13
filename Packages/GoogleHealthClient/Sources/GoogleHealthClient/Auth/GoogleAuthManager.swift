@@ -63,6 +63,16 @@ public actor GoogleAuthManager {
 
     // MARK: - Access token
 
+    /// Presence probe (no refresh, no network): whether a refresh token is stored.
+    /// Background sync gates on this to stay quiet without credentials — a skipped
+    /// (or never-consented) device must not burn a wake minting per-type
+    /// `.unauthorized` error rows. Fail-closed toward quiet: any store failure reads
+    /// as absent (a transient Keychain failure skips one wake; the next wake retries
+    /// — never an error row, never a throw out of a non-throwing pipeline).
+    public func hasStoredRefreshToken() async -> Bool {
+        (try? await tokenStore.refreshToken()) != nil
+    }
+
     /// Returns a usable access token, refreshing first if the cached one is
     /// within `expiryMargin` seconds of expiring (or absent).
     public func validAccessToken() async throws(GoogleAuthError) -> String {

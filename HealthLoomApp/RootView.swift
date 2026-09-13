@@ -19,17 +19,23 @@ struct RootView: View {
     private let initialRoute: InitialRoute
 
     /// - Parameter initialRoute: `.default` runs onboarding-then-Today;
-    ///   `.data`/`.coach` skip onboarding and land on the named tab
-    ///   (UI-test launches only).
+    ///   `.data`/`.coach`/… skip onboarding and land on the named tab
+    ///   (UI-test launches only); `.onboardingGoogle` runs onboarding starting
+    ///   at the Google consent step (skip-path UI test only).
     init(initialRoute: InitialRoute = .default) {
-        _isOnboarded = State(initialValue: initialRoute != .default)
+        _isOnboarded = State(initialValue: initialRoute.onboardingStep == nil)
         self.initialRoute = initialRoute
     }
 
     var body: some View {
         if isOnboarded {
             HomeView(initialTab: initialRoute.homeTab)
+        } else if let startStep = initialRoute.onboardingStep {
+            OnboardingFlowView(initialStep: startStep, onFinished: { isOnboarded = true })
         } else {
+            // Unreachable: `isOnboarded` is true exactly when `onboardingStep` is
+            // nil (see `init`). Kept as the honest fallback rather than force-
+            // unwrapping — a future route mismatch onboards from Welcome.
             OnboardingFlowView(onFinished: { isOnboarded = true })
         }
     }
