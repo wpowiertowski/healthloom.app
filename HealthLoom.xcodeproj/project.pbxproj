@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		013BAC8CFE7D0B224F7396B5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86CD8BFAD0971DF362990C41 /* Assets.xcassets */; };
 		026FA68CC32045A6930347F7 /* ActivitiesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F832D79C0293DFF02EB3AAF6 /* ActivitiesProvider.swift */; };
 		02ABBBD1C21C78714BA6CC35 /* panel-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 5FA41B36FFB4A4D18BE188AC /* panel-light-AXXXL.png */; };
 		0662DA34D3EC8DCB3641BED6 /* InsightUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA89693D81AB7314BCB9E27F /* InsightUITests.swift */; };
@@ -278,6 +279,7 @@
 		82AA101B01D750FA3C6615D4 /* panel-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "panel-dark-XL.png"; sourceTree = "<group>"; };
 		8445896136C40F1B5F57839F /* TodayMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayMetricsTests.swift; sourceTree = "<group>"; };
 		8460C28AB30A18A1B7E2C510 /* MorningInsightRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MorningInsightRunner.swift; sourceTree = "<group>"; };
+		86CD8BFAD0971DF362990C41 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		89253009FF69315BB768A3F9 /* CloudSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncTests.swift; sourceTree = "<group>"; };
 		8B9221EBE339839E2668C8B7 /* ActivityRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityRow.swift; sourceTree = "<group>"; };
 		8C7E8440C6C4B17FA19FA8D2 /* WipeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WipeCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -482,6 +484,7 @@
 		466D86E7C85CFF606069AA4D /* HealthLoomApp */ = {
 			isa = PBXGroup;
 			children = (
+				86CD8BFAD0971DF362990C41 /* Assets.xcassets */,
 				5F6CE6508F5454623ABA0194 /* HealthLoom.entitlements */,
 				6B58EFF23C7AB7E83F43FEF8 /* HealthLoomApp.swift */,
 				1FD7410A0B9774FEF271F549 /* Info.plist */,
@@ -770,6 +773,7 @@
 			buildConfigurationList = 827CEC576AA04BD6501615D8 /* Build configuration list for PBXNativeTarget "HealthLoom" */;
 			buildPhases = (
 				B86C50C661B3EC513F7FBFC9 /* Sources */,
+				D2967D6B317AF10A835B7897 /* Resources */,
 				C875345D034A5ED29329A89C /* Frameworks */,
 			);
 			buildRules = (
@@ -923,6 +927,14 @@
 				5078B817258D487534524063 /* welcome-light-AXXXL.png in Resources */,
 				D894E59BC7609C0B1EA12020 /* welcome-light-XL.png in Resources */,
 				DCD370D74E1C48D15FDA9E93 /* welcome-light-XS.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D2967D6B317AF10A835B7897 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				013BAC8CFE7D0B224F7396B5 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
