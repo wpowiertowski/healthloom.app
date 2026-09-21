@@ -899,15 +899,15 @@ through the `NavigationStack` each non-Today tab creates for itself (see D16). H
 those six stacks into one shell-owned `NavigationStack` would fix it and simplify the
 shell, but it is a navigation change with its own UI-test surface.
 
-**Deliberately out of scope — follow-up 2:** the mockup's four
-labelled, individually-coloured signal bars. They need `ReadinessEngine` to publish both
-*which* signals contributed and each one's magnitude; today it publishes only a count.
-Its validity rules (`valid(_:in:)`) are internal to CoachKit, so deriving presence in the
-app would duplicate them and drift — the repo's own "literal drift" bug shape. The fix is
-a `contributingSignals(inputs:)` on the engine that `score(inputs:)` itself uses, so there
-is one definition; that is a CoachKit public-API change with its own tests and belongs in
-its own work package, not riding a design PR. Until then `SignalIndex` renders the count
-honestly and the four concrete fields stay unshipped rather than faked.
+**Deliberately out of scope — follow-up 2 (CLOSED by WP-42):** naming which signals a
+score stands on. `SignalIndex` shipped as a count because `Readiness` publishes only
+`signalsUsed`, and colouring or labelling cells per signal would have asserted a mapping
+the data could not back. WP-42 adds `ReadinessEngine.contributingSignals(inputs:)` — one
+definition, consumed by `score` itself — and the rows are now named and honest.
+
+The *magnitude* of each signal is still unpublished; the rows show whether a signal
+reported, not how strongly it scored. That remains open, and needs the engine to expose
+its subscores.
 
 ### WP-41 · You tab density
 
@@ -941,6 +941,36 @@ survives.
 
 ---
 
+### WP-42 · Name the readiness signals
+
+**Depends on:** WP-40 · **Decision:** architecture.md **D16.5** (closes WP-40's
+stated follow-up).
+
+The hero said "based on 4 of 4 signals" and never named one. `SignalIndex` could only
+show a count because `Readiness` publishes only `signalsUsed`, so its cells filled
+left-to-right and asserted nothing about identity.
+
+**Steps:**
+1. **CoachKit, additively:** `ReadinessSignal` (hrv / restingHR / sleep / strain, in the
+   engine's own weighting order) and `ReadinessEngine.contributingSignals(inputs:)`.
+   `score(inputs:recentScores:)` is refactored to consume it, so "usable reading" has one
+   definition. `Readiness`'s initialiser is untouched — none of its 12 call sites move.
+2. `ReadinessDisplay.scored` carries the signal *set* instead of a count;
+   `ReadinessInputsProvider.display(_:inputs:)` takes the inputs the score came from
+   (`refreshReadiness` already has them in scope).
+3. `SignalIndex` renders four named rows, filled or hollow per signal, with a VoiceOver
+   value that names the reporting and the missing ones.
+4. The caption stops repeating the count and explains an absent comparison instead:
+   "No 30-day average yet" / "Comparison needs all four signals".
+
+**Tests:** three CoachKit tests on `contributingSignals` (identity vs count; invalid
+readings are missing, never a contributing zero; all four reportable — `allCases` is what
+the hero iterates). `ReadinessInputsProvider.display` gains a partial-day case asserting
+the *names*. New `partialHero` snapshot subject pins the two-hollow-row rendering across
+the light/dark × XS/XL/AXXXL matrix.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -954,6 +984,7 @@ P3  WP-27..32  PCC/Claude/Gemini tiers, consent, evals  model choice
 P4  WP-33..39  Yacht club UI, insights, wipe, launch .. polish
 P5  WP-40      Concrete Glass design system ........... Bill x Liquid Glass
 P5  WP-41      You tab density ......................... one card per fact
+P5  WP-42      Name the readiness signals ............. count -> nouns
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

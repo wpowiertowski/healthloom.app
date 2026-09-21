@@ -180,3 +180,54 @@ struct ReadinessEdgeTests {
         #expect(readiness.score == 50)
     }
 }
+
+@Suite("ReadinessEngine.contributingSignals")
+struct ReadinessContributingSignalsTests {
+    @Test("names which signals a score stands on, not just how many")
+    // catches: a UI that must show *which* signals reported deriving them
+    // from the inputs itself and disagreeing with the engine that weighted
+    // them (the score says three, the list shows four).
+    func namesTheContributingSignals() {
+        let inputs = ReadinessInputs(
+            hrvRatio: 1.1,
+            restingHRDeltaBeatsPerMinute: -2,
+            sleepHours: 7.5
+            // priorDayStrain left nil — yesterday's load never arrived.
+        )
+        let signals = ReadinessEngine.contributingSignals(inputs: inputs)
+        #expect(signals == [.hrv, .restingHR, .sleep])
+        #expect(!signals.contains(.strain))
+        // The set and the score's own count are one fact, not two.
+        #expect(ReadinessEngine.score(inputs: inputs).signalsUsed == signals.count)
+    }
+
+    @Test("an unusable reading is missing, never a contributing zero")
+    // catches: invalid input silently counting as a reporting signal, which
+    // would both drag the score toward zero and light a cell the user has
+    // no data behind.
+    func invalidReadingsDoNotContribute() {
+        let inputs = ReadinessInputs(
+            hrvRatio: 0,                       // degenerate ratio
+            restingHRDeltaBeatsPerMinute: .nan,
+            sleepHours: 30,                    // out of 0...24
+            priorDayStrain: 1.4                // out of 0...1
+        )
+        #expect(ReadinessEngine.contributingSignals(inputs: inputs).isEmpty)
+        #expect(ReadinessEngine.score(inputs: inputs).signalsUsed == 0)
+    }
+
+    @Test("every signal reports when every reading is usable")
+    // catches: a signal dropped from the set as the engine gains inputs —
+    // `allCases` is what the hero iterates to draw its rows.
+    func allFourCanReport() {
+        let signals = ReadinessEngine.contributingSignals(inputs: ReadinessInputs(
+            hrvRatio: 1.0,
+            restingHRDeltaBeatsPerMinute: 0,
+            sleepHours: 8,
+            sleepEfficiency: 0.9,
+            priorDayStrain: 0.3
+        ))
+        #expect(signals.count == ReadinessSignal.allCases.count)
+        #expect(Set(ReadinessSignal.allCases) == signals)
+    }
+}

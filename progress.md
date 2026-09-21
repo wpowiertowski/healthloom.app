@@ -5307,3 +5307,43 @@ system-red at the moment the choice actually matters.
 
 **Tests:** `YouTabUITests` green including the hit-region audit; every pinned identifier
 (`you.ai.*`, `you.edit.*`, `you.clinical.*`, `you.correction.*`, `you.row.*`) unchanged.
+
+## WP-42 · Name the readiness signals (branch `you-page-density`, on top of WP-41)
+
+Owner, on the Today hero: "the readiness mentions 4 signals but doesn't mention what
+those are." Correct, and it was WP-40's own stated follow-up: `SignalIndex` could only
+render a *count*, because `Readiness` publishes `signalsUsed` and nothing finer. Its
+cells therefore filled left-to-right and asserted nothing about identity — which is
+exactly why WP-40 refused to label or colour them.
+
+**Closed at the source, not in the view.** `ReadinessEngine.contributingSignals(inputs:)`
+is now the single definition of "usable reading", and `score(inputs:recentScores:)` was
+refactored to consume it instead of re-testing the same four fields. Deriving the set
+app-side would have duplicated the validity predicates and drifted from the weighting
+that produced the score — the repo's own "literal drift" shape, here surfacing as a lit
+row for a signal the score never counted. `Readiness.signalsUsed` is that set's count, so
+the two cannot disagree. The public initialiser is untouched: **none of its 12 call sites
+moved**, which is what kept this additive rather than a breaking API change.
+
+**UI.** Four named rows — HRV, Resting HR, Sleep, Prior load — filled when that signal
+reported, hollow when it did not, in the engine's own weighting order so the column reads
+the same every morning. Display strings live app-side (a CoachKit domain enum has no
+business carrying UI copy) behind an exhaustive `switch` with no `default`, so a fifth
+signal fails the build rather than rendering an unnamed row. VoiceOver gets the nouns
+too, including the missing ones by name — fill state is invisible to it.
+
+**The caption stopped repeating itself.** With the rows naming everything, "based on N of
+4 signals" said nothing new, so the line now does the job the rows cannot: explaining an
+absent comparison. "No 30-day average yet" before history exists; "Comparison needs all
+four signals" when a partial score would otherwise be measured against a full-signal
+average. H1's rule was always this — it was just never stated on screen.
+
+**Tests:** three CoachKit tests on `contributingSignals` (identity vs count; invalid
+readings missing rather than contributing zero; all four reportable, since `allCases` is
+what the hero iterates). `display` gains a partial-day case asserting the *names*. New
+`partialHero` snapshot subject pins the two-hollow-row rendering across light/dark ×
+XS/XL/AXXXL. All 195 CoachKit tests still pass — the score refactor is behaviour-
+identical, which the existing golden vectors prove.
+
+**Still open:** each signal's *magnitude*. The rows show whether a signal reported, not
+how strongly it scored; that needs the engine to publish its subscores.

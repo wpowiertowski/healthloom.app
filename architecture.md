@@ -337,6 +337,25 @@ a divider and a full-width row of their own. The 44 pt target is unaffected: it 
 from `.frame(minHeight: 44)`, not from the label's width — the You screen's `.hitRegion`
 audit (test-plan §6) covers exactly this.
 
+**D16.5 — A count of inputs must name the inputs.** "Based on 3 of 4 signals" tells a
+user a number and leaves them to guess the nouns — and gives them nothing to act on when
+one is missing. The Today hero names all four (HRV, resting HR, sleep, prior load), one
+row each, filled when that signal reported and hollow when it did not, so a short day
+says *which* reading is absent.
+
+Naming them requires knowing which contributed, not how many, and that knowledge belongs
+to the engine: `ReadinessEngine.contributingSignals(inputs:)` is the single definition of
+"usable reading", and `score(inputs:recentScores:)` consumes it rather than re-testing
+the same fields. Deriving the set in the view layer would duplicate the validity
+predicates and drift from the weighting that produced the score — the repo's "literal
+drift" bug shape, here with a UI that lights a row for a signal the score never counted.
+`Readiness.signalsUsed` is that set's count, so the two can never disagree.
+
+The caption beneath stops repeating the count (the rows carry it) and does the one job
+they cannot: explaining an absent comparison — "No 30-day average yet" before history
+exists, "Comparison needs all four signals" when a partial score would be measured
+against a full-signal average (H1's rule, now stated rather than implied).
+
 ## 5. Data flow summaries
 
 **Sync (incremental):** trigger (foreground / BGAppRefresh / manual) → `SyncEngine.sync(type)`
