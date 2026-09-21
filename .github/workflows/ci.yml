@@ -285,16 +285,33 @@ jobs:
           # fold, so an arbitrary (possibly small) device made CI diverge
           # from local runs. Whichever iOS runtime the runner's Xcode ships
           # is fine as long as it satisfies the deploymentTarget (27.0).
+          # Exact model match, not a substring. `grep -F "iPhone 17"` also
+          # matches "iPhone 17e", and that is precisely how this broke: the
+          # xcode-27 image dropped both 17 Pro models, the list fell through
+          # to "iPhone 17", an iPhone 17e was selected, and all six welcome
+          # snapshots failed on a PR that touched no view code.
+          #
+          # Snapshot references are recorded on ONE model (see
+          # HealthLoomTests/SnapshotAssert.swift), so the model is part of
+          # the contract -- match it exactly, or fail loudly with the list
+          # instead of quietly rendering on a different device. iPhone 18
+          # Pro leads because it is also what `make test` picks locally, so
+          # CI and the pre-commit hook agree by construction.
+          avail=$(xcrun simctl list devices available)
           udid=""
-          for name in "iPhone 17 Pro Max" "iPhone 17 Pro" "iPhone 17" "iPhone"; do
-            udid=$(xcrun simctl list devices available \
-              | grep -F "$name" \
+          for name in "iPhone 18 Pro" "iPhone 18 Pro Max" "iPhone 17 Pro" "iPhone 17 Pro Max"; do
+            udid=$(printf '%s\n' "$avail" \
+              | grep -E "^[[:space:]]*${name} \(" \
               | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' \
-              | head -n1) && [ -n "$udid" ] && break
+              | head -n1 || true)
+            if [ -n "$udid" ]; then
+              echo "Matched pinned model: $name"
+              break
+            fi
           done
           if [ -z "$udid" ]; then
-            echo "::error::No available iPhone simulator found on this runner." >&2
-            xcrun simctl list devices available
+            echo "::error::No pinned iPhone model on this runner -- snapshot references are model-specific, so CI must not substitute another device. Add the new model to this list and re-record." >&2
+            printf '%s\n' "$avail" >&2
             exit 1
           fi
           echo "Selected simulator: $(xcrun simctl list devices available | grep -F "$udid")"
