@@ -29,13 +29,19 @@ test:
 		(cd Packages/$$pkg && DEVELOPER_DIR="$(XCODE_BETA)" swift test -Xswiftc -warnings-as-errors) || exit 1; \
 	done
 	xcodegen generate
-	@udid=$$(DEVELOPER_DIR="$(XCODE_BETA)" xcrun simctl list devices available \
-		| awk '/-- iOS 27\.0 --/{flag=1; next} /^--/{flag=0} flag' \
-		| grep -E 'iPhone' \
-		| grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' \
-		| head -n1); \
+	@avail=$$(DEVELOPER_DIR="$(XCODE_BETA)" xcrun simctl list devices available \
+		| awk '/-- iOS 27\.0 --/{flag=1; next} /^--/{flag=0} flag'); \
+	udid=""; \
+	for name in "iPhone 18 Pro" "iPhone 18 Pro Max" "iPhone 17 Pro" "iPhone 17 Pro Max"; do \
+		udid=$$(printf '%s\n' "$$avail" \
+			| grep -E "^[[:space:]]*$$name \(" \
+			| grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' \
+			| head -n1 || true); \
+		if [ -n "$$udid" ]; then echo "==> simulator model: $$name"; break; fi; \
+	done; \
 	if [ -z "$$udid" ]; then \
-		echo "error: no available iPhone simulator on the iOS 27.0 runtime -- run 'DEVELOPER_DIR=$(XCODE_BETA) xcodebuild -downloadPlatform iOS' to install it. (project.yml's deploymentTarget is iOS 27.0; other installed runtimes won't satisfy it.)" >&2; \
+		echo "error: none of the pinned iPhone models is available on the iOS 27.0 runtime. Snapshot references are recorded on one model (HealthLoomTests/SnapshotAssert.swift), so this must not fall back to whatever simctl lists first -- CI pins the same list. Install one, or add the model here AND in ci.yml and re-record. Available:" >&2; \
+		printf '%s\n' "$$avail" >&2; \
 		exit 1; \
 	fi; \
 	echo "==> xcodebuild build test (destination iOS Simulator $$udid)"; \
