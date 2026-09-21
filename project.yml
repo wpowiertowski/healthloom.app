@@ -69,11 +69,42 @@ targets:
         ENABLE_PREVIEWS: YES
         SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
         GCC_TREAT_WARNINGS_AS_ERRORS: YES
+        # Must sit on the TARGET, not in the project-level `settings.base`
+        # where it used to live: XcodeGen writes its own target-level
+        # "1,2" default for an iOS application, and a target setting beats
+        # a project one. The base value was therefore dead, the shipped
+        # bundle declared UIDeviceFamily [1, 2] despite the iPhone-only
+        # intent, and App Store Connect applied the iPad multitasking rule
+        # -- which is why ITMS-90474 demanded all four orientations.
+        # Verify with `xcodebuild -showBuildSettings`, not by reading
+        # project.yml: only the resolved value is the truth here.
+        TARGETED_DEVICE_FAMILY: "1"
     info:
       path: HealthLoomApp/Info.plist
       properties:
         CFBundleDisplayName: HealthLoom
         LSRequiresIPhoneOS: true
+        # Required: a bundle with no orientations declared is rejected as
+        # ITMS-90474 ("No orientations were specified"), which is what
+        # blocked the first TestFlight upload. The build emitted it as the
+        # "All interface orientations must be supported" warning for
+        # several archives before the upload turned it into an error.
+        #
+        # Landscape is declared, not just tolerated: a folding iPhone
+        # unfolds into a display where landscape is a normal way to hold
+        # the device, so locking to portrait would be a deliberate choice
+        # to render badly there. Upside-down is omitted, matching Apple's
+        # own iPhone template.
+        #
+        # Caveat worth keeping: no landscape layout has been verified.
+        # Snapshots render at a fixed 390pt width and the UI tests run
+        # portrait, so nothing in the suite would catch a broken wide
+        # layout -- treat landscape as declared-but-unproven until someone
+        # exercises it on a device.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         # Version keys must reference the build settings, not literals. This
         # target ships the checked-in Info.plist (no GENERATE_INFOPLIST_FILE),
         # and XcodeGen fills any version key it is not given with its own
