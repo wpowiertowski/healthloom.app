@@ -74,6 +74,23 @@ targets:
       properties:
         CFBundleDisplayName: HealthLoom
         LSRequiresIPhoneOS: true
+        # Version keys must reference the build settings, not literals. This
+        # target ships the checked-in Info.plist (no GENERATE_INFOPLIST_FILE),
+        # and XcodeGen fills any version key it is not given with its own
+        # default "1.0"/"1" -- which is what shipped before: the archive came
+        # out 1.0 (1) while MARKETING_VERSION said 0.1.0, i.e. the settings
+        # were dead. `ci_scripts/ci_pre_xcodebuild.sh` rewrites
+        # CURRENT_PROJECT_VERSION in Xcode Cloud, and only reaches the built
+        # app through this indirection.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Export compliance: declared up front so App Store Connect stops
+        # holding every TestFlight build for a manual answer. False is the
+        # exemption for apps whose only cryptography is the OS's -- HTTPS/TLS
+        # for the Google Health and CloudKit calls, Keychain at rest, and
+        # CryptoKit SHA-256 for the PKCE code challenge (a hash, not
+        # encryption). Revisit if HealthLoom ever ships its own cipher.
+        ITSAppUsesNonExemptEncryption: false
         # Must be present (even as an empty dict) or iOS runs the app in
         # legacy compatibility mode: it lays the UI out into a legacy-sized
         # canvas and letterboxes it, so the app never goes edge-to-edge and
