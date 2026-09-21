@@ -15,13 +15,14 @@
 		09D6C2BAC69F7DC1BC9059E0 /* PromptEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B322C46D38152457304B3A0 /* PromptEditorView.swift */; };
 		0D70ADC2EF2853001988CAEA /* pendingHero-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 7DCF9C17D685952B245A6692 /* pendingHero-light-XS.png */; };
 		0D8B6524427DB04086719567 /* panel-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = F172CCA3319330D18B0C3C4C /* panel-light-XS.png */; };
+		160DF3941F52468C8C454ECE /* OFL-IBMPlexMono.txt in Resources */ = {isa = PBXBuildFile; fileRef = F93298F884A5107AAF775178 /* OFL-IBMPlexMono.txt */; };
 		16AEC5BFF4EAA7DDB52135C3 /* pendingHero-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 5F4B8BA11E6A1A644A3DC3D2 /* pendingHero-light-AXXXL.png */; };
 		192061569F62E91F6900FA58 /* CoachAvailabilityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7005717228C2AB50D2468A1A /* CoachAvailabilityChecker.swift */; };
 		1A3C9115397247B867779E7C /* syncRow-neverSynced-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = BFCAD6BB626B1425DF64F4D4 /* syncRow-neverSynced-dark-AXXXL.png */; };
 		1A91C24D23C2961267130928 /* firstScoreHero-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 9C0ADEA90A1A2396F78D7CCC /* firstScoreHero-light-XS.png */; };
+		1C666E1E758CD6FBC1CF3DC3 /* IBMPlexMono-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C29C0500B564C56FAF71906E /* IBMPlexMono-SemiBold.ttf */; };
 		1CEC0E20738379D5FCA09478 /* coachPlaceholder-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = CCE5D76CBD6CBC6BC6E32392 /* coachPlaceholder-dark-AXXXL.png */; };
 		1D3B97EB7511B2BDC97642B9 /* scoredHero-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 7E686FDE5137850604D28BA4 /* scoredHero-light-XS.png */; };
-		1EEE1A2608529796C92BEF30 /* TickScale.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A91471E599EDD86B9833EC /* TickScale.swift */; };
 		20123AE08E73B1A495D88965 /* ActivitiesModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E7989268ED1830EB10D8B79 /* ActivitiesModels.swift */; };
 		20A485CD83CFCF49478E495E /* InsightNotificationContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E381DBA043CB6A38E879E72 /* InsightNotificationContent.swift */; };
 		22FEC24995F8BE791E356586 /* TodayHeaderModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6556B2420E8B57E0F8E800EF /* TodayHeaderModel.swift */; };
@@ -52,8 +53,10 @@
 		4C751CEB6B7CE82F0CDD7DA0 /* YouViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57D3E1F4CF05962C558B46D8 /* YouViewModel.swift */; };
 		4D2CFC5438DCF8ACCADBBCE2 /* panel-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 8DB65107E5622A86BF645716 /* panel-light-XL.png */; };
 		4E89DF8037A1767E402F0C80 /* WipeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E43357139C6C2B709DDF0337 /* WipeUITests.swift */; };
+		4FBDC58F7B983C556824DD2F /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 76EEBFF4547AE5EB12EC9B2A /* IBMPlexMono-Medium.ttf */; };
 		5078B817258D487534524063 /* welcome-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = C22464B76F0826901041BED5 /* welcome-light-AXXXL.png */; };
 		509CB4B75E4EE1ADB2006CA6 /* scoredHero-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = CB5ACEEAC1F61359E87CEAF6 /* scoredHero-light-XL.png */; };
+		50BB63D8875F7AA0D54DB7C2 /* OFL-Archivo.txt in Resources */ = {isa = PBXBuildFile; fileRef = 17282A5049A5A96BEC2C8D79 /* OFL-Archivo.txt */; };
 		50CEEFDECB7A217C879361BE /* CloudKeyStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = 164A5267FC27F9F20F551D81 /* CloudKeyStoring.swift */; };
 		519DEDD89749CDBBC3A48C7D /* coachPlaceholder-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 3D782A717E1B19E8E369A794 /* coachPlaceholder-dark-XL.png */; };
 		5229B6E467C5B89B3E8E0601 /* MorningInsightRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8460C28AB30A18A1B7E2C510 /* MorningInsightRunner.swift */; };
@@ -89,6 +92,7 @@
 		8CE72C2D72C5C623E121FDFB /* firstScoreHero-dark-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 8E525CA73C5512443ACDAC6F /* firstScoreHero-dark-XS.png */; };
 		8D81415F6CE9492B21844112 /* TodaySnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36F1600A03436FC4FB84A521 /* TodaySnapshotTests.swift */; };
 		9291C89145D85692AB9556E4 /* coachInsight-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = B26A022827F594640AA3DF9C /* coachInsight-dark-AXXXL.png */; };
+		92D642F6C5AF1FC69F14638F /* JunghansDial.swift in Sources */ = {isa = PBXBuildFile; fileRef = C17B5D39990A99E0149AD228 /* JunghansDial.swift */; };
 		931228E1D5990D9898D00DBC /* TierSwitcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93910D48DA29A35F9B043B6C /* TierSwitcherTests.swift */; };
 		971B3CE54008E8EC771568DF /* welcome-dark-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = EA9AC27DF9B240145D49A73C /* welcome-dark-XS.png */; };
 		97F94DE436BF306852E54F47 /* scoredHero-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 5F91F671FC5EF318435D6857 /* scoredHero-dark-AXXXL.png */; };
@@ -149,6 +153,7 @@
 		E23C03AD088C288485C90DCA /* syncRow-neverSynced-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = F7AEAEDB546DBA1E5F66E370 /* syncRow-neverSynced-light-XS.png */; };
 		E474E7D473F0A60ED8F5440A /* SyncKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7FC443E094B0B544DFCE2D9F /* SyncKit */; };
 		E5660E22E6F4F7B03E7170CF /* GoogleConnectionSetting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23510BBAB3D1FEF1A1074200 /* GoogleConnectionSetting.swift */; };
+		E56EEF99FC702EDCDB7C4285 /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B12E87F8DFBDC86C99C0E60C /* IBMPlexMono-Regular.ttf */; };
 		E688BEEF441479E67B08DD2C /* WipeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8D48D83A7A1852137B4A644 /* WipeCoordinator.swift */; };
 		E7853D5D048E5D96757F7273 /* coachInsight-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = CE9B573032038205A5894440 /* coachInsight-light-AXXXL.png */; };
 		E96F24CD55183D1B62A41F90 /* coachInsight-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 1023BB0803852B24F3CEF218 /* coachInsight-dark-XL.png */; };
@@ -163,6 +168,7 @@
 		F47D1C15766CFE4588463EA0 /* YouViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB65FD53D09CB4A91ADF980 /* YouViewModelTests.swift */; };
 		F51FBC81951E3295DD33291E /* CloudSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89253009FF69315BB768A3F9 /* CloudSyncTests.swift */; };
 		F5201EEB895AEADD50381C78 /* ActivityConsolidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15AF48D6CF1DCBA4EE186B07 /* ActivityConsolidatorTests.swift */; };
+		F89DE3A9340A6893F06EFC18 /* Archivo.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 12FB571E89093F864BBC6CE5 /* Archivo.ttf */; };
 		FA50039999C357D67DA8F195 /* firstScoreHero-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = CBC00FA872457B549B0C8CE8 /* firstScoreHero-light-XL.png */; };
 		FAAB82ED0CD0CD63CD4CFD6A /* SyncLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C550F4E92C3575964B896C7 /* SyncLogView.swift */; };
 		FCD752F0D92075F064ED5A21 /* CoachChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7864808117705B414497C116 /* CoachChatViewModel.swift */; };
@@ -200,10 +206,11 @@
 		0F970B588492724DDD994700 /* TodayReadinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayReadinessTests.swift; sourceTree = "<group>"; };
 		0FA01E0FE7697F0A466F2523 /* DisclaimerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisclaimerTests.swift; sourceTree = "<group>"; };
 		1023BB0803852B24F3CEF218 /* coachInsight-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachInsight-dark-XL.png"; sourceTree = "<group>"; };
-		10A91471E599EDD86B9833EC /* TickScale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TickScale.swift; sourceTree = "<group>"; };
+		12FB571E89093F864BBC6CE5 /* Archivo.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Archivo.ttf; sourceTree = "<group>"; };
 		15AF48D6CF1DCBA4EE186B07 /* ActivityConsolidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityConsolidatorTests.swift; sourceTree = "<group>"; };
 		1627F7ACD1E039C95A247CF3 /* WatchPriorityPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPriorityPreferences.swift; sourceTree = "<group>"; };
 		164A5267FC27F9F20F551D81 /* CloudKeyStoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKeyStoring.swift; sourceTree = "<group>"; };
+		17282A5049A5A96BEC2C8D79 /* OFL-Archivo.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "OFL-Archivo.txt"; sourceTree = "<group>"; };
 		17360EE1F4C01D3375B54EAD /* UITestScriptedCoachSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestScriptedCoachSession.swift; sourceTree = "<group>"; };
 		17481EE947A762C743BC47F9 /* TierSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TierSettingsStore.swift; sourceTree = "<group>"; };
 		18ADA5529703601F668C1171 /* InsightNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightNotifier.swift; sourceTree = "<group>"; };
@@ -261,6 +268,7 @@
 		6B58EFF23C7AB7E83F43FEF8 /* HealthLoomApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthLoomApp.swift; sourceTree = "<group>"; };
 		7005717228C2AB50D2468A1A /* CoachAvailabilityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachAvailabilityChecker.swift; sourceTree = "<group>"; };
 		755F461766380A79B2F297E1 /* scoredHero-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "scoredHero-dark-XL.png"; sourceTree = "<group>"; };
+		76EEBFF4547AE5EB12EC9B2A /* IBMPlexMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Medium.ttf"; sourceTree = "<group>"; };
 		77AA4ED3AE3E1358873E2DEA /* WorkspaceUnsupportedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceUnsupportedView.swift; sourceTree = "<group>"; };
 		7864808117705B414497C116 /* CoachChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachChatViewModel.swift; sourceTree = "<group>"; };
 		7AFD66A4E1466C453723363F /* TodayMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayMetrics.swift; sourceTree = "<group>"; };
@@ -302,6 +310,7 @@
 		AA6981148E49190261FD2766 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		AA89693D81AB7314BCB9E27F /* InsightUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightUITests.swift; sourceTree = "<group>"; };
 		AC8FC66F75304E21D31A99BD /* welcome-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "welcome-light-XL.png"; sourceTree = "<group>"; };
+		B12E87F8DFBDC86C99C0E60C /* IBMPlexMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Regular.ttf"; sourceTree = "<group>"; };
 		B26A022827F594640AA3DF9C /* coachInsight-dark-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachInsight-dark-AXXXL.png"; sourceTree = "<group>"; };
 		B30FD6CED69D7B5609EA0D90 /* CoachChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachChatViewModelTests.swift; sourceTree = "<group>"; };
 		B476E1153F2CBAD912E1F757 /* CloudGateCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudGateCache.swift; sourceTree = "<group>"; };
@@ -316,8 +325,10 @@
 		BFCAD6BB626B1425DF64F4D4 /* syncRow-neverSynced-dark-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "syncRow-neverSynced-dark-AXXXL.png"; sourceTree = "<group>"; };
 		C0A1046F1836CF9B34FA7C15 /* GoogleConsentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleConsentView.swift; sourceTree = "<group>"; };
 		C0E6117592ED60058596F7A4 /* coachPlaceholder-dark-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachPlaceholder-dark-XS.png"; sourceTree = "<group>"; };
+		C17B5D39990A99E0149AD228 /* JunghansDial.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JunghansDial.swift; sourceTree = "<group>"; };
 		C2191A17BC6ED3A225B84F4C /* InsightTierRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightTierRouter.swift; sourceTree = "<group>"; };
 		C22464B76F0826901041BED5 /* welcome-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "welcome-light-AXXXL.png"; sourceTree = "<group>"; };
+		C29C0500B564C56FAF71906E /* IBMPlexMono-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-SemiBold.ttf"; sourceTree = "<group>"; };
 		CB5ACEEAC1F61359E87CEAF6 /* scoredHero-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "scoredHero-light-XL.png"; sourceTree = "<group>"; };
 		CBAA1E7DA64850E3A734C4DA /* IncrementalConsentPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalConsentPresenter.swift; sourceTree = "<group>"; };
 		CBC00FA872457B549B0C8CE8 /* firstScoreHero-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "firstScoreHero-light-XL.png"; sourceTree = "<group>"; };
@@ -348,6 +359,7 @@
 		F832D79C0293DFF02EB3AAF6 /* ActivitiesProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitiesProvider.swift; sourceTree = "<group>"; };
 		F875C16F1AF47B687F198099 /* TipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TipStore.swift; sourceTree = "<group>"; };
 		F8EEEB995E72237FA11FEC29 /* scoredHero-dark-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "scoredHero-dark-XS.png"; sourceTree = "<group>"; };
+		F93298F884A5107AAF775178 /* OFL-IBMPlexMono.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "OFL-IBMPlexMono.txt"; sourceTree = "<group>"; };
 		F96F321D8A03337BD0E89E06 /* WipeFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WipeFlowView.swift; sourceTree = "<group>"; };
 		FC98BB448F25AA4FB5C8E9D0 /* YouView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouView.swift; sourceTree = "<group>"; };
 		FD4E6CD4042C9095C98E337C /* LocalOnlyTypeRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalOnlyTypeRow.swift; sourceTree = "<group>"; };
@@ -462,6 +474,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		32203DFA359B1081CE256F6C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				95A36ACB66D2E68668FE945C /* Fonts */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		388FE2C1E2F6C6A848DF5F4A /* DataManagement */ = {
 			isa = PBXGroup;
 			children = (
@@ -499,6 +519,7 @@
 				96F81E0C34DAC98B70AE6D69 /* iCloud */,
 				6DB2CFC7B244A8222FB29A2E /* Insights */,
 				98F2051F6C87CAEB609F8396 /* Onboarding */,
+				32203DFA359B1081CE256F6C /* Resources */,
 				E197A9A07DF4B68B59E6584D /* Settings */,
 				1F05D761C07F36563A7C6AD4 /* Shared */,
 				4316ACCA843B41EC2161E88F /* Tips */,
@@ -588,9 +609,9 @@
 			isa = PBXGroup;
 			children = (
 				7EB217EC5A5F8145917821FE /* HomeView.swift */,
+				C17B5D39990A99E0149AD228 /* JunghansDial.swift */,
 				82307F3DCDEC63D97FCCD8A8 /* ReadinessInputsProvider.swift */,
 				E2921CADF9CDEABED39EEBD2 /* Theme.swift */,
-				10A91471E599EDD86B9833EC /* TickScale.swift */,
 				45870B7D629E35D38ED6CD95 /* TodayComponents.swift */,
 				6556B2420E8B57E0F8E800EF /* TodayHeaderModel.swift */,
 				7AFD66A4E1466C453723363F /* TodayMetrics.swift */,
@@ -598,6 +619,19 @@
 				EEC2B77B57DEAB44ECA35881 /* TodayView.swift */,
 			);
 			path = Today;
+			sourceTree = "<group>";
+		};
+		95A36ACB66D2E68668FE945C /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				12FB571E89093F864BBC6CE5 /* Archivo.ttf */,
+				76EEBFF4547AE5EB12EC9B2A /* IBMPlexMono-Medium.ttf */,
+				B12E87F8DFBDC86C99C0E60C /* IBMPlexMono-Regular.ttf */,
+				C29C0500B564C56FAF71906E /* IBMPlexMono-SemiBold.ttf */,
+				17282A5049A5A96BEC2C8D79 /* OFL-Archivo.txt */,
+				F93298F884A5107AAF775178 /* OFL-IBMPlexMono.txt */,
+			);
+			path = Fonts;
 			sourceTree = "<group>";
 		};
 		96F81E0C34DAC98B70AE6D69 /* iCloud */ = {
@@ -934,7 +968,13 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F89DE3A9340A6893F06EFC18 /* Archivo.ttf in Resources */,
 				013BAC8CFE7D0B224F7396B5 /* Assets.xcassets in Resources */,
+				4FBDC58F7B983C556824DD2F /* IBMPlexMono-Medium.ttf in Resources */,
+				E56EEF99FC702EDCDB7C4285 /* IBMPlexMono-Regular.ttf in Resources */,
+				1C666E1E758CD6FBC1CF3DC3 /* IBMPlexMono-SemiBold.ttf in Resources */,
+				50BB63D8875F7AA0D54DB7C2 /* OFL-Archivo.txt in Resources */,
+				160DF3941F52468C8C454ECE /* OFL-IBMPlexMono.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -998,6 +1038,7 @@
 				DA217F22F5006D45A1378700 /* InsightPreferences.swift in Sources */,
 				CBF6374132C018A0FA7CB827 /* InsightScheduler.swift in Sources */,
 				8005140904A8D8B7771D21BF /* InsightTierRouter.swift in Sources */,
+				92D642F6C5AF1FC69F14638F /* JunghansDial.swift in Sources */,
 				2E5E7F25678332B63801E247 /* LaunchConfiguration.swift in Sources */,
 				5A7D2966AC0F0E2A1CF6AF97 /* LocalOnlyTypeRow.swift in Sources */,
 				5229B6E467C5B89B3E8E0601 /* MorningInsightRunner.swift in Sources */,
@@ -1016,7 +1057,6 @@
 				EFF7B5047D177B2BC46A083F /* SyncTypeRow.swift in Sources */,
 				34E677A1DCDEB8E3DE9868CF /* Theme.swift in Sources */,
 				26BCAEA64CE04C06D9EF857B /* ThemedChrome.swift in Sources */,
-				1EEE1A2608529796C92BEF30 /* TickScale.swift in Sources */,
 				4374162EE066433416AD131E /* TierSettingsStore.swift in Sources */,
 				679D4EBF53631B0692A7B82D /* TipStore.swift in Sources */,
 				EEC508ED26EA0647A7336CD9 /* TodayComponents.swift in Sources */,

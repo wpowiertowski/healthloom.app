@@ -1,41 +1,31 @@
 // Theme.swift
 //
-// WP-33 (implementation-plan.md) / architecture.md D12: the Yacht club
-// design tokens, ported from the locked mockups
-// (`Design/HealthLoomTodayView-YachtClub.swift` +
-// `Design/healthloom-final-yachtclub.html` -- palette source: Figma "Yacht
-// club" #F2F0EF / #BBBDBC / #245F73 / #733E24). Deep teal serves as ink
-// (primary text), rust is the single functional accent, hairline rules,
-// Helvetica throughout -- Dieter Rams / Braun restraint.
+// WP-40 (implementation-plan.md) / architecture.md D16: the "Concrete
+// Glass" design tokens -- Max Bill's concrete geometry for the content
+// layer, Apple's Liquid Glass for the control layer
+// (`Design/healthloom-bill-glass.html` is the locked mockup).
 //
-// D12 mandates two deviations from the light-only, fixed-size mockup, both
-// implemented here:
+// D16 supersedes D12's Yacht club typography but deliberately KEEPS its
+// palette. Every WP-33/WP-37 colour below is byte-identical to what
+// shipped: those values carry a documented WCAG audit, and re-tinting
+// them for a cosmetic warmth nudge would discard that for nothing. The
+// design change comes from geometry, type and material -- not from
+// moving proven colours and no new colour is added: the four-colour
+// signal row the mockup shows needs per-signal data the engine does not
+// publish, so shipping its palette now would be shipping dead tokens
+// (see `SignalIndex`). What D16 *adds* is two typefaces and one type ladder.
 //
-//  (a) **Dynamic Type** -- `Theme.font(_:weight:relativeTo:)` replaces the
-//      mockup's fixed `helv(size)` with `Font.custom(_:size:relativeTo:)`,
-//      so every size scales with the user's text-size setting relative to a
-//      semantically-matched text style (the 60 pt hero number scales like
-//      `.largeTitle`, 11 pt captions like `.caption2`, etc. -- each call
-//      site picks its anchor).
+// Inherited from D12, unchanged:
 //
-//  (b) **Dark-mode palette variant** -- the mockup is light-only; D12:
-//      "derive: canvas -> near-black warm, ink -> light teal, keep rust
-//      accent, re-check >= 4.5:1 contrast." Every token below is a dynamic
-//      color pair. Derived dark values, with approximate WCAG contrast
-//      against the dark canvas (#201D1A, relative luminance ~0.012):
-//        ink       #A8CBD8  (~9.5:1  -- primary text, comfortably AA/AAA)
-//        secondary #7FA0AC  (~5.9:1)
-//        tertiary  #7A969D  (~4.8:1 surface / ~5.3:1 canvas — WP-37
-//                            darkened from #5E7680 (~3.4:1) to AA)
-//        accent    #C98A63  (~5.7:1  -- the rust hue kept, lightened; the
-//                            original #733E24 would sit near 2:1 on a
-//                            near-black canvas, failing D12's re-check)
-//        accentDeep #E3B999 (~8.4:1 -- labels on the dark accent tint)
-//      Contrast figures are hand-computed from sRGB luminance and were
-//      re-verified in the WP-37 accessibility pass (test-plan.md §6's
-//      "color-contrast check for both palettes"), which also darkened
-//      both tertiaries and light secondary to AA (see below) — full-audit
-//      green is the standing proof.
+//  (a) **Dynamic Type** -- `Theme.font`/`Theme.mono` use
+//      `Font.custom(_:size:relativeTo:)`, so every size scales with the
+//      user's text-size setting relative to a semantically-matched text
+//      style (the 46 pt hero number scales like `.largeTitle`, 9.5 pt
+//      captions like `.caption2`).
+//
+//  (b) **Dark-mode palette variant** -- every token is a dynamic colour
+//      pair. Contrast figures are hand-computed from sRGB luminance and
+//      were re-verified in the WP-37 accessibility pass.
 
 import SwiftUI
 import UIKit
@@ -47,21 +37,18 @@ enum Theme {
 
     // ink (deep teal -- doubles as primary text color)
     static let ink = dynamic(light: 0x245F73, dark: 0xA8CBD8)
-    /// Muted teal-gray -- secondary text. Light value darkened WP-37
-    /// (#5C7C87 was 4.48/3.94 vs white/canvas): #527078 clears 5.32/4.68.
+    /// Muted teal-gray -- secondary text (5.32/4.68 vs white/canvas).
     static let secondary = dynamic(light: 0x527078, dark: 0x7FA0AC)
-    /// Teal-gray -- placeholders, subs, and decorative glyphs. WP-37
-    /// darkened both modes to AA (light #96AEB5 was ~2.3:1, dark #5E7680
-    /// ~3.1:1): #54707B clears 5.28/4.64 (white/canvas), #7A969D clears
-    /// 4.77/5.33 (surface/canvas). Secondary and tertiary now differ in
-    /// intent (text-hierarchy role), not much in luminance — an honest
-    /// consequence of fitting three teals above 4.5:1 on warm canvas.
+    /// Teal-gray -- placeholders, subs, and decorative glyphs. Clears
+    /// 5.28/4.64 light, 4.77/5.33 dark.
     static let tertiary = dynamic(light: 0x54707B, dark: 0x7A969D)
 
     // structure
     /// Soft warm hairline.
     static let border = dynamic(light: 0xE3E0DC, dark: 0x3B3733)
-    /// Exact palette value -- dividers/disabled.
+    /// Exact palette value -- dividers/disabled. Decorative structure, so
+    /// exempt from the 3:1 non-text floor (WCAG 1.4.11 covers graphics
+    /// needed to understand content; a hairline rule is not one).
     static let gray = dynamic(light: 0xBBBDBC, dark: 0x4C4E4D)
 
     // accent (rust -- the one functional color)
@@ -71,16 +58,56 @@ enum Theme {
     /// Icons/labels on tint.
     static let accentDeep = dynamic(light: 0x5A2F1B, dark: 0xE3B999)
 
-    /// D12 deviation (a): the mockup's `helv(size)` with Dynamic Type
-    /// scaling. `relativeTo:` anchors the custom size to a system text
-    /// style so it scales proportionally with the user's setting;
-    /// "Helvetica Neue" ships with iOS (the mockup's mandated face).
+    // MARK: - D16: the type scale
+    //
+    // Bill sized by rule, not by eye: one geometric ladder, ratio 1.25,
+    // anchored at 9.5 pt. Every size in the app is a step on it. The
+    // Yacht club build had drifted to 17 distinct sizes against no stated
+    // system; these seven replace them.
+    enum Step {
+        /// Instrument labels, units, timestamps.
+        static let micro: CGFloat = 9.5
+        /// Captions, secondary body.
+        static let caption: CGFloat = 12
+        /// Row titles, body.
+        static let body: CGFloat = 15
+        /// Greeting, lead-ins.
+        static let lead: CGFloat = 18.5
+        /// Metric values, screen titles.
+        static let value: CGFloat = 23
+        /// Section heroes.
+        static let hero: CGFloat = 29
+        /// The readiness score.
+        static let display: CGFloat = 46
+    }
+
+    /// The display face: **Archivo**, a geometric grotesque in the
+    /// Akzidenz/Helvetica lineage the Ulm school actually set in. Bundled
+    /// as a single variable TTF (`Resources/Fonts/Archivo.ttf`): it
+    /// registers nine named instances as real faces, so `.weight()`
+    /// resolves to a true cut (ArchivoRoman-Light, -Medium, ...) rather
+    /// than a synthesised smear -- verified via CoreText before bundling.
     static func font(
         _ size: CGFloat,
         _ weight: Font.Weight = .regular,
         relativeTo textStyle: Font.TextStyle = .body
     ) -> Font {
-        Font.custom("Helvetica Neue", size: size, relativeTo: textStyle).weight(weight)
+        Font.custom("Archivo", size: size, relativeTo: textStyle).weight(weight)
+    }
+
+    /// The utility face: **IBM Plex Mono**, for anything that is a reading
+    /// off an instrument rather than language -- units, timestamps,
+    /// record counts, the uppercase section labels. Tabular by
+    /// construction, which is why the metric column lines up.
+    ///
+    /// Nav labels are language, not silkscreen: they use `font(_:)`. Six
+    /// mono uppercase tab labels overflowed their cells.
+    static func mono(
+        _ size: CGFloat,
+        _ weight: Font.Weight = .regular,
+        relativeTo textStyle: Font.TextStyle = .body
+    ) -> Font {
+        Font.custom("IBM Plex Mono", size: size, relativeTo: textStyle).weight(weight)
     }
 
     // MARK: - Private

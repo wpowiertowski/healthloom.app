@@ -48,7 +48,7 @@ struct FirstSyncView: View {
                 HStack(spacing: 10) {
                     ProgressView().tint(Theme.accent)
                     Text("Syncing your data from Google...")
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                 }
                 .padding(.top, 20)
@@ -105,7 +105,7 @@ private struct FirstSyncOutcomeRow: View {
             }
             HStack {
                 Text(outcome.dataType.rawValue)
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                 Spacer()
                 // Plain `String` (not an inline string-interpolation
@@ -114,7 +114,7 @@ private struct FirstSyncOutcomeRow: View {
                 // SyncTypeRow.swift's note on the same gotcha, found via a
                 // real simulator run).
                 Text(succeeded ? String(outcome.itemCount) + " item(s)" : "Failed")
-                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     .foregroundStyle(succeeded ? Theme.secondary : Theme.accentDeep)
                     .monospacedDigit()
             }

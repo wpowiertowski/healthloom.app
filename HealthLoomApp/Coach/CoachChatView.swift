@@ -55,7 +55,7 @@ struct CoachChatView: View {
                     }
                 } label: {
                     Text(viewModel.enabledTierNames.isEmpty ? "Off" : viewModel.enabledTierNames)
-                        .font(Theme.font(12, .medium, relativeTo: .caption))
+                        .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
                         // WP-37: 44pt target for the menu label (audit-small).
                         .frame(minWidth: 44, minHeight: 44)

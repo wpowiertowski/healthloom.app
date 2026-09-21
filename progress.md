@@ -5175,3 +5175,97 @@ project regenerated + committed.
 the WipeQuiesce guard in the same function — kept BOTH guards (wipe latch first, then
 skip flag; order irrelevant, reviewer-confirmed). No other overlap
 (`HealthKitSourceDeleter`/auth files untouched here).
+
+## WP-40 · Concrete Glass design system (branch `concrete-glass` from origin/main bbfecaa)
+
+Owner asked to explore "a fusion between Apple's Liquid Glass and Bauhaus / Max Bill",
+then to implement it. `Design/healthloom-bill-glass.html` is the locked mockup (four
+screens, light/dark toggle); architecture.md **D16** records the decision and supersedes
+D12. The two styles are NOT blended — they are assigned to different layers (Apple's own
+content/control split): content stays opaque and orthogonal, only floating chrome is
+glass. Refraction needs precise geometry behind it to bend, which is why the tab bar had
+to move into `.safeAreaInset(edge: .bottom)` — a `VStack` row has nothing passing under it.
+
+**Palette kept, and nothing added (D16.1).** Every WP-33/WP-37 colour is byte-identical
+to what shipped. The mockup's warmer canvas/ink/rust were *rejected* on contact with the
+WP-37 audit: porting them dropped `tertiary` to 4.11/3.49 (from a documented 5.28/4.64)
+and would have thrown away a proven accessibility pass for a cosmetic nudge.
+
+Four concrete signal fields were tuned (≥3:1 against the `border` track, hue-separated
+20°/45°/104°/197°, ochre moved 36°→45° because at 36° it was just a lighter rust) and
+then **cut before commit** during self-review. `SignalIndex` fills cells by
+`Readiness.signalsUsed` — a *count* — so colouring cell N per signal asserts a mapping
+the data cannot back, and the tuple carrying the signal names was dead code proving it.
+The row now renders the count in one accent; the four fields wait for the engine change
+that would make them true. Better to ship an honest count than a legend that lies.
+
+**Typefaces.** Archivo (display) + IBM Plex Mono (instrument silkscreen), both OFL with
+licences bundled. Archivo ships as ONE variable TTF: CoreText registration was verified
+*before* bundling (9 named instances register as real faces; weight traits resolve to
+ArchivoRoman-Thin/-ExtraLight/-Light/-Regular/-Medium/-SemiBold with distinct advance
+widths — no synthesis), which is why there are no static Archivo files. Plex Mono has no
+variable build upstream, so three statics.
+
+**Type ladder.** One geometric ladder (×1.25 from 9.5): 9.5/12/15/18.5/23/29/46. The
+build had drifted to **17** distinct sizes against no stated system. All 126 remaining
+call sites were migrated **by role, not by size** — a blind size map would have shrunk
+prose to 9.5 pt, since 11 pt was doing double duty as both uppercase tracked section
+labels (→ `Theme.mono(micro)`) and real sentences (→ `Theme.font(caption)`).
+
+**Instrument.** `TickScale` → `JunghansDial` (git mv): Bill's 1961 Junghans minute track,
+60 ticks, every fifth an hour index, rotated-square cursor, score inside. One `Canvas`
+pass rather than 60 rotated `Rectangle`s. Clamping + caller-supplied VoiceOver
+label/value carried over verbatim. `SignalIndex` renders which of four signals reported.
+
+**The floating bar was tried, and reverted.** Moving the tab bar into
+`.safeAreaInset(edge: .bottom)` is what would let scrolling content pass beneath the
+capsule so the glass refracts it. It broke 4 UI tests (Coach/PromptEditor/Settings) and
+two fixes were not enough:
+
+1. `.frame(maxHeight:.infinity)` ran *before* the inset, so content had already claimed
+   full height — reordered.
+2. `safeAreaInset` content is keyboard-avoiding by default, lifting the capsule over the
+   field being edited — `.ignoresSafeArea(.keyboard, edges: .bottom)`. This one fixed
+   PromptEditor and is a real gotcha worth remembering.
+
+Coach and Settings still failed, and the element dump said why: `tabbar.you` **Selected**
+with `you.screen` on screen while the test still asked for `chat.input`. The input bar
+was *underneath* the capsule and `input.tap()` went through to the tab behind it — the
+symptom reads like "the field vanished", the cause is a tap hitting chrome on top of it.
+Root cause: the outer inset does not reach through the `NavigationStack` each non-Today
+tab wraps itself in. **Today — the only tab with no `NavigationStack` — never failed**,
+which is what identified it.
+
+Reverted to the in-flow `VStack` bar, keeping `.glassEffect(.regular, in: .capsule)`.
+The honest consequence, recorded in D16 rather than glossed: the capsule refracts the
+canvas, not moving content. Closing that needs the shell to own one `NavigationStack`
+instead of six — a navigation change, not a design one, so it is its own WP.
+
+**Two more bugs caught by looking at the recorded snapshots, not by the suite:**
+(1) `READINESS` rendered twice — as section label *and* inside the dial (the mockup had
+no outer label). The inner caption became `/100`, which also restored the scale the Yacht
+club hero showed and the first port had silently dropped. (2) At AXXXL the fixed-width
+dial pinned the caption column so narrow that "30-day average" broke **mid-word**
+("avera/ge"); the hero now stacks vertically at `dynamicTypeSize.isAccessibilitySize`.
+Both were pixel-green before the fix — the references had simply recorded the bug.
+
+**De-iconography (D16.2).** Owner's note on the mockup: abstract marks "aren't self
+explanatory enough and will add confusion". Removed the invented primitive glyph system
+and `ActivityRow`'s per-activity symbol — the latter was already `accessibilityHidden`
+because the title carried the meaning, which is the argument against it. Conventional
+labelled wayfinding (tab icons, chevrons, status dots) stays.
+
+**Tests:** all 46 snapshot references re-recorded; full bundle + UI suite green on
+Xcode 27.0 sim, zero compiler warnings; project regenerated + committed.
+`SnapshotAssert.swift`'s header was **corrected**: it claimed the CLI cannot record
+("`xcodebuild test` CLI does NOT forward shell env"). True for a bare prefix, but
+`TEST_RUNNER_SNAPSHOT_RECORD=1` *is* forwarded (prefix stripped) — that is how all 46
+were re-recorded, and the file now documents both routes.
+
+**Left open, deliberately:** the mockup's four labelled, individually-coloured signal
+bars. They need the engine to publish *which* signals contributed and each one's
+magnitude; it publishes a count. `valid(_:in:)` is internal to CoachKit, so deriving
+presence app-side would duplicate the validity rules and drift — the repo's own "literal
+drift" bug shape. The fix is `ReadinessEngine.contributingSignals(inputs:)` that
+`score(inputs:)` itself consumes, so there is one definition: a CoachKit public-API
+change with its own tests, its own WP, not riding a design PR.

@@ -46,7 +46,7 @@ struct YouView: View {
             forgetSection
             if let notice = viewModel.notice {
                 Text(notice)
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                     .padding(.horizontal, 16)
                     .accessibilityIdentifier("you.notice")
@@ -96,7 +96,7 @@ struct YouView: View {
         if viewModel.fields.isEmpty {
             ThemedPanel {
                 Text("Nothing here yet. Chat with the coach and your profile will appear.")
-                    .font(Theme.font(14, .regular, relativeTo: .body))
+                    .font(Theme.font(Theme.Step.body, .regular, relativeTo: .body))
                     .foregroundStyle(Theme.secondary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 11)
@@ -108,22 +108,22 @@ struct YouView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(field.displayText)
-                                .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                                .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                                 .foregroundStyle(Theme.ink)
                             Spacer()
                             if field.isClinical {
                                 Text("Clinical")
-                                    .font(Theme.font(11, .medium, relativeTo: .caption2))
+                                    .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption2))
                                     .foregroundStyle(Theme.accent)
                                     .accessibilityIdentifier("you.clinical.\(field.key)")
                             }
                         }
                         Text("\(field.source) · \(field.asOf.formatted(date: .abbreviated, time: .omitted))")
-                            .font(Theme.font(12, .regular, relativeTo: .caption))
+                            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                             .foregroundStyle(Theme.secondary)
                         if field.source == KnowledgeStore.correctionSourceLabel {
                             Text("Your correction")
-                                .font(Theme.font(12, .regular, relativeTo: .caption))
+                                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                                 .foregroundStyle(Theme.secondary)
                                 .accessibilityIdentifier("you.correction.\(field.key)")
                         }
@@ -178,7 +178,7 @@ struct YouView: View {
             }
         }
         Text("Excluding a field above stops future use immediately; past replies already sent can't be recalled.")
-            .font(Theme.font(12, .regular, relativeTo: .caption))
+            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
             .foregroundStyle(Theme.secondary)
             .padding(.horizontal, 16)
             .padding(.top, 8)
@@ -191,7 +191,7 @@ struct YouView: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Your text replaces what the coach learned for this field. It wins over future re-derivation.")
-                    .font(Theme.font(14, .regular, relativeTo: .body))
+                    .font(Theme.font(Theme.Step.body, .regular, relativeTo: .body))
                     .foregroundStyle(Theme.secondary)
                 TextField("Corrected text", text: $correctionDraft)
                     .textFieldStyle(.roundedBorder)

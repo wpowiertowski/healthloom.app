@@ -1,7 +1,9 @@
 // TodayView.swift
 //
-// WP-33 (implementation-plan.md) / architecture.md D12: the Yacht club
-// Today screen, composed from TodayComponents.swift and bound to real data:
+// WP-33 (implementation-plan.md) / architecture.md D12, retyped by WP-40 /
+// D16: the Today screen, composed from TodayComponents.swift and bound to
+// real data. Data flow below is unchanged by D16 -- what changed is the
+// hero it composes (`JunghansDial` + `SignalIndex`) and the type scale:
 //   - sync status <- `SyncState` via `@Query` (newest `lastSyncedAt`
 //     across all types; device label from the newest `LocalSample.source`
 //     when one exists) with the stale->24 h and never-synced states
@@ -69,10 +71,10 @@ struct TodayView: View {
                     .padding(.top, 12).padding(.bottom, 16)
 
                 Text(TodayGreeting.text(hour: Calendar.current.component(.hour, from: Date())))
-                    .font(Theme.font(19, .medium, relativeTo: .title3))
+                    .font(Theme.font(Theme.Step.lead, .medium, relativeTo: .title3))
                     .foregroundStyle(Theme.ink)
                 Text(Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     // Secondary, not tertiary: the date is essential text
                     // and tertiary is placeholders-only (L2).
                     .foregroundStyle(Theme.secondary)
@@ -87,14 +89,14 @@ struct TodayView: View {
 
                 HStack(alignment: .firstTextBaseline) {
                     Text("TODAY")
-                        .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
+                        .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
                         .foregroundStyle(Theme.secondary)
                     Spacer()
                     Button {
                         isEditing.toggle()
                     } label: {
                         Text(isEditing ? "Done" : "Edit")
-                            .font(Theme.font(12, .regular, relativeTo: .caption))
+                            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                             .foregroundStyle(isEditing ? Theme.accent : Theme.accentDeep)
                             .overlay(
                                 Rectangle()
@@ -121,7 +123,7 @@ struct TodayView: View {
 
                 if isEditing, !preferences.hiddenKinds.isEmpty {
                     Text("MORE METRICS")
-                        .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
+                        .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
                         .foregroundStyle(Theme.secondary)
                         .padding(.top, 16).padding(.bottom, 8)
                     VStack(spacing: 0) {
@@ -134,7 +136,7 @@ struct TodayView: View {
                                         .font(.system(size: 16, weight: .light))
                                         .foregroundStyle(Theme.accent)
                                     Text(kind.displayName)
-                                        .font(Theme.font(14, .regular, relativeTo: .subheadline))
+                                        .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
                                         .foregroundStyle(Theme.ink)
                                     Spacer()
                                 }
@@ -154,7 +156,7 @@ struct TodayView: View {
                     // above already render their own "No data yet" form;
                     // this line explains why.
                     Text("Your metrics fill in after the first sync.")
-                        .font(Theme.font(11, .regular, relativeTo: .caption2))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption2))
                         // Secondary: instructional text is essential (L2).
                         .foregroundStyle(Theme.secondary)
                         .padding(.top, 8)

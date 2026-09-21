@@ -132,19 +132,19 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
 
             if let step {
                 Text(step.label)
-                    .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
+                    .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
                     .foregroundStyle(Theme.secondary)
                     .padding(.bottom, 8)
                     .accessibilityLabel(step.accessibilityLabel)
             }
 
             Text(title)
-                .font(Theme.font(30, .light, relativeTo: .largeTitle))
+                .font(Theme.font(Theme.Step.hero, .light, relativeTo: .largeTitle))
                 .foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(message)
-                .font(Theme.font(13.5, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -152,7 +152,7 @@ struct OnboardingScaffold<Content: View, Actions: View>: View {
 
             if let footnote {
                 Text(footnote)
-                    .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -181,7 +181,7 @@ struct OnboardingBrandMark: View {
         HStack(spacing: 8) {
             Rectangle().fill(Theme.accent).frame(width: 6, height: 6)
             Text("healthloom")
-                .font(Theme.font(16, .medium, relativeTo: .callout))
+                .font(Theme.font(Theme.Step.body, .medium, relativeTo: .callout))
                 .foregroundStyle(Theme.ink)
         }
         .accessibilityHidden(true) // decorative brand mark, as in TodayHeader
@@ -225,7 +225,7 @@ struct OnboardingPrimaryButton: View {
                 // screens swapped `Text` for `ProgressView` and visibly
                 // resized.
                 Text(title)
-                    .font(Theme.font(15, .medium, relativeTo: .callout))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .callout))
                     .opacity(isLoading ? 0 : 1)
                 if isLoading {
                     // Tinted `ink`, not `canvas`: while a request is in
@@ -266,7 +266,7 @@ struct OnboardingSecondaryButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(Theme.font(15, .medium, relativeTo: .callout))
+                .font(Theme.font(Theme.Step.body, .medium, relativeTo: .callout))
                 .foregroundStyle(Theme.ink)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
@@ -295,10 +295,10 @@ struct OnboardingErrorPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("COULDN'T CONTINUE")
-                .font(Theme.font(11, .semibold, relativeTo: .caption2)).tracking(0.6)
+                .font(Theme.mono(Theme.Step.micro, .semibold, relativeTo: .caption2)).tracking(0.6)
                 .foregroundStyle(Theme.accentDeep)
             Text(message)
-                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.ink)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)

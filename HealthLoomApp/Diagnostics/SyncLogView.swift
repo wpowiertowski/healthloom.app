@@ -49,7 +49,7 @@ struct SyncLogView: View {
             .disabled(entries.isEmpty)
         } content: {
             Text("Recent sync activity, most recent first. Only counts, types, and timestamps are kept here -- never your health data or account credentials.")
-                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -59,7 +59,7 @@ struct SyncLogView: View {
 
             if entries.isEmpty {
                 Text(hasLoadedOnce ? "No sync runs recorded yet." : "Loading…")
-                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     .foregroundStyle(Theme.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 24)

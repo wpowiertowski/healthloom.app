@@ -20,7 +20,7 @@ struct PromptEditorView: View {
     var body: some View {
         ThemedScreen(title: "Coach Prompt", chrome: .pushed) {
             Text("Tune how the coach speaks. The safety section at the bottom is always appended automatically and can't be edited.")
-                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -44,28 +44,28 @@ struct PromptEditorView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Base prompt")
-                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                         .foregroundStyle(Theme.ink)
                     Spacer()
                     Text("~\(viewModel.estimatedTokens) tokens")
-                        .font(Theme.font(12, .regular, relativeTo: .caption))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
                         .accessibilityIdentifier("prompt.tokens")
                 }
                 TextEditor(text: $viewModel.baseText)
-                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     .frame(minHeight: 160)
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
                     .accessibilityIdentifier("prompt.editor")
                 Text("Leading/trailing whitespace is trimmed on save.")
-                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption2))
                     .foregroundStyle(Theme.secondary)
                 if let errorMessage = viewModel.errorMessage {
                     ThemedErrorText(message: errorMessage, accessibilityIdentifier: "prompt.error")
                 }
                 if let notice = viewModel.notice {
                     Text(notice)
-                        .font(Theme.font(12, .regular, relativeTo: .caption))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
                         .accessibilityIdentifier("prompt.notice")
                 }
@@ -88,19 +88,19 @@ struct PromptEditorView: View {
         ThemedPanel {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Preview effective prompt")
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                 Text(viewModel.previewBase)
-                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     .foregroundStyle(Theme.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("prompt.preview")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Locked safety suffix — appended automatically")
-                        .font(Theme.font(11, .semibold, relativeTo: .caption2))
+                        .font(Theme.font(Theme.Step.caption, .semibold, relativeTo: .caption2))
                         .foregroundStyle(Theme.accentDeep)
                     Text(SafetyLayer.text)
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                         .accessibilityIdentifier("prompt.suffix")
                 }
@@ -126,12 +126,12 @@ struct PromptEditorView: View {
         return ThemedPanel {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Changes vs shipped default")
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                     .padding(.bottom, 4)
                 if diff.allSatisfy(\.isCommon) {
                     Text("No changes — matches the shipped default.")
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                         .accessibilityIdentifier("prompt.diff.clean")
                 } else {
@@ -158,7 +158,7 @@ struct PromptEditorView: View {
         case .removed(let t): ("− ", t, Theme.accentDeep)
         }
         return Text("\(prefix)\(text)")
-            .font(Theme.font(12, .regular, relativeTo: .caption))
+            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
             .foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -169,11 +169,11 @@ struct PromptEditorView: View {
         ThemedPanel {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Version history")
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                 if viewModel.history.isEmpty {
                     Text("No edits yet — saves and resets appear here.")
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                         .accessibilityIdentifier("prompt.history.empty")
                 } else {
@@ -181,16 +181,16 @@ struct PromptEditorView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(snapshot.body)
-                                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                                     .foregroundStyle(Theme.ink)
                                     .lineLimit(2)
                                 Text(snapshot.createdAt, style: .date)
-                                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption2))
                                     .foregroundStyle(Theme.secondary)
                             }
                             Spacer()
                             Button("Restore") { viewModel.restore(snapshot) }
-                                .font(Theme.font(12, .medium, relativeTo: .caption))
+                                .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption))
                                 .accessibilityIdentifier("prompt.restore.\(snapshot.id)")
                         }
                         .accessibilityElement(children: .contain)

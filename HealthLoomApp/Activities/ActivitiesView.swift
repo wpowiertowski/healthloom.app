@@ -42,7 +42,7 @@ struct ActivitiesView: View {
         ThemedScreen(title: "Activities", chrome: chrome) {
             if entries.isEmpty && hasLoaded {
                 Text("No activities yet. Workouts recorded by your Apple Watch and activities synced from your Fitbit will appear here.")
-                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     .foregroundStyle(Theme.secondary)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)

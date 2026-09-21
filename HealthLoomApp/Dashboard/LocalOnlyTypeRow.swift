@@ -49,12 +49,12 @@ struct LocalOnlyTypeRow: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text(displayName)
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).name")
                 Spacer()
                 Text(itemCountText)
-                    .font(Theme.font(15, .regular, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
                     .foregroundStyle(Theme.secondary)
                     .monospacedDigit()
                     .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).itemCount")
@@ -103,8 +103,9 @@ struct LocalOnlyTypeRow: View {
                     )
                 }
             }
+            // D16.3: a timestamp is an instrument reading, not prose.
             Text(lastSampleText)
-                .font(Theme.font(11, .regular, relativeTo: .caption2))
+                .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
                 .foregroundStyle(Theme.tertiary)
                 .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).lastSample")
         }

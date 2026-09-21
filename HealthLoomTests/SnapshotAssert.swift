@@ -14,13 +14,21 @@
 // LSBs apart (measured: identical run-to-run locally, 3–13 file bytes
 // apart cross-machine, AXXXL only). Comparison is therefore per-pixel
 // with a named tolerance (`matchesPixelwise`), not byte equality: GPU
-// shimmer passes, any visible change fails. To regenerate: set
-// `SNAPSHOT_RECORD=1` in the test scheme's environment (Xcode: scheme →
-// Test → Arguments → Environment Variables — `xcodebuild test` CLI does
-// NOT forward shell env into the simulator test host, so a shell-prefixed
-// run compares instead of recording). Recording writes the reference and
-// fails loudly so a record pass can never go green unnoticed; commit the
-// PNGs; CI compares pixels.
+// shimmer passes, any visible change fails.
+//
+// To regenerate, either:
+//   - Xcode: scheme → Test → Arguments → Environment Variables →
+//     `SNAPSHOT_RECORD=1`; or
+//   - CLI: `TEST_RUNNER_SNAPSHOT_RECORD=1 xcodebuild test …`. xcodebuild
+//     strips the `TEST_RUNNER_` prefix and injects the rest into the
+//     test host's environment. A *bare* `SNAPSHOT_RECORD=1` shell prefix
+//     does nothing — shell env is not forwarded into the simulator, so
+//     that run silently compares instead of recording, which is what the
+//     scheme-only instruction here used to imply was the sole option
+//     (corrected WP-40, which re-recorded all 46 references this way).
+//
+// Recording writes the reference and fails loudly so a record pass can
+// never go green unnoticed; commit the PNGs; CI compares pixels.
 
 import SwiftUI
 import Testing

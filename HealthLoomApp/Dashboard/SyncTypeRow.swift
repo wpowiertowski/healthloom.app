@@ -53,18 +53,19 @@ struct SyncTypeRow: View {
                         .accessibilityHidden(true)
                         .accessibilityIdentifier("dashboard.row.\(type.rawValue).statusIcon")
                     Text(displayName)
-                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                         .foregroundStyle(Theme.ink)
                         .accessibilityIdentifier("dashboard.row.\(type.rawValue).name")
                     Spacer()
                     Text(itemCountText)
-                        .font(Theme.font(15, .regular, relativeTo: .subheadline))
+                        .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
                         .foregroundStyle(Theme.secondary)
                         .monospacedDigit()
                         .accessibilityIdentifier("dashboard.row.\(type.rawValue).itemCount")
                 }
+                // D16.3: a timestamp is an instrument reading, not prose.
                 Text(lastSyncedText)
-                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                    .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
                     .foregroundStyle(Theme.tertiary)
                     .accessibilityIdentifier("dashboard.row.\(type.rawValue).lastSynced")
                 if let error = state?.lastError, isErrored {
