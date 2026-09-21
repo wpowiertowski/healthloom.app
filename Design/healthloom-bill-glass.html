@@ -1,0 +1,1135 @@
+<title>Concrete Glass</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@200;300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* ============================================================
+     CONCRETE GLASS — HealthLoom design study
+     Max Bill (Konkrete Kunst / Ulm / Junghans) × Apple Liquid Glass
+
+     Layer thesis:
+       content layer  -> Bill   : opaque, matte, orthogonal, systematic
+       control layer  -> Glass  : translucent, refracting the layer below
+     ============================================================ */
+
+  /* ---- studio page tokens (respond to the VIEWER's theme) ---- */
+  :root{
+    --studio-bg:#E4E0D9;
+    --studio-panel:#EFECE7;
+    --studio-ink:#1F5468;
+    --studio-dim:#6E7F80;
+    --studio-rule:#CBC5BB;
+    --studio-accent:#8A4526;
+    --studio-shadow:rgba(31,52,58,.22);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --studio-bg:#17181A;
+      --studio-panel:#202224;
+      --studio-ink:#C9D9DE;
+      --studio-dim:#889699;
+      --studio-rule:#33373A;
+      --studio-accent:#C98A63;
+      --studio-shadow:rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --studio-bg:#17181A;
+    --studio-panel:#202224;
+    --studio-ink:#C9D9DE;
+    --studio-dim:#889699;
+    --studio-rule:#33373A;
+    --studio-accent:#C98A63;
+    --studio-shadow:rgba(0,0,0,.6);
+  }
+
+  /* ---- app tokens: LIGHT (the mockup's own theme, toggled below) ---- */
+  .stage{
+    --canvas:#EFECE7;       /* warm paper ground */
+    --surface:#FFFFFF;      /* panel */
+    --ink:#1F5468;          /* deep teal — primary text */
+    --secondary:#4E6B74;    /* muted teal-gray */
+    --tertiary:#7A8E93;     /* placeholders, subs */
+    --border:#DFDAD2;       /* soft warm hairline */
+    --gray:#BBBDBC;         /* structural divider (original palette value) */
+    --rust:#8A4526;         /* the functional accent */
+    --rust-deep:#5A2F1B;
+    --rust-tint:#EADFD7;
+    --ochre:#B8873A;        /* concrete field 2 */
+    --slate:#43626E;        /* concrete field 3 */
+    --sky:#9DBBC4;          /* concrete field 4 */
+
+    /* glass material — light */
+    --g-fill:linear-gradient(142deg,rgba(255,255,255,.62),rgba(255,255,255,.26));
+    --g-spec-top:rgba(255,255,255,.92);
+    --g-spec-edge:rgba(255,255,255,.45);
+    --g-spec-low:rgba(255,255,255,.28);
+    --g-cast:0 10px 34px rgba(31,84,104,.16),0 2px 8px rgba(31,84,104,.10);
+    --g-sheen:rgba(255,255,255,.55);
+    --device-bezel:#17181A;
+  }
+  /* ---- app tokens: DARK (derived from the shipped Theme.swift values) ---- */
+  .stage[data-app="dark"]{
+    --canvas:#1A1816;
+    --surface:#262320;
+    --ink:#A8CBD8;
+    --secondary:#7FA0AC;
+    --tertiary:#7A969D;
+    --border:#37332F;
+    --gray:#4C4E4D;
+    --rust:#C98A63;
+    --rust-deep:#E3B999;
+    --rust-tint:#3B2B21;
+    --ochre:#D4A860;
+    --slate:#6E939F;
+    --sky:#4A6670;
+
+    --g-fill:linear-gradient(142deg,rgba(92,86,80,.55),rgba(26,24,22,.42));
+    --g-spec-top:rgba(255,255,255,.34);
+    --g-spec-edge:rgba(255,255,255,.14);
+    --g-spec-low:rgba(255,255,255,.07);
+    --g-cast:0 10px 34px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.35);
+    --g-sheen:rgba(255,255,255,.18);
+    --device-bezel:#0C0D0E;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--studio-bg);
+    color:var(--studio-ink);
+    font-family:'Archivo','Helvetica Neue',Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    margin:0;
+    padding:0 0 72px;
+  }
+
+  /* ===================== page furniture ===================== */
+  .wrap{max-width:1360px;margin:0 auto;padding:0 28px;}
+
+  .masthead{padding:56px 0 0;}
+  .eyebrow{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:10.5px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--studio-dim);
+  }
+  .masthead h1{
+    font-size:clamp(40px,7vw,78px);
+    font-weight:200;letter-spacing:-.035em;line-height:.94;
+    margin:16px 0 0;text-wrap:balance;
+  }
+  .masthead h1 em{font-style:normal;font-weight:600;color:var(--studio-accent);}
+  .sub{
+    max-width:60ch;margin:20px 0 0;
+    font-size:15.5px;line-height:1.62;font-weight:300;color:var(--studio-dim);
+  }
+
+  /* thesis: two columns, one per layer */
+  .thesis{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));
+    gap:0;margin:44px 0 0;
+    border-top:1px solid var(--studio-rule);
+  }
+  .layer{
+    padding:26px 30px 28px 0;
+    border-right:1px solid var(--studio-rule);
+  }
+  .layer:last-child{border-right:0;}
+  .layer + .layer{padding-left:30px;}
+  .layer .mark{display:block;margin-bottom:16px;}
+  .layer h2{
+    font-size:20px;font-weight:500;letter-spacing:-.015em;margin:0 0 8px;
+  }
+  .layer p{margin:0;font-size:13.5px;line-height:1.65;font-weight:300;color:var(--studio-dim);}
+  .layer p b{color:var(--studio-ink);font-weight:500;}
+  .pull{
+    grid-column:1/-1;border-top:1px solid var(--studio-rule);
+    padding:22px 0 0;margin-top:0;
+    font-size:17px;font-weight:300;line-height:1.5;letter-spacing:-.01em;
+    max-width:66ch;
+  }
+
+  /* toolbar */
+  .toolbar{
+    display:flex;flex-wrap:wrap;align-items:center;gap:14px;
+    margin:44px 0 30px;padding:14px 0 0;border-top:1px solid var(--studio-rule);
+  }
+  .toolbar .spacer{flex:1;}
+  .seg{
+    display:inline-flex;padding:3px;gap:3px;border-radius:999px;
+    background:var(--studio-panel);border:1px solid var(--studio-rule);
+  }
+  .seg button{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:10.5px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--studio-dim);background:none;border:0;cursor:pointer;
+    padding:7px 15px;border-radius:999px;transition:background .18s,color .18s;
+  }
+  .seg button[aria-pressed="true"]{background:var(--studio-ink);color:var(--studio-bg);}
+  .seg button:focus-visible{outline:2px solid var(--studio-accent);outline-offset:2px;}
+  .toolnote{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:10.5px;letter-spacing:.06em;color:var(--studio-dim);
+  }
+
+  /* ===================== device rail ===================== */
+  .rail{
+    display:grid;gap:34px;
+    grid-template-columns:repeat(auto-fit,minmax(300px,330px));
+    justify-content:center;
+  }
+  .unit{display:flex;flex-direction:column;align-items:center;gap:13px;}
+  .unit .cap{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--studio-dim);
+  }
+  .unit .cap span{color:var(--studio-accent);}
+
+  .phone{
+    width:330px;height:714px;flex:none;
+    background:var(--canvas);
+    border-radius:44px;position:relative;overflow:hidden;
+    box-shadow:0 0 0 9px var(--device-bezel),0 0 0 10px rgba(255,255,255,.07),
+               0 26px 60px var(--studio-shadow);
+    isolation:isolate;
+  }
+  .island{
+    position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    width:98px;height:26px;background:#000;border-radius:14px;z-index:60;
+  }
+
+  /* status bar rides ON the glass header */
+  .statusbar{
+    position:absolute;top:0;left:0;right:0;height:46px;z-index:52;
+    display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 22px 5px;
+    font-size:12px;font-weight:600;color:var(--ink);
+    font-variant-numeric:tabular-nums;pointer-events:none;
+  }
+  .statusbar .icons{display:flex;gap:5px;align-items:center;}
+
+  .screen{
+    position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;
+    padding:92px 0 104px;
+  }
+  .screen::-webkit-scrollbar{display:none;}
+  .pad{padding:0 20px;}
+
+  /* ===================== GLASS: the control layer ===================== */
+  .glass{
+    -webkit-backdrop-filter:blur(26px) saturate(185%);
+    backdrop-filter:blur(26px) saturate(185%);
+    background:var(--g-fill);
+    box-shadow:
+      inset 0 1.1px 0 var(--g-spec-top),
+      inset 1px 0 0 var(--g-spec-edge),
+      inset -1px 0 0 var(--g-spec-edge),
+      inset 0 -1.1px 0 var(--g-spec-low),
+      var(--g-cast);
+    position:relative;
+  }
+  /* travelling specular — the highlight that says "lens", not "frosted pane" */
+  .glass::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:linear-gradient(105deg,transparent 22%,var(--g-sheen) 46%,transparent 62%);
+    opacity:.5;
+  }
+
+  .glass-header{
+    position:absolute;top:0;left:0;right:0;height:92px;z-index:50;
+    border-radius:0 0 26px 26px;
+    display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 20px 13px;
+  }
+  .glass-header .ttl{
+    font-size:23px;font-weight:300;letter-spacing:-.028em;color:var(--ink);
+  }
+  .glass-header .brand{display:flex;align-items:center;gap:7px;font-size:15px;font-weight:500;color:var(--ink);letter-spacing:-.01em;}
+  .glass-header .brand i{width:9px;height:9px;background:var(--rust);display:block;transform:rotate(45deg);}
+  .hactions{display:flex;gap:8px;align-items:center;padding-bottom:2px;}
+
+  /* glass round button (control layer) */
+  .gbtn{
+    width:32px;height:32px;border-radius:50%;border:0;cursor:pointer;
+    display:grid;place-items:center;color:var(--ink);
+    -webkit-backdrop-filter:blur(14px) saturate(170%);
+    backdrop-filter:blur(14px) saturate(170%);
+    background:var(--g-fill);
+    box-shadow:inset 0 1px 0 var(--g-spec-top),inset 0 -1px 0 var(--g-spec-low),
+               0 2px 8px rgba(31,84,104,.14);
+    transition:transform .16s cubic-bezier(.34,1.4,.5,1);
+  }
+  .gbtn:hover{transform:scale(1.08);}
+  .gbtn:focus-visible{outline:2px solid var(--rust);outline-offset:2px;}
+
+  /* floating glass tab bar — detached capsule, iOS 26 style */
+  .tabbar{
+    position:absolute;left:12px;right:12px;bottom:13px;z-index:50;
+    height:62px;border-radius:31px;
+    display:grid;grid-template-columns:repeat(6,1fr);align-items:center;
+    padding:0 5px;
+  }
+  .tab{
+    display:flex;flex-direction:column;align-items:center;gap:5px;
+    background:none;border:0;cursor:pointer;padding:6px 0 0;
+    color:var(--tertiary);border-radius:20px;
+  }
+  .tab .gl{width:19px;height:19px;display:block;}
+  /* Nav labels are language, not instrument silkscreen: Archivo, sentence
+     case, no tracking. Mono uppercase overflowed the 49px cell at six tabs. */
+  .tab .nm{font-size:9.5px;font-weight:500;letter-spacing:0;white-space:nowrap;}
+  .tab[aria-current="page"]{color:var(--rust);}
+  .tab:focus-visible{outline:2px solid var(--rust);outline-offset:1px;}
+
+  /* ===================== BILL: the content layer ===================== */
+  /* Everything below is opaque, matte, orthogonal. No blur, no translucency. */
+
+  .kicker{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;font-weight:500;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--secondary);
+  }
+  .rule{height:1px;background:var(--gray);border:0;margin:0;}
+  .rule.soft{background:var(--border);}
+
+  .greet{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:14px;}
+  .greet .d{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;letter-spacing:.09em;color:var(--tertiary);text-transform:uppercase;}
+  .greet .g{font-size:18.5px;font-weight:400;letter-spacing:-.02em;color:var(--ink);}
+
+  /* --- the Junghans dial: Bill's minute track as a readiness instrument --- */
+  .dialblock{
+    display:flex;align-items:center;gap:16px;
+    padding:20px 0 22px;
+  }
+  .dialwrap{position:relative;width:132px;height:132px;flex:none;}
+  .dialwrap svg{width:100%;height:100%;display:block;}
+  .dialnum{
+    position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:1px;pointer-events:none;
+  }
+  .dialnum .v{
+    font-size:46px;font-weight:200;letter-spacing:-.05em;line-height:1;
+    color:var(--ink);font-variant-numeric:tabular-nums;
+  }
+  .dialnum .u{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;letter-spacing:.14em;color:var(--tertiary);text-transform:uppercase;
+  }
+  .dialmeta{flex:1;min-width:0;}
+  .dialmeta .lab{font-size:15px;font-weight:500;color:var(--ink);letter-spacing:-.01em;margin:2px 0 9px;}
+  .sigrow{display:flex;flex-direction:column;gap:6px;}
+  .sig{display:flex;align-items:center;gap:8px;}
+  .sig .nm{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;letter-spacing:.06em;color:var(--secondary);text-transform:uppercase;
+    width:44px;flex:none;
+  }
+  /* concrete-art field bar: flat, no gradient, no radius */
+  .bar{height:7px;flex:1;background:var(--border);position:relative;overflow:hidden;}
+  .bar i{position:absolute;inset:0 auto 0 0;display:block;}
+  .delta{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;letter-spacing:.04em;color:var(--secondary);margin-top:11px;
+  }
+  .delta b{color:var(--ink);font-weight:600;}
+
+  /* --- section header --- */
+  .sec{display:flex;align-items:baseline;justify-content:space-between;margin:22px 0 10px;}
+  .sec .act{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;font-weight:500;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--rust-deep);background:none;border:0;cursor:pointer;padding:3px 0;
+    border-bottom:1px solid transparent;
+  }
+  .sec .act:hover{border-bottom-color:var(--rust-deep);}
+  .sec .act:focus-visible{outline:2px solid var(--rust);outline-offset:2px;}
+
+  /* --- panel: matte paper, square corners, hairline --- */
+  .panel{background:var(--surface);border:1px solid var(--border);}
+  .panel + .panel{margin-top:10px;}
+
+  .row{display:flex;align-items:center;gap:12px;padding:13px 14px;}
+  .row + .row{border-top:1px solid var(--border);}
+  .row .txt{flex:1;min-width:0;}
+  .row .t1{font-size:15px;font-weight:500;color:var(--ink);letter-spacing:-.012em;}
+  .row .t2{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;letter-spacing:.05em;color:var(--tertiary);margin-top:3px;text-transform:uppercase;
+  }
+  .row .val{font-size:23px;font-weight:300;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.025em;}
+  .row .val u{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;text-decoration:none;color:var(--tertiary);letter-spacing:.08em;margin-left:3px;}
+  .row .chev{color:var(--tertiary);flex:none;}
+
+  /* progress underline on a metric row — flat field, full-bleed */
+  .rowprog{height:2px;background:var(--border);position:relative;}
+  .rowprog i{position:absolute;inset:0 auto 0 0;background:var(--rust);}
+
+  /* --- coach: concrete color field --- */
+  .coach{background:var(--rust-tint);padding:15px 15px 16px;margin-top:12px;position:relative;}
+  .coach .kicker{color:var(--rust-deep);}
+  .coach p{margin:8px 0 0;font-size:12px;line-height:1.55;font-weight:400;color:var(--ink);}
+  .coach .tri{position:absolute;top:0;right:0;}
+
+  /* --- activities --- */
+  .daterule{display:flex;align-items:center;gap:10px;margin:20px 0 9px;}
+  .daterule .dt{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;font-weight:500;letter-spacing:.13em;text-transform:uppercase;color:var(--secondary);
+  }
+  .daterule .ln{flex:1;height:1px;background:var(--border);}
+  .daterule .n{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;color:var(--tertiary);letter-spacing:.06em;
+  }
+  .act-r{display:flex;align-items:center;gap:12px;padding:12px 14px;}
+  .act-r + .act-r{border-top:1px solid var(--border);}
+  .act-r .nm{font-size:15px;font-weight:500;color:var(--ink);letter-spacing:-.012em;}
+  .act-r .sub{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;color:var(--tertiary);letter-spacing:.05em;margin-top:3px;text-transform:uppercase;
+  }
+  .act-r .tm{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:12px;color:var(--secondary);font-variant-numeric:tabular-nums;letter-spacing:.03em;
+  }
+  /* duration as a flat Bill field, proportional to minutes */
+  .durbar{height:4px;background:var(--border);margin:0 14px 12px;position:relative;}
+  .durbar i{position:absolute;inset:0 auto 0 0;display:block;}
+
+  /* --- status dot + badges --- */
+  .dot{width:7px;height:7px;flex:none;display:block;}
+  .badge{
+    display:inline-block;font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;
+    padding:4px 7px;border:1px solid var(--border);color:var(--secondary);
+  }
+  .badge.warn{border-color:var(--rust);color:var(--rust-deep);background:var(--rust-tint);}
+  .badgerow{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 13px;}
+
+  /* --- glass CTA (control layer, sits on Bill content) --- */
+  .cta{
+    width:100%;border:0;cursor:pointer;padding:14px;border-radius:999px;
+    font-family:'Archivo',sans-serif;font-size:15px;font-weight:600;letter-spacing:-.01em;
+    color:#fff;background:var(--rust);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.34),0 6px 18px rgba(138,69,38,.34);
+    transition:transform .16s cubic-bezier(.34,1.4,.5,1);
+  }
+  .stage[data-app="dark"] .cta{color:#1A1816;}
+  .cta:hover{transform:translateY(-1px) scale(1.012);}
+  .cta:focus-visible{outline:2px solid var(--ink);outline-offset:3px;}
+
+  .notice{padding:15px 14px 16px;background:var(--surface);border:1px solid var(--border);}
+  .notice h4{margin:0 0 6px;font-size:15px;font-weight:500;color:var(--ink);letter-spacing:-.015em;}
+  .notice p{margin:0 0 13px;font-size:12px;line-height:1.55;color:var(--secondary);font-weight:400;}
+
+  /* --- glass toggle switch (control layer) --- */
+  .sw{
+    width:48px;height:29px;border-radius:999px;border:0;cursor:pointer;flex:none;
+    position:relative;padding:0;transition:background .2s;
+    -webkit-backdrop-filter:blur(12px) saturate(160%);
+    backdrop-filter:blur(12px) saturate(160%);
+    background:var(--g-fill);
+    box-shadow:inset 0 1px 0 var(--g-spec-top),inset 0 -1px 0 var(--g-spec-low),
+               inset 0 0 0 1px var(--border);
+  }
+  .sw i{
+    position:absolute;top:3px;left:3px;width:23px;height:23px;border-radius:50%;
+    background:var(--surface);display:block;
+    box-shadow:0 1px 4px rgba(31,84,104,.3),inset 0 1px 0 rgba(255,255,255,.7);
+    transition:transform .22s cubic-bezier(.34,1.35,.5,1);
+  }
+  .sw[aria-checked="true"]{
+    background:linear-gradient(142deg,var(--rust),color-mix(in srgb,var(--rust) 76%,#000));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 3px 10px rgba(138,69,38,.3);
+  }
+  .sw[aria-checked="true"] i{transform:translateX(19px);}
+  .sw:focus-visible{outline:2px solid var(--rust);outline-offset:2px;}
+
+  .attn{display:flex;align-items:center;gap:10px;padding:13px 14px;}
+  .attn .lbl{flex:1;font-size:15px;font-weight:400;color:var(--ink);}
+  .attn .go{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10px;font-weight:600;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--rust);
+    background:none;border:0;cursor:pointer;padding:3px 0;border-bottom:1px solid var(--rust);
+  }
+  .attn .go:focus-visible{outline:2px solid var(--rust);outline-offset:2px;}
+  .errtext{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;line-height:1.55;color:var(--secondary);
+    padding:0 14px 13px;border-top:1px solid var(--border);padding-top:11px;
+    word-break:break-word;
+  }
+  .foot{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;line-height:1.6;color:var(--tertiary);padding:11px 2px 0;letter-spacing:.03em;
+  }
+
+  /* ===================== specimen strip ===================== */
+  .specs{
+    margin:62px 0 0;padding-top:26px;border-top:1px solid var(--studio-rule);
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0;
+  }
+  .spec{padding:4px 26px 18px 0;border-right:1px solid var(--studio-rule);}
+  .spec:last-child{border-right:0;}
+  .spec + .spec{padding-left:26px;}
+  .spec h3{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:9.5px;font-weight:500;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--studio-dim);margin:0 0 14px;
+  }
+  .spec p{margin:12px 0 0;font-size:12.5px;line-height:1.62;font-weight:300;color:var(--studio-dim);}
+  .spec p b{color:var(--studio-ink);font-weight:500;}
+  /* row-anatomy specimen: a fixed light-palette swatch, like the colour chips */
+  .anat{background:#FFFFFF;border:1px solid #DFDAD2;}
+  .anat-row{display:flex;align-items:center;gap:12px;padding:13px 14px;}
+  .anat-row .a1{font-size:15px;font-weight:500;color:#1F5468;letter-spacing:-.012em;}
+  .anat-row .a2{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;
+    letter-spacing:.05em;color:#7A8E93;margin-top:3px;text-transform:uppercase;}
+  .anat-row .a3{margin-left:auto;font-size:23px;font-weight:300;color:#1F5468;
+    font-variant-numeric:tabular-nums;letter-spacing:-.025em;}
+  .anat-row .a3 u{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;
+    text-decoration:none;color:#7A8E93;letter-spacing:.08em;margin-left:3px;}
+  .anat-ann{display:flex;margin-top:9px;}
+  .anat-ann span{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--studio-dim);
+    padding:7px 0 0 9px;border-left:1px solid var(--studio-rule);
+  }
+  .anat-ann span:first-child{flex:1;}
+  .anat-ann span:last-child{flex:0 0 30%;}
+  .scaleline{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;color:var(--studio-ink);}
+  .scaleline b{font-weight:200;letter-spacing:-.03em;}
+  .swatches{display:flex;height:52px;}
+  .swatches i{flex:1;display:block;}
+  .swlab{display:flex;margin-top:7px;}
+  .swlab span{
+    flex:1;font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:8px;letter-spacing:.06em;color:var(--studio-dim);text-transform:uppercase;
+  }
+
+  .colophon{
+    margin:54px 0 0;padding-top:20px;border-top:1px solid var(--studio-rule);
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:10px;line-height:1.75;letter-spacing:.05em;color:var(--studio-dim);
+    display:flex;flex-wrap:wrap;gap:6px 26px;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none !important;transition:none !important;}
+  }
+  @media (max-width:760px){
+    .layer,.spec{border-right:0;padding-left:0 !important;padding-right:0;}
+    .layer + .layer,.spec + .spec{border-top:1px solid var(--studio-rule);padding-top:22px;}
+    .wrap{padding:0 18px;}
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">HealthLoom · design study · 21.09.2026</div>
+    <h1>Concrete <em>Glass</em></h1>
+    <p class="sub">
+      Max Bill's concrete geometry and Apple's Liquid Glass want opposite things —
+      one matte, orthogonal and printed; the other fluid, translucent and lensing.
+      Rather than average them into mush, this study gives each one a layer of its own.
+    </p>
+
+    <div class="thesis">
+      <section class="layer">
+        <svg class="mark" width="42" height="42" viewBox="0 0 42 42" aria-hidden="true">
+          <rect x="7" y="7" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <rect x="21" y="7" width="19.8" height="19.8" fill="none" stroke="currentColor" stroke-width="1.4"
+                transform="rotate(45 21 7)"/>
+        </svg>
+        <h2>The page is Bill</h2>
+        <p>
+          Content stays <b>opaque, matte and orthogonal</b>. Square corners, hairline rules,
+          flat colour fields with no gradient, a 1.25 type scale, and tick instruments
+          lifted from his Junghans dials. <b>No pictograms</b> — every row names itself in
+          words, so nothing needs decoding. Nothing in the data layer is translucent
+          either; measurements are printed matter.
+        </p>
+      </section>
+      <section class="layer">
+        <svg class="mark" width="42" height="42" viewBox="0 0 42 42" aria-hidden="true">
+          <defs>
+            <linearGradient id="mg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="currentColor" stop-opacity=".55"/>
+              <stop offset="1" stop-color="currentColor" stop-opacity=".12"/>
+            </linearGradient>
+          </defs>
+          <rect x="4" y="12" width="34" height="18" rx="9" fill="url(#mg)" stroke="currentColor" stroke-width="1.1"/>
+          <path d="M8 16 Q21 11 34 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-opacity=".85" stroke-linecap="round"/>
+        </svg>
+        <h2>The lens is Apple</h2>
+        <p>
+          Only the <b>floating control layer</b> is glass: the header, the detached tab-bar
+          capsule, switches and buttons. Each one blurs, saturates and throws a specular rim,
+          refracting the geometry that scrolls underneath. Controls hover; they never sit
+          down on the page.
+        </p>
+      </section>
+      <p class="pull">
+        The split is the whole idea. Refraction only <em style="font-style:normal;border-bottom:1.5px solid var(--studio-accent);">reads</em>
+        as refraction when there is something precise behind it to bend — blur a soft surface and you see nothing at all.
+      </p>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="App appearance">
+      <button type="button" data-app-set="light" aria-pressed="true">Light</button>
+      <button type="button" data-app-set="dark" aria-pressed="false">Dark</button>
+    </div>
+    <div class="toolnote">Scroll any screen — the glass refracts the content passing beneath it.</div>
+    <div class="spacer"></div>
+    <div class="toolnote">4 screens · 330 × 714</div>
+  </div>
+
+  <!-- ================= DEVICES ================= -->
+  <div class="rail stage" id="stage" data-app="light">
+
+    <!-- ---------------- 1 · TODAY ---------------- -->
+    <div class="unit">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="glass-header">
+          <div class="brand"><i></i>healthloom</div>
+          <div class="hactions">
+            <button class="gbtn" type="button" aria-label="Settings">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>
+              </svg>
+            </button>
+            <button class="gbtn" type="button" aria-label="Sync now">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+                <path d="M20 11a8 8 0 0 0-13.7-5.3L3 9M4 13a8 8 0 0 0 13.7 5.3L21 15"/><path d="M3 4v5h5M21 20v-5h-5"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="statusbar"><span>10:58</span><span class="icons">
+          <svg width="15" height="10" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true"><rect x="0" y="7" width="3" height="4"/><rect x="4.4" y="5" width="3" height="6"/><rect x="8.8" y="2.5" width="3" height="8.5"/><rect x="13.2" y="0" width="3" height="11"/></svg>
+          <svg width="14" height="11" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 4.2a10 10 0 0 1 14 0M3.6 7a6.4 6.4 0 0 1 8.8 0"/><circle cx="8" cy="10.2" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <svg width="22" height="11" viewBox="0 0 25 12" aria-hidden="true"><rect x=".6" y=".6" width="20" height="10.8" rx="2.6" fill="none" stroke="currentColor" stroke-opacity=".45"/><rect x="2.2" y="2.2" width="11" height="7.6" rx="1.4" fill="currentColor"/><path d="M22.4 4v4a2.3 2.3 0 0 0 0-4z" fill="currentColor" fill-opacity=".45"/></svg>
+        </span></div>
+
+        <div class="screen">
+          <div class="pad">
+            <div class="greet">
+              <div>
+                <div class="g">Good morning</div>
+                <div class="d" style="margin-top:4px;">Monday · 21 September</div>
+              </div>
+              <div class="kicker" style="display:flex;align-items:center;gap:6px;">
+                <span class="dot" style="background:var(--gray);border-radius:50%;"></span>Idle
+              </div>
+            </div>
+            <hr class="rule">
+
+            <!-- Junghans readiness dial -->
+            <div class="dialblock">
+              <div class="dialwrap">
+                <svg viewBox="0 0 132 132" id="dial" role="img"
+                     aria-label="Readiness 82 of 100, based on 4 of 4 signals"></svg>
+                <div class="dialnum"><div class="v">82</div><div class="u">Readiness</div></div>
+              </div>
+              <div class="dialmeta">
+                <div class="kicker">Signals</div>
+                <div class="lab" style="margin-top:6px;">4 of 4 reporting</div>
+                <div class="sigrow">
+                  <div class="sig"><span class="nm">Sleep</span><span class="bar"><i style="width:68%;background:var(--slate);"></i></span></div>
+                  <div class="sig"><span class="nm">HRV</span><span class="bar"><i style="width:88%;background:var(--rust);"></i></span></div>
+                  <div class="sig"><span class="nm">RHR</span><span class="bar"><i style="width:79%;background:var(--ochre);"></i></span></div>
+                  <div class="sig"><span class="nm">Load</span><span class="bar"><i style="width:54%;background:var(--sky);"></i></span></div>
+                </div>
+                <div class="delta"><b>+4</b> vs 30-day average</div>
+              </div>
+            </div>
+            <hr class="rule soft">
+
+            <div class="sec">
+              <span class="kicker">Today</span>
+              <button class="act" type="button">Edit</button>
+            </div>
+
+            <div class="panel">
+              <div class="row">
+                <div class="txt"><div class="t1">Heart</div><div class="t2">Latest · 10:26</div></div>
+                <div class="val">71<u>BPM</u></div>
+              </div>
+              <div class="row">
+                <div class="txt"><div class="t1">Steps</div><div class="t2">33% of 10,000</div></div>
+                <div class="val">3,261</div>
+              </div>
+              <div class="rowprog"><i style="width:33%;"></i></div>
+              <div class="row">
+                <div class="txt"><div class="t1">Sleep</div><div class="t2">Last night · 6 stages</div></div>
+                <div class="val">6<u>H</u>46<u>M</u></div>
+              </div>
+              <div class="row">
+                <div class="txt"><div class="t1">Blood oxygen</div><div class="t2">Latest · 00:00</div></div>
+                <div class="val">95<u>%</u></div>
+              </div>
+            </div>
+
+            <div class="coach">
+              <svg class="tri" width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><path d="M34 0v34z" fill="var(--rust)" opacity=".5"/><path d="M34 0L0 0 34 34z" fill="var(--rust)" opacity=".13"/></svg>
+              <div class="kicker">Coach</div>
+              <p>Two swims and four runs in eight days, and your resting heart rate held steady — the load is landing well. Keep tomorrow easy.</p>
+            </div>
+
+            <div class="foot">On-device · generated 05:12</div>
+          </div>
+        </div>
+
+        <nav class="tabbar glass" aria-label="Main">
+          <button class="tab" type="button" aria-current="page"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="3.5" width="17" height="15"/><path d="M2.5 11h17"/></svg><span class="nm">Today</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 4.5h16v11H8l-5 3.5z"/></svg><span class="nm">Coach</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="7" r="3.4"/><path d="M4 19c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg><span class="nm">You</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18.5 10a7.5 7.5 0 0 0-12.9-5L3.5 7M3.5 12a7.5 7.5 0 0 0 12.9 5l2.1-2"/><path d="M3 3v4.5h4.5M19 19v-4.5h-4.5"/></svg><span class="nm">Data</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="13.5" cy="3.8" r="1.9"/><path d="M4 19l3.5-5 3.5 2.5 2-4.5"/><path d="M11 10l4 1.5 2.5 4"/></svg><span class="nm">Activity</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h16M3 11h16M3 16h16"/><circle cx="8" cy="6" r="1.9" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r="1.9" fill="currentColor" stroke="none"/><circle cx="7" cy="16" r="1.9" fill="currentColor" stroke="none"/></svg><span class="nm">Settings</span></button>
+        </nav>
+      </div>
+      <div class="cap">01 · Today <span>— the Junghans dial</span></div>
+    </div>
+
+    <!-- ---------------- 2 · ACTIVITIES ---------------- -->
+    <div class="unit">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="glass-header">
+          <div class="ttl">Activities</div>
+          <div class="hactions">
+            <button class="gbtn" type="button" aria-label="Filter">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="statusbar"><span>10:58</span><span class="icons">
+          <svg width="15" height="10" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true"><rect x="0" y="7" width="3" height="4"/><rect x="4.4" y="5" width="3" height="6"/><rect x="8.8" y="2.5" width="3" height="8.5"/><rect x="13.2" y="0" width="3" height="11"/></svg>
+          <svg width="14" height="11" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 4.2a10 10 0 0 1 14 0M3.6 7a6.4 6.4 0 0 1 8.8 0"/><circle cx="8" cy="10.2" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <svg width="22" height="11" viewBox="0 0 25 12" aria-hidden="true"><rect x=".6" y=".6" width="20" height="10.8" rx="2.6" fill="none" stroke="currentColor" stroke-opacity=".45"/><rect x="2.2" y="2.2" width="11" height="7.6" rx="1.4" fill="currentColor"/><path d="M22.4 4v4a2.3 2.3 0 0 0 0-4z" fill="currentColor" fill-opacity=".45"/></svg>
+        </span></div>
+
+        <div class="screen">
+          <div class="pad">
+            <div class="kicker" style="display:flex;gap:16px;padding-bottom:12px;">
+              <span>7 sessions</span><span>3 h 49 m</span><span>10 days</span>
+            </div>
+            <hr class="rule">
+
+            <div class="daterule"><span class="dt">Sun 20 Sep</span><span class="ln"></span><span class="n">1</span></div>
+            <div class="panel">
+              <div class="act-r">
+                <div class="txt"><div class="nm">Swim</div><div class="sub">Apple Watch</div></div>
+                <div class="tm">09:31</div>
+              </div>
+              <div class="durbar"><i style="width:28%;background:var(--slate);"></i></div>
+              <div class="badgerow"><span class="badge">20 min</span><span class="badge">Pool</span></div>
+            </div>
+
+            <div class="daterule"><span class="dt">Fri 18 Sep</span><span class="ln"></span><span class="n">2</span></div>
+            <div class="panel">
+              <div class="act-r">
+                <div class="txt"><div class="nm">Run</div><div class="sub">Apple Watch</div></div>
+                <div class="tm">11:48</div>
+              </div>
+              <div class="durbar"><i style="width:52%;background:var(--rust);"></i></div>
+              <div class="badgerow"><span class="badge">37 min</span><span class="badge">6.2 km</span><span class="badge">148 bpm</span></div>
+              <div class="act-r">
+                <div class="txt"><div class="nm">Swim</div><div class="sub">Apple Watch</div></div>
+                <div class="tm">07:07</div>
+              </div>
+              <div class="durbar"><i style="width:100%;background:var(--slate);"></i></div>
+              <div class="badgerow"><span class="badge">71 min</span><span class="badge">Open water</span></div>
+            </div>
+
+            <div class="daterule"><span class="dt">Thu 17 Sep</span><span class="ln"></span><span class="n">1</span></div>
+            <div class="panel">
+              <div class="act-r">
+                <div class="txt"><div class="nm">Run</div><div class="sub">Apple Watch</div></div>
+                <div class="tm">11:44</div>
+              </div>
+              <div class="durbar"><i style="width:51%;background:var(--rust);"></i></div>
+              <div class="badgerow"><span class="badge">36 min</span><span class="badge">5.9 km</span></div>
+            </div>
+
+            <div class="daterule"><span class="dt">Tue 15 Sep</span><span class="ln"></span><span class="n">1</span></div>
+            <div class="panel">
+              <div class="act-r">
+                <div class="txt"><div class="nm">Run</div><div class="sub">Apple Watch</div></div>
+                <div class="tm">21:28</div>
+              </div>
+              <div class="durbar"><i style="width:39%;background:var(--rust);"></i></div>
+              <div class="badgerow"><span class="badge">28 min</span><span class="badge">4.4 km</span></div>
+            </div>
+
+            <div class="daterule"><span class="dt">Sat 12 Sep</span><span class="ln"></span><span class="n">1</span></div>
+            <div class="panel">
+              <div class="act-r">
+                <div class="txt"><div class="nm">Rowing</div><div class="sub">Hydrow</div></div>
+                <div class="tm">22:46</div>
+              </div>
+              <div class="durbar"><i style="width:28%;background:var(--ochre);"></i></div>
+              <div class="badgerow"><span class="badge">20 min</span><span class="badge">4,180 m</span></div>
+            </div>
+          </div>
+        </div>
+
+        <nav class="tabbar glass" aria-label="Main">
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="3.5" width="17" height="15"/><path d="M2.5 11h17"/></svg><span class="nm">Today</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 4.5h16v11H8l-5 3.5z"/></svg><span class="nm">Coach</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="7" r="3.4"/><path d="M4 19c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg><span class="nm">You</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18.5 10a7.5 7.5 0 0 0-12.9-5L3.5 7M3.5 12a7.5 7.5 0 0 0 12.9 5l2.1-2"/><path d="M3 3v4.5h4.5M19 19v-4.5h-4.5"/></svg><span class="nm">Data</span></button>
+          <button class="tab" type="button" aria-current="page"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="13.5" cy="3.8" r="1.9"/><path d="M4 19l3.5-5 3.5 2.5 2-4.5"/><path d="M11 10l4 1.5 2.5 4"/></svg><span class="nm">Activity</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h16M3 11h16M3 16h16"/><circle cx="8" cy="6" r="1.9" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r="1.9" fill="currentColor" stroke="none"/><circle cx="7" cy="16" r="1.9" fill="currentColor" stroke="none"/></svg><span class="nm">Settings</span></button>
+        </nav>
+      </div>
+      <div class="cap">02 · Activities <span>— duration as field</span></div>
+    </div>
+
+    <!-- ---------------- 3 · DATA ---------------- -->
+    <div class="unit">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="glass-header">
+          <div class="ttl">Data</div>
+          <div class="hactions">
+            <button class="gbtn" type="button" aria-label="Sync now">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11a8 8 0 0 0-13.7-5.3L3 9M4 13a8 8 0 0 0 13.7 5.3L21 15"/><path d="M3 4v5h5M21 20v-5h-5"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="statusbar"><span>10:58</span><span class="icons">
+          <svg width="15" height="10" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true"><rect x="0" y="7" width="3" height="4"/><rect x="4.4" y="5" width="3" height="6"/><rect x="8.8" y="2.5" width="3" height="8.5"/><rect x="13.2" y="0" width="3" height="11"/></svg>
+          <svg width="14" height="11" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 4.2a10 10 0 0 1 14 0M3.6 7a6.4 6.4 0 0 1 8.8 0"/><circle cx="8" cy="10.2" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <svg width="22" height="11" viewBox="0 0 25 12" aria-hidden="true"><rect x=".6" y=".6" width="20" height="10.8" rx="2.6" fill="none" stroke="currentColor" stroke-opacity=".45"/><rect x="2.2" y="2.2" width="11" height="7.6" rx="1.4" fill="currentColor"/><path d="M22.4 4v4a2.3 2.3 0 0 0 0-4z" fill="currentColor" fill-opacity=".45"/></svg>
+        </span></div>
+
+        <div class="screen">
+          <div class="pad">
+            <div class="notice">
+              <h4>Google isn't connected</h4>
+              <p>Your daily activity lives in Google. Connect the account linked to your Fitbit or Pixel Watch to start syncing.</p>
+              <button class="cta" type="button">Connect Google</button>
+            </div>
+
+            <div class="coach" style="margin-top:10px;">
+              <div class="kicker">About data freshness</div>
+              <p style="font-size:12px;">Your watch reaches Google roughly every 15 minutes while the Google Health app is open. HealthLoom pulls from Google each time you sync — this isn't a live feed.</p>
+            </div>
+
+            <div class="sec"><span class="kicker">Your data</span><span class="kicker" style="color:var(--tertiary);">0 records</span></div>
+            <div class="panel">
+              <div class="row">
+                <span class="dot" style="background:var(--gray);border-radius:50%;"></span>
+                <div class="txt"><div class="t1">Steps</div><div class="t2">Never synced</div></div>
+                <div class="val" style="color:var(--tertiary);">0</div>
+              </div>
+              <div class="row">
+                <span class="dot" style="background:var(--gray);border-radius:50%;"></span>
+                <div class="txt"><div class="t1">Heart rate</div><div class="t2">Never synced</div></div>
+                <div class="val" style="color:var(--tertiary);">0</div>
+              </div>
+              <div class="row">
+                <span class="dot" style="background:var(--gray);border-radius:50%;"></span>
+                <div class="txt"><div class="t1">Weight</div><div class="t2">Never synced</div></div>
+                <div class="val" style="color:var(--tertiary);">0</div>
+              </div>
+              <div class="row">
+                <span class="dot" style="background:var(--gray);border-radius:50%;"></span>
+                <div class="txt"><div class="t1">Sleep</div><div class="t2">Never synced</div></div>
+                <div class="val" style="color:var(--tertiary);">0</div>
+              </div>
+            </div>
+
+            <div class="sec"><span class="kicker">Not in Apple Health</span></div>
+            <div class="panel">
+              <div class="row">
+                <div class="txt"><div class="t1">ECG</div></div>
+                <div class="val" style="color:var(--tertiary);">0</div>
+              </div>
+              <div class="badgerow"><span class="badge">Not in Apple Health</span><span class="badge warn">Clinical · excluded from AI</span></div>
+              <div class="row">
+                <div class="txt"><div class="t1">Skin temperature</div></div>
+                <div class="val" style="color:var(--tertiary);">0</div>
+              </div>
+              <div class="badgerow"><span class="badge">Not in Apple Health</span><span class="badge">Local only</span></div>
+            </div>
+
+            <div class="foot">HealthLoom writes to Apple Health. It never reads what it did not write.</div>
+          </div>
+        </div>
+
+        <nav class="tabbar glass" aria-label="Main">
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="3.5" width="17" height="15"/><path d="M2.5 11h17"/></svg><span class="nm">Today</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 4.5h16v11H8l-5 3.5z"/></svg><span class="nm">Coach</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="7" r="3.4"/><path d="M4 19c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg><span class="nm">You</span></button>
+          <button class="tab" type="button" aria-current="page"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18.5 10a7.5 7.5 0 0 0-12.9-5L3.5 7M3.5 12a7.5 7.5 0 0 0 12.9 5l2.1-2"/><path d="M3 3v4.5h4.5M19 19v-4.5h-4.5"/></svg><span class="nm">Data</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="13.5" cy="3.8" r="1.9"/><path d="M4 19l3.5-5 3.5 2.5 2-4.5"/><path d="M11 10l4 1.5 2.5 4"/></svg><span class="nm">Activity</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h16M3 11h16M3 16h16"/><circle cx="8" cy="6" r="1.9" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r="1.9" fill="currentColor" stroke="none"/><circle cx="7" cy="16" r="1.9" fill="currentColor" stroke="none"/></svg><span class="nm">Settings</span></button>
+        </nav>
+      </div>
+      <div class="cap">03 · Data <span>— glass CTA on paper</span></div>
+    </div>
+
+    <!-- ---------------- 4 · SETTINGS ---------------- -->
+    <div class="unit">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="glass-header">
+          <div class="ttl">Sync settings</div>
+        </div>
+        <div class="statusbar"><span>10:59</span><span class="icons">
+          <svg width="15" height="10" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true"><rect x="0" y="7" width="3" height="4"/><rect x="4.4" y="5" width="3" height="6"/><rect x="8.8" y="2.5" width="3" height="8.5"/><rect x="13.2" y="0" width="3" height="11"/></svg>
+          <svg width="14" height="11" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 4.2a10 10 0 0 1 14 0M3.6 7a6.4 6.4 0 0 1 8.8 0"/><circle cx="8" cy="10.2" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <svg width="22" height="11" viewBox="0 0 25 12" aria-hidden="true"><rect x=".6" y=".6" width="20" height="10.8" rx="2.6" fill="none" stroke="currentColor" stroke-opacity=".45"/><rect x="2.2" y="2.2" width="11" height="7.6" rx="1.4" fill="currentColor"/><path d="M22.4 4v4a2.3 2.3 0 0 0 0-4z" fill="currentColor" fill-opacity=".45"/></svg>
+        </span></div>
+
+        <div class="screen">
+          <div class="pad">
+            <p style="font-size:12px;line-height:1.6;color:var(--secondary);margin:0 0 14px;">
+              Turn off a type to stop syncing it. Data already written to Apple Health stays where it is.
+            </p>
+            <hr class="rule soft">
+
+            <div class="panel" style="margin-top:14px;">
+              <div class="row">
+                <div class="txt"><div class="t1">Connect Google</div><div class="t2">Fitbit · Pixel Watch</div></div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+              </div>
+              <div class="row">
+                <div class="txt"><div class="t1">Sync log</div><div class="t2">Last run · 05:12</div></div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+              </div>
+              <div class="row">
+                <div class="txt"><div class="t1">AI models</div><div class="t2">On-device</div></div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+              </div>
+            </div>
+
+            <div class="sec"><span class="kicker">Morning insight</span></div>
+            <div class="panel">
+              <div class="row">
+                <div class="txt"><div class="t1">Morning insights</div></div>
+                <button class="sw" type="button" role="switch" aria-checked="true" aria-label="Morning insights"><i></i></button>
+              </div>
+              <div class="row">
+                <div class="txt"><div class="t1">Details on lock screen</div></div>
+                <button class="sw" type="button" role="switch" aria-checked="false" aria-label="Show details on lock screen"><i></i></button>
+              </div>
+              <div class="row">
+                <div class="txt"><div class="t1">Generate via Apple cloud</div></div>
+                <button class="sw" type="button" role="switch" aria-checked="false" aria-label="Generate via Apple cloud"><i></i></button>
+              </div>
+            </div>
+            <div class="foot" style="padding-bottom:4px;">
+              After the first sync past 05:00 HealthLoom writes one insight — on-device unless Private Cloud Compute is enabled above.
+            </div>
+
+            <div class="sec"><span class="kicker">iCloud sync</span></div>
+            <div class="panel">
+              <div class="attn">
+                <span class="dot" style="background:var(--rust);"></span>
+                <span class="lbl">Sync needs attention</span>
+                <button class="go" type="button">Sync now</button>
+              </div>
+              <div class="errtext">Cannot create new type SyncSettings in production schema — record app-settings, zone _defaultZone.</div>
+            </div>
+
+            <div class="sec"><span class="kicker">Tip jar</span></div>
+            <div class="panel">
+              <div class="row">
+                <div class="txt"><div class="t1">Leave a tip</div><div class="t2">One-off · no subscription</div></div>
+                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <nav class="tabbar glass" aria-label="Main">
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="3.5" width="17" height="15"/><path d="M2.5 11h17"/></svg><span class="nm">Today</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 4.5h16v11H8l-5 3.5z"/></svg><span class="nm">Coach</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="7" r="3.4"/><path d="M4 19c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg><span class="nm">You</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18.5 10a7.5 7.5 0 0 0-12.9-5L3.5 7M3.5 12a7.5 7.5 0 0 0 12.9 5l2.1-2"/><path d="M3 3v4.5h4.5M19 19v-4.5h-4.5"/></svg><span class="nm">Data</span></button>
+          <button class="tab" type="button"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="13.5" cy="3.8" r="1.9"/><path d="M4 19l3.5-5 3.5 2.5 2-4.5"/><path d="M11 10l4 1.5 2.5 4"/></svg><span class="nm">Activity</span></button>
+          <button class="tab" type="button" aria-current="page"><svg class="gl" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h16M3 11h16M3 16h16"/><circle cx="8" cy="6" r="1.9" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r="1.9" fill="currentColor" stroke="none"/><circle cx="7" cy="16" r="1.9" fill="currentColor" stroke="none"/></svg><span class="nm">Settings</span></button>
+        </nav>
+      </div>
+      <div class="cap">04 · Settings <span>— glass switches</span></div>
+    </div>
+
+  </div>
+
+  <!-- ================= SPECIMENS ================= -->
+  <div class="specs">
+    <section class="spec">
+      <h3>Row anatomy</h3>
+      <div class="anat">
+        <div class="anat-row">
+          <div><div class="a1">Blood oxygen</div><div class="a2">Latest · 00:00</div></div>
+          <div class="a3">95<u>%</u></div>
+        </div>
+      </div>
+      <div class="anat-ann"><span>the word for the thing, then its context</span><span>value</span></div>
+      <p>
+        <b>No pictograms anywhere a row names something.</b> A row identifies itself with the
+        word, sets context in mono beneath it, and puts the number on the right rail where the
+        eye already waits. An abstract mark that needs a legend is slower to read than the
+        label it replaced — so the label stays and the mark goes.
+      </p>
+    </section>
+
+    <section class="spec">
+      <h3>Scale · ratio 1.25</h3>
+      <div class="scaleline">
+        <b style="font-size:46px;">46</b><b style="font-size:29px;">29</b>
+        <b style="font-size:23px;">23</b><b style="font-size:18.5px;">18.5</b>
+        <b style="font-size:15px;">15</b><b style="font-size:12px;">12</b>
+        <b style="font-size:9.5px;">9.5</b>
+      </div>
+      <p>
+        <b>Archivo</b> at 200–600 for everything read as language,
+        <b style="font-family:'IBM Plex Mono',monospace;">IBM Plex Mono</b> for every label,
+        unit and timestamp — instrument silkscreen, never prose. Each step is the last × 1.25,
+        rounded to the half-point. Bill sized by rule, not by eye.
+      </p>
+    </section>
+
+    <section class="spec">
+      <h3>Concrete fields</h3>
+      <div class="swatches">
+        <i style="background:#1F5468;"></i><i style="background:#43626E;"></i>
+        <i style="background:#9DBBC4;"></i><i style="background:#B8873A;"></i>
+        <i style="background:#8A4526;"></i><i style="background:#EFECE7;"></i>
+      </div>
+      <div class="swlab">
+        <span>Ink</span><span>Slate</span><span>Sky</span><span>Ochre</span><span>Rust</span><span>Paper</span>
+      </div>
+      <p>
+        Your teal and rust survive intact. <b>Ochre</b>, <b>slate</b> and <b>sky</b> join as
+        Konkrete Kunst colour fields — flat, unmixed, and only ever used to distinguish
+        one signal from another. Never a gradient in the content layer.
+      </p>
+    </section>
+
+    <section class="spec">
+      <h3>Glass spec</h3>
+      <div style="height:64px;border-radius:32px;position:relative;overflow:hidden;background:
+        repeating-linear-gradient(90deg,var(--studio-ink) 0 2px,transparent 2px 9px);">
+        <div style="position:absolute;inset:9px;border-radius:23px;
+          -webkit-backdrop-filter:blur(13px) saturate(185%);backdrop-filter:blur(13px) saturate(185%);
+          background:linear-gradient(142deg,rgba(255,255,255,.52),rgba(255,255,255,.2));
+          box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 -1px 0 rgba(255,255,255,.3),0 5px 16px rgba(0,0,0,.2);"></div>
+      </div>
+      <p>
+        <b>blur 26 · saturate 185%</b>, a 1.1 px specular rim top and bottom, and a soft
+        cast shadow. Applied to four things only: header, tab bar, switches, round buttons.
+        Anything holding a number stays opaque.
+      </p>
+    </section>
+  </div>
+
+  <div class="colophon">
+    <span>Max Bill · Junghans 1961 · Ulm HfG</span>
+    <span>Apple Liquid Glass · iOS 26</span>
+    <span>Palette descended from Yacht club</span>
+    <span>Study only — not a shipped build</span>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- Max Bill's Junghans minute track as a readiness dial ----------
+     60 ticks, every 5th long (the hour index). Ticks below the score read
+     rust; above, palette gray. The cursor is Bill's rotated square. */
+  var dial = document.getElementById("dial");
+  if (dial) {
+    var C = 66, N = 60, score = 82;
+    var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var cursorIdx = Math.round((N - 1) * (score / 100));
+    var ns = "http://www.w3.org/2000/svg";
+    var frag = document.createDocumentFragment();
+
+    for (var i = 0; i < N; i++) {
+      var major = i % 5 === 0;
+      var rOut = 62, rIn = major ? 52 : 56.5;
+      var a = (i / N) * Math.PI * 2 - Math.PI / 2;
+      var ln = document.createElementNS(ns, "line");
+      ln.setAttribute("x1", (C + Math.cos(a) * rIn).toFixed(2));
+      ln.setAttribute("y1", (C + Math.sin(a) * rIn).toFixed(2));
+      ln.setAttribute("x2", (C + Math.cos(a) * rOut).toFixed(2));
+      ln.setAttribute("y2", (C + Math.sin(a) * rOut).toFixed(2));
+      ln.setAttribute("stroke-width", major ? 2.1 : 1.3);
+      ln.setAttribute("stroke-linecap", "butt");
+      // resting state is the honest one: gray everywhere, filled ticks
+      // then take the accent. Nothing starts invisible.
+      ln.setAttribute("stroke", "var(--gray)");
+      if (i <= cursorIdx) {
+        ln.setAttribute("data-on", "1");
+        if (reduce) ln.setAttribute("stroke", "var(--rust)");
+      }
+      frag.appendChild(ln);
+    }
+
+    // cursor: the rotated square, Bill's signature motif
+    var ca = (cursorIdx / N) * Math.PI * 2 - Math.PI / 2;
+    var cx = C + Math.cos(ca) * 57, cy = C + Math.sin(ca) * 57;
+    var sq = document.createElementNS(ns, "rect");
+    sq.setAttribute("x", cx - 4.6); sq.setAttribute("y", cy - 4.6);
+    sq.setAttribute("width", 9.2); sq.setAttribute("height", 9.2);
+    sq.setAttribute("fill", "var(--ink)");
+    sq.setAttribute("transform", "rotate(45 " + cx.toFixed(2) + " " + cy.toFixed(2) + ")");
+    frag.appendChild(sq);
+
+    // inner hairline ring — the dial's edge, not decoration
+    var ring = document.createElementNS(ns, "circle");
+    ring.setAttribute("cx", C); ring.setAttribute("cy", C); ring.setAttribute("r", 45.5);
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", "var(--border)");
+    ring.setAttribute("stroke-width", 1);
+    frag.appendChild(ring);
+
+    dial.appendChild(frag);
+
+    if (!reduce) {
+      var on = dial.querySelectorAll('[data-on]');
+      on.forEach(function(el, k){
+        window.setTimeout(function(){ el.setAttribute("stroke", "var(--rust)"); }, 140 + k * 11);
+      });
+    }
+  }
+
+  /* ---------- app light/dark (independent of the viewer's page theme) ---------- */
+  var stage = document.getElementById("stage");
+  document.querySelectorAll("[data-app-set]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var mode = btn.getAttribute("data-app-set");
+      stage.setAttribute("data-app", mode);
+      document.querySelectorAll("[data-app-set]").forEach(function(b){
+        b.setAttribute("aria-pressed", String(b === btn));
+      });
+    });
+  });
+
+  /* ---------- switches and tabs are live, so the glass can be judged in use ---------- */
+  document.querySelectorAll('.sw').forEach(function(sw){
+    sw.addEventListener("click", function(){
+      sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true");
+    });
+  });
+  document.querySelectorAll('.tabbar').forEach(function(bar){
+    bar.addEventListener("click", function(e){
+      var t = e.target.closest(".tab");
+      if (!t) return;
+      bar.querySelectorAll(".tab").forEach(function(x){ x.removeAttribute("aria-current"); });
+      t.setAttribute("aria-current", "page");
+    });
+  });
+})();
+</script>

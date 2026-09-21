@@ -50,7 +50,7 @@ struct WipeFlowView: View {
                         dismiss()
                     } label: {
                         Text("Close")
-                            .font(Theme.font(15, .medium, relativeTo: .callout))
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .callout))
                             .foregroundStyle(Theme.accentDeep)
                     }
                     .buttonStyle(.plain)
@@ -80,7 +80,7 @@ struct WipeFlowView: View {
     private var optionsView: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("This signs out of Google (revoking access), deletes saved keys, removes all app data, and resets settings. This cannot be undone.")
-                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -99,7 +99,7 @@ struct WipeFlowView: View {
             .padding(.top, 20)
 
             Text("Only samples HealthLoom itself wrote are removed — nothing from your watch or other apps.")
-                .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 22)
@@ -130,7 +130,7 @@ struct WipeFlowView: View {
                 }
             } label: {
                 Text("Delete everything")
-                    .font(Theme.font(15, .semibold, relativeTo: .callout))
+                    .font(Theme.font(Theme.Step.body, .semibold, relativeTo: .callout))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -155,10 +155,10 @@ struct WipeFlowView: View {
                     stepIcon(step)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(step.title)
-                            .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                             .foregroundStyle(Theme.ink)
                         Text(stepDetail(step))
-                            .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                             .foregroundStyle(Theme.secondary)
                     }
                     Spacer()
@@ -202,26 +202,26 @@ struct WipeFlowView: View {
         VStack(alignment: .leading, spacing: 0) {
             if let coordinator, coordinator.failedSteps.isEmpty {
                 Text("Everything is deleted.")
-                    .font(Theme.font(17, .medium, relativeTo: .title3))
+                    .font(Theme.font(Theme.Step.lead, .medium, relativeTo: .title3))
                     .foregroundStyle(Theme.ink)
                     .padding(.horizontal, 22)
                     .padding(.top, 18)
                     .accessibilityIdentifier("wipe.done")
             } else {
                 Text("Finished with errors.")
-                    .font(Theme.font(17, .medium, relativeTo: .title3))
+                    .font(Theme.font(Theme.Step.lead, .medium, relativeTo: .title3))
                     .foregroundStyle(Theme.ink)
                     .padding(.horizontal, 22)
                     .padding(.top, 18)
                     .accessibilityIdentifier("wipe.donePartial")
                 Text("Some steps failed (see above). What was deleted stays deleted — fix the cause and run again for the rest.")
-                    .font(Theme.font(13, .regular, relativeTo: .footnote))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     .foregroundStyle(Theme.secondary)
                     .padding(.horizontal, 22)
                     .padding(.top, 8)
             }
             Text("Restart HealthLoom now — the data store was removed while open.")
-                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.secondary)
                 .padding(.horizontal, 22)
                 .padding(.top, 8)

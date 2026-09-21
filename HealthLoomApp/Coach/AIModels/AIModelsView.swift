@@ -111,7 +111,7 @@ struct AIModelsView: View {
             text = "Off"
         }
         return Text(text)
-            .font(Theme.font(12, .regular, relativeTo: .caption))
+            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
             .foregroundStyle(Theme.secondary)
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
@@ -124,7 +124,7 @@ struct AIModelsView: View {
         if row.tier == .privateCloudCompute, let quota = row.quota {
             ThemedRowDivider()
             Text(quotaLine(for: quota))
-                .font(Theme.font(12, .regular, relativeTo: .caption))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 11)
@@ -135,7 +135,7 @@ struct AIModelsView: View {
             ThemedRowDivider()
             HStack {
                 Text("Consented \(date.formatted(date: .abbreviated, time: .omitted))")
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                 Spacer()
                 Button("Withdraw") { viewModel.withdrawConsent(for: row.tier) }
@@ -153,7 +153,7 @@ struct AIModelsView: View {
             ThemedRowDivider()
             HStack {
                 Text(row.hasKey ? "Key stored" : "No key stored")
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                 Spacer()
                 if row.hasKey {
@@ -176,7 +176,7 @@ struct AIModelsView: View {
             ThemedRowDivider()
             HStack {
                 Text("Model")
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                 Spacer()
                 Picker("Model", selection: Binding(
@@ -254,10 +254,10 @@ struct AIModelsView: View {
     private func consentField(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(Theme.font(12, .medium, relativeTo: .caption))
+                .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
             Text(value)
-                .font(Theme.font(14, .regular, relativeTo: .body))
+                .font(Theme.font(Theme.Step.body, .regular, relativeTo: .body))
                 .foregroundStyle(Theme.ink)
         }
     }
@@ -268,7 +268,7 @@ struct AIModelsView: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Paste your API key. It's checked with a single 1-token request, then stored in the Keychain.")
-                    .font(Theme.font(14, .regular, relativeTo: .body))
+                    .font(Theme.font(Theme.Step.body, .regular, relativeTo: .body))
                     .foregroundStyle(Theme.secondary)
                 SecureField("API key", text: Binding(
                     get: { viewModel.keyDraft },

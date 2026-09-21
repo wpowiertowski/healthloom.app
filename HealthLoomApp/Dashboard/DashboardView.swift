@@ -168,15 +168,15 @@ struct DashboardView: View {
             ThemedPanel {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Google isn't connected")
-                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                         .foregroundStyle(Theme.ink)
                     Text("Your daily activity lives in Google — connect the account linked to your Fitbit or Pixel Watch to start syncing.")
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let connectError {
                         Text(connectError)
-                            .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                             .foregroundStyle(Theme.accentDeep)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -184,7 +184,7 @@ struct DashboardView: View {
                         connectGoogle()
                     } label: {
                         Text(isConnectingGoogle ? "Connecting…" : "Connect Google")
-                            .font(Theme.font(15, .semibold, relativeTo: .callout))
+                            .font(Theme.font(Theme.Step.body, .semibold, relativeTo: .callout))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)

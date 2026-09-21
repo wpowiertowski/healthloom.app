@@ -1,11 +1,17 @@
 // TodayComponents.swift
 //
-// WP-33 (implementation-plan.md) / architecture.md D12: the Yacht club
-// panel components, ported from `Design/HealthLoomTodayView-YachtClub.swift`
-// (geometry, spacing, and color roles kept verbatim) with the D12-mandated
-// production deviations applied at every text site: `Theme.font(_:_:
-// relativeTo:)` (Dynamic Type) instead of fixed `helv(size)`, dynamic
-// light/dark tokens, and VoiceOver labels on every row and instrument.
+// WP-33, reworked by WP-40 (implementation-plan.md) / architecture.md D16
+// (supersedes D12): the Today panel components.
+//
+// Panel geometry, spacing and colour roles still come from the Yacht club
+// port (`Design/HealthLoomTodayView-YachtClub.swift`). What D16 changes
+// here is the hero and the type: `HeroInstrument` now drives a
+// `JunghansDial` with the score seated inside it and a `SignalIndex`
+// beside it, and every text site sits on `Theme.Step`'s 1.25 ladder in
+// Archivo/IBM Plex Mono rather than ad-hoc Helvetica sizes. D12's two
+// production deviations still bind at every text site: `Theme.font`/
+// `Theme.mono` with `relativeTo:` (Dynamic Type) and dynamic light/dark
+// tokens, plus VoiceOver labels on every row and instrument.
 // `TodayView.swift` composes these and owns all data flow -- everything
 // here is a dumb, value-driven view (the `SyncTypeRow`/`ActivityRow`
 // "dumb row, smart container" convention).
@@ -22,7 +28,7 @@ struct TodayHeader: View {
             HStack(spacing: 8) {
                 Rectangle().fill(Theme.accent).frame(width: 6, height: 6)
                 Text("healthloom")
-                    .font(Theme.font(16, .medium, relativeTo: .callout))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .callout))
                     .foregroundStyle(Theme.ink)
             }
             .accessibilityHidden(true) // decorative brand mark
@@ -38,7 +44,7 @@ struct TodayHeader: View {
                 // TODAY label, greeting, and subs all pass at 11-14pt).
                 // VoiceOver still announces one line via the label below.
                 Text(syncStatus.text)
-                    .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     // Always secondary: even "Not synced yet" is a status
                     // the user must read, and tertiary is placeholders-only
                     // (L2).
@@ -68,41 +74,31 @@ enum ReadinessDisplay: Equatable {
 struct HeroInstrument: View {
     let readiness: ReadinessDisplay
 
+    /// The dial keeps its width while the caption beside it does not, so
+    /// at accessibility sizes the text column collapses to a few
+    /// characters and "30-day average" wraps mid-word. Stack instead:
+    /// the dial over full-width text, which is the arrangement Apple's
+    /// own layouts fall back to. Below those sizes the side-by-side
+    /// instrument is the design.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Readiness")
-                .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.4)
+                .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2))
+                .tracking(1.4)
+                .textCase(.uppercase)
                 .foregroundStyle(Theme.secondary)
-            HStack(alignment: .bottom, spacing: 18) {
-                // The pending dashes render alone: dash-only text has no
-                // ascenders, so any side-by-side arrangement with "/100"
-                // stacks or floats them instead of seating them —
-                // misplaced text the audit flags as inaccessible (WP-37).
-                // Dropping "/100" with no score is also simply honest.
-                if case .scored(let score, _, _) = readiness {
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text("\(score)")
-                            .font(Theme.font(60, .light, relativeTo: .largeTitle))
-                            .foregroundStyle(Theme.ink)
-                            .monospacedDigit()
-                        Text("/100")
-                            .font(Theme.font(18, .regular, relativeTo: .title3))
-                            .foregroundStyle(Theme.ink)
-                    }
-                } else {
-                    Text(scoreText)
-                        .font(Theme.font(60, .light, relativeTo: .largeTitle))
-                        .foregroundStyle(Theme.ink)
-                        .monospacedDigit()
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 14) {
+                    dial
+                    readout
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 8) {
-                    TickScale(
-                        value: scaleValue,
-                        accessibilityLabel: "Readiness",
-                        accessibilityValue: accessibilityValue
-                    )
-                    captionText
+            } else {
+                HStack(alignment: .center, spacing: 18) {
+                    dial
+                    readout
+                    Spacer(minLength: 0)
                 }
             }
         }
@@ -110,17 +106,76 @@ struct HeroInstrument: View {
         .accessibilityIdentifier("today.readiness")
     }
 
-    private var scoreText: String {
-        switch readiness {
-        case .pending: return "\u{2013}\u{2013}" // en-dash pair, tabular width
-        case .scored(let score, _, _): return "\(score)"
+    private var dial: some View {
+        JunghansDial(
+            value: scaleValue,
+            accessibilityLabel: "Readiness",
+            accessibilityValue: accessibilityValue,
+            center: { AnyView(dialCenter) }
+        )
+    }
+
+    private var readout: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SignalIndex(signalsUsed: signalsUsed)
+            captionText
         }
+    }
+
+    /// The score, seated inside the dial's track. `minimumScaleFactor`
+    /// rather than a scaling dial: the instrument face is a fixed object
+    /// (a watch does not grow), so at the largest Dynamic Type sizes the
+    /// number shrinks to fit its face instead of bursting it.
+    @ViewBuilder private var dialCenter: some View {
+        VStack(spacing: 1) {
+            switch readiness {
+            case .scored(let score, _, _):
+                Text("\(score)")
+                    .font(Theme.font(Theme.Step.display, .ultraLight, relativeTo: .largeTitle))
+                    .foregroundStyle(Theme.ink)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+            case .pending:
+                // En-dash pair, tabular width. Rendered alone: dash-only
+                // text has no ascenders, so pairing it with a unit floats
+                // them apart (the WP-37 audit flagged exactly this).
+                Text("\u{2013}\u{2013}")
+                    .font(Theme.font(Theme.Step.display, .ultraLight, relativeTo: .largeTitle))
+                    .foregroundStyle(Theme.tertiary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+            }
+            // The dial's own caption is the SCALE, not the name: the hero
+            // already says "Readiness" directly above it, and printing it
+            // twice is noise. "/100" is what the number was missing --
+            // the Yacht club hero set it beside the score, and a score
+            // without its scale is a number without units.
+            if case .scored = readiness {
+                Text("/100")
+                    .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
+                    .tracking(0.8)
+                    .foregroundStyle(Theme.tertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+        }
+        .padding(.horizontal, 10)
+        .accessibilityHidden(true) // the dial carries the label and value
     }
 
     private var scaleValue: Double? {
         switch readiness {
         case .pending: return nil
         case .scored(let score, _, _): return Double(score) / 100
+        }
+    }
+
+    private var signalsUsed: Int {
+        switch readiness {
+        case .pending: return 0
+        case .scored(_, _, let signalsUsed): return signalsUsed
         }
     }
 
@@ -135,9 +190,9 @@ struct HeroInstrument: View {
         switch readiness {
         case .pending:
             Text("Sync your health data to see readiness")
-                .font(Theme.font(12, .regular, relativeTo: .caption))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
-                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
         case .scored(_, let delta, let signalsUsed):
             // WP-33 step 4's insufficient-signals caption, shared with the
             // day-one full-signal case (H1): 4 signals and no history is
@@ -147,18 +202,56 @@ struct HeroInstrument: View {
                 // iOS 26 deprecated `Text + Text`; interpolating pre-styled
                 // Text values preserves each run's own font/color.
                 let deltaText = Text(delta >= 0 ? "+\(delta)" : "\(delta)")
-                    .font(Theme.font(12, .semibold, relativeTo: .caption))
+                    .font(Theme.mono(Theme.Step.caption, .semibold, relativeTo: .caption))
                     .foregroundStyle(Theme.ink)
                 let averageText = Text(" vs 30-day average")
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                 Text("\(deltaText)\(averageText)")
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("based on \(signalsUsed) of 4 signals")
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// How many of the four readiness signals reported this morning, as four
+/// flat fields filled left to right.
+///
+/// It is a **count, not an identity**. `Readiness` publishes `signalsUsed`
+/// and nothing finer, so cell 2 being filled does not mean "resting HR
+/// reported" -- it means two of four did. That is why the cells are one
+/// colour and carry no labels: colouring or naming them per signal would
+/// assert a mapping the data cannot back, and a legend that lies is worse
+/// than no legend. VoiceOver says exactly what is true ("2 of 4").
+///
+/// Giving each signal its own concrete field (the mockup's four-colour row)
+/// needs `ReadinessEngine` to publish which signals contributed. Its
+/// validity rules are internal to CoachKit, so deriving presence here would
+/// duplicate them and drift; publishing them is its own work package
+/// (see implementation-plan.md WP-40).
+struct SignalIndex: View {
+    let signalsUsed: Int
+
+    private static let total = 4
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<Self.total, id: \.self) { index in
+                Rectangle()
+                    .fill(index < signalsUsed ? Theme.accent : Theme.border)
+                    .frame(height: 7)
+            }
+        }
+        .frame(maxWidth: 132)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Signals reporting")
+        .accessibilityValue("\(signalsUsed) of \(Self.total)")
+        .accessibilityIdentifier("today.readiness.signals")
     }
 }
 
@@ -202,7 +295,7 @@ struct TodayMetricRowView: View {
                     // stacks truncate overlong text instead of wrapping it.
                     HStack(alignment: .center) {
                         Text(metric.name)
-                            .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                             .foregroundStyle(Theme.ink)
                             // Ideal height (all lines): HStack compression
                             // truncates instead of wrapping without it.
@@ -213,19 +306,24 @@ struct TodayMetricRowView: View {
                         // at any size.
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
                             Text(metric.value ?? "\u{2014}")
-                                .font(Theme.font(21, .regular, relativeTo: .title3))
+                                .font(Theme.font(Theme.Step.value, .regular, relativeTo: .title3))
                                 .foregroundStyle(metric.value == nil ? Theme.tertiary : Theme.ink)
                                 .monospacedDigit()
                             if let unit = metric.unit {
+                                // D16.3: a unit is read off an instrument,
+                                // not spoken — mono, like the sub below.
                                 Text(unit)
-                                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                                    .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption))
                                     .foregroundStyle(Theme.tertiary)
                             }
                         }
                         .fixedSize(horizontal: true, vertical: false)
                     }
+                    // Metadata, not prose ("Latest · 10:26", "33% of
+                    // 10,000 goal") — mono. Not uppercased: the content is
+                    // dynamic and some subs are long enough to shout.
                     Text(metric.sub)
-                        .font(Theme.font(11, .regular, relativeTo: .caption2))
+                        .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
                         .foregroundStyle(Theme.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -322,10 +420,10 @@ struct CoachPanel: View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("COACH")
-                    .font(Theme.font(11, .semibold, relativeTo: .caption2)).tracking(0.6)
+                    .font(Theme.mono(Theme.Step.micro, .semibold, relativeTo: .caption2)).tracking(0.6)
                     .foregroundStyle(Theme.accentDeep)
                 Text(insightText ?? "Your daily insight will appear here once the on-device coach arrives.")
-                    .font(Theme.font(13.5, .regular, relativeTo: .footnote))
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     // Always ink: the placeholder sits on the rust tint,
                     // where secondary fails contrast (WP-37 audit) — the
                     // quieter wording (not a quieter color) marks the

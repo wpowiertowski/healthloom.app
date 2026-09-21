@@ -100,6 +100,19 @@ targets:
         # the plist (GENERATE_INFOPLIST_FILE), and this target ships the
         # checked-in Info.plist below instead.
         UILaunchScreen: {}
+        # WP-40 / D16. Archivo ships as ONE variable TTF: it registers nine
+        # named instances as real faces, so `.weight()` resolves to a true
+        # cut (ArchivoRoman-Light/-Medium/...) instead of synthesising one --
+        # verified through CoreText before bundling, which is why there are
+        # no static Archivo files here. IBM Plex Mono has no variable build
+        # in Google Fonts, so its three used weights ship as statics. Both
+        # families are OFL; the licences ship beside them in
+        # HealthLoomApp/Resources/Fonts/ (bundled, per the OFL's terms).
+        UIAppFonts:
+          - Archivo.ttf
+          - IBMPlexMono-Regular.ttf
+          - IBMPlexMono-Medium.ttf
+          - IBMPlexMono-SemiBold.ttf
         # arm64, not armv7: armv7 is 32-bit ARM, which no device capable of
         # running this app's iOS 27 deployment target reports support for --
         # the old template value made the app uninstallable on real hardware.

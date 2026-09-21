@@ -1,7 +1,7 @@
 // ThemedChrome.swift
 //
-// The Yacht club design language (Theme.swift / architecture.md D12) applied
-// to every screen that isn't Today.
+// The shared design language (Theme.swift / architecture.md D16, which
+// supersedes D12) applied to every screen that isn't Today.
 //
 // **Why this file exists / documented gap:** WP-33's brief is scoped to the
 // *Today view* ("WP-33 · Today view — Yacht club design", implementation-plan
@@ -18,13 +18,17 @@
 // (`Design/healthloom-final-yachtclub.html`, `Design/HealthLoomTodayView-
 // YachtClub.swift`) as already interpreted by `Today/TodayComponents.swift`:
 // 22 pt gutters and a 12 pt top inset, `Theme.gray` hairline under the
-// header, uppercase 11 pt tracked section labels (`TODAY`/`COACH`), 4 pt-
-// radius `Theme.surface` panels stroked in `Theme.border` with hairline
+// header, uppercase tracked section labels (`TODAY`/`COACH`), 4 pt-radius
+// `Theme.surface` panels stroked in `Theme.border` with hairline
 // `Theme.border` row separators (`InstrumentPanel`), the 2 pt rust attention
 // bar for rows needing attention (`TodayMetricRowView`'s `isPriority`), the
-// rust-tint callout panel (`CoachPanel`), 6 pt status dots (`TodayHeader`),
-// and Helvetica via `Theme.font(_:_:relativeTo:)` so Dynamic Type still
-// scales (D12 deviation (a)).
+// rust-tint callout panel (`CoachPanel`), 6 pt status dots (`TodayHeader`).
+//
+// WP-40 / D16 retypes all of it: sizes come from `Theme.Step`'s 1.25 ladder,
+// language is set in Archivo (`Theme.font`) and instrument readings in IBM
+// Plex Mono (`Theme.mono`), both still via `relativeTo:` so Dynamic Type
+// scales (D12 deviation (a)). `ThemedIconButton` is the one piece that
+// crosses into D16's control layer: it is glass.
 //
 // **Status colors.** The palette has no green/red/orange/purple -- rust is
 // its only functional color (Theme.swift) -- so the system status colors
@@ -121,7 +125,7 @@ struct ThemedHeader<Actions: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title)
-                    .font(Theme.font(26, .light, relativeTo: .title))
+                    .font(Theme.font(Theme.Step.hero, .light, relativeTo: .title))
                     .foregroundStyle(Theme.ink)
                 Spacer(minLength: 12)
                 HStack(spacing: 18) { actions }
@@ -183,7 +187,7 @@ struct ThemedSectionHeader: View {
 
     var body: some View {
         Text(title.uppercased())
-            .font(Theme.font(11, .medium, relativeTo: .caption2)).tracking(0.8)
+            .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
             .foregroundStyle(Theme.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, topPadding)
@@ -220,10 +224,10 @@ struct ThemedCallout: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title.uppercased())
-                .font(Theme.font(11, .semibold, relativeTo: .caption2)).tracking(0.6)
+                .font(Theme.mono(Theme.Step.micro, .semibold, relativeTo: .caption2)).tracking(0.6)
                 .foregroundStyle(Theme.accentDeep)
             Text(message)
-                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.ink)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -265,7 +269,7 @@ struct ThemedBadge: View {
 
     var body: some View {
         Text(text)
-            .font(Theme.font(10.5, .medium, relativeTo: .caption2))
+            .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption2))
             .foregroundStyle(style == .accent ? Theme.accentDeep : Theme.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -288,7 +292,7 @@ struct ThemedErrorText: View {
 
     var body: some View {
         Text(message)
-            .font(Theme.font(12, .regular, relativeTo: .caption))
+            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
             .foregroundStyle(Theme.accentDeep)
             .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
@@ -320,12 +324,16 @@ struct ThemedIconButton: View {
                     ProgressView().tint(Theme.ink)
                 } else {
                     Image(systemName: systemImage)
-                        .font(.system(size: 18, weight: .light))
+                        .font(.system(size: 17, weight: .light))
                         .foregroundStyle(Theme.ink)
                 }
             }
-            // WP-37: 44pt touch target for the 24pt glyph (shared fix —
-            // every themed icon button was audit-small).
+            // D16 control layer: header buttons are glass, so they lift off
+            // the matte content instead of sitting in it. The glass circle
+            // is 36pt; the 44pt frame around it is the WP-37 touch target,
+            // which stays larger than the visible control on purpose.
+            .frame(width: 36, height: 36)
+            .glassEffect(.regular, in: .circle)
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -345,7 +353,7 @@ struct ThemedNavRow<Destination: View>: View {
         NavigationLink(destination: destination) {
             HStack {
                 Text(title)
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -372,7 +380,7 @@ struct ThemedToggleRow: View {
         Toggle(isOn: $isOn) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                 if isBusy {
                     ProgressView().controlSize(.mini).tint(Theme.accent)

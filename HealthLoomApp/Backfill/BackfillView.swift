@@ -74,7 +74,7 @@ struct BackfillView: View {
         // is drawn explicitly and the picker's own is hidden.
         HStack {
             Text("Import history back to")
-                .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                 .foregroundStyle(Theme.ink)
             Spacer(minLength: 12)
             Picker(
@@ -101,7 +101,7 @@ struct BackfillView: View {
                 Image(systemName: isPaused ? "play" : "pause")
                     .font(.system(size: 14, weight: .light))
                 Text(isPaused ? "Resume Backfill" : "Pause Backfill")
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                 Spacer()
             }
             .foregroundStyle(Theme.accentDeep)

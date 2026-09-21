@@ -10,52 +10,41 @@ import SwiftUI
 struct ActivityRow: View {
     let entry: ActivityEntry
 
-    // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation,
-    // matching `TodayMetricRowView`'s geometry. Copy, structure and every
-    // accessibility identifier are unchanged; the icon moves from the system
-    // tint to the palette's single accent.
+    // WP-40 / D16: the per-activity symbol is gone. It was already
+    // `accessibilityHidden` because the title carries the meaning, which is
+    // the whole argument against it -- a mark that adds nothing to a row
+    // that already names itself costs scan time and earns none back. No UI
+    // test referenced `activities.row.<id>.icon`; `.title` and `.detail`
+    // (which they do assert on) are untouched.
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Image(systemName: iconName)
-                    .font(.system(size: 14, weight: .light))
-                    .foregroundStyle(Theme.accent)
-                    // Decorative: the title carries the meaning (same
-                    // treatment as the tab-bar icons).
-                    .accessibilityHidden(true)
-                    .accessibilityIdentifier("activities.row.\(entry.id).icon")
                 Text(entry.title)
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("activities.row.\(entry.id).title")
                 Spacer()
+                // Timestamp, duration and source are instrument
+                // readings (D16.3) — mono, and tabular by construction so
+                // times line up down the column.
                 Text(entry.start, style: .time)
-                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                    .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
                     .foregroundStyle(Theme.tertiary)
             }
             Text("\(durationText) \u{00B7} \(entry.sourceLabel)")
-                .font(Theme.font(12, .regular, relativeTo: .caption))
+                .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .accessibilityIdentifier("activities.row.\(entry.id).detail")
             // D13.2: the linked Fitbit session's fields, inline as a
             // supplement under the watch workout -- never a second entry.
             if let supplement = entry.supplement {
                 Text("+ \(supplementText(supplement))")
-                    .font(Theme.font(11, .regular, relativeTo: .caption2))
+                    .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
                     .foregroundStyle(Theme.tertiary)
                     .accessibilityIdentifier("activities.row.\(entry.id).supplement")
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 13)
-    }
-
-    private var iconName: String {
-        switch entry.kind {
-        case .workout(let workout):
-            return workout.isAppleWatch ? "applewatch" : "figure.run"
-        case .unlinkedFitbitSession:
-            return "figure.run"
-        }
     }
 
     private var durationText: String {

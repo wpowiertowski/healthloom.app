@@ -202,7 +202,8 @@ not editable. The Prompt Editor shows the exact final string — nothing hidden.
 - On-device AI is the default; every off-device hop — including Apple's own PCC — is
   explicit opt-in.
 
-**D12 — UI is design-locked to the Yacht club system.**
+**D12 — UI is design-locked to the Yacht club system.** *(superseded by D16 —
+the palette below still stands; the typography and instrument do not.)*
 The HTML/Swift mockups are the spec: `Theme` tokens, tick-scale instrument, hairline
 panels, single rust accent. Two deviations are mandated for production: (a) typography
 moves from fixed-size Helvetica Neue to Dynamic-Type-scaling fonts (`ScaledMetric` /
@@ -270,6 +271,60 @@ session-rebuild plumbing. Two invariants ride every swap: (a) the effective prom
 switches; (b) switching to any off-device tier re-checks consent, and each `ChatTurn`
 records which tier served it, so the "What did the coach see?" trace also answers
 "…and where did it run?".
+
+**D16 — UI is design-locked to the Concrete Glass system (supersedes D12).**
+Max Bill's concrete geometry and Apple's Liquid Glass want opposite things — matte,
+orthogonal, printed versus fluid, translucent, lensing. They are not blended. They are
+assigned to **different layers**, which is also Apple's own content/control model:
+
+- **Content layer is Bill.** Everything holding a number stays opaque and matte: square
+  corners, hairline rules, flat unmixed colour fields, no gradients, no translucency.
+- **Control layer is Glass.** Only the chrome — the detached tab-bar capsule and the
+  round header buttons — uses `.glassEffect`, lifting off the matte content rather than
+  sitting in it. Nothing that holds a number is ever translucent.
+
+The split is load-bearing, not stylistic: refraction only reads as refraction when there
+is precise geometry behind it to bend, and a blurred soft surface shows nothing.
+
+**What ships, and the gap.** The bar is a glass capsule, but it sits *in flow* and so
+refracts the canvas, not moving content. Floating it in `.safeAreaInset(edge: .bottom)`
+was tried and reverted: the outer inset does not reach through the `NavigationStack`
+each non-Today tab wraps itself in, so those screens kept claiming full height, the
+capsule covered what they pinned to the bottom, and taps meant for Coach's input bar
+landed on the tab underneath it. Today — the one tab with no `NavigationStack` — was
+unaffected, which is what identified the cause. Closing the gap means the shell owning
+one `NavigationStack` instead of six: a navigation change, not a design one, and its own
+work package.
+
+`Design/healthloom-bill-glass.html` is the locked mockup. Three sub-decisions:
+
+**D16.1 — The palette is inherited, and nothing is added to it.** Every WP-33/WP-37
+colour keeps its shipped value. Those carry a documented WCAG audit, and re-tinting them
+for a cosmetic warmth nudge would discard it for nothing; the design change comes from
+geometry, type and material, not from moving proven colours.
+
+No new colour ships either. The mockup's four-colour signal row needs to know *which*
+signals contributed, and `Readiness` publishes only `signalsUsed` — a count. Colouring
+four cells per signal would assert a mapping the data cannot back, so `SignalIndex`
+renders the count in one accent and the four concrete fields wait for the engine change
+that would make them true (WP-40's stated follow-up). Shipping their tokens now would be
+shipping dead colour.
+
+**D16.2 — No pictograms where a row names something.** A row identifies itself with the
+word, sets context in mono beneath it, and puts the value on the right rail. An abstract
+mark that needs a legend is slower to read than the label it replaced, so the label stays
+and the mark goes (this removed `ActivityRow`'s per-activity symbol, which was already
+`accessibilityHidden` because the title carried the meaning — the argument against it).
+Conventional wayfinding survives: tab icons, chevrons and status dots stay, because they
+are labelled and carry no semantics of their own.
+
+**D16.3 — Two faces, one ladder.** **Archivo** (display: the Akzidenz/Helvetica lineage
+the Ulm school actually set in) for language; **IBM Plex Mono** for anything read off an
+instrument — units, timestamps, counts, uppercase section labels. Nav labels are language,
+not silkscreen. Sizes follow one geometric ladder, ratio 1.25 anchored at 9.5 pt
+(9.5 / 12 / 15 / 18.5 / 23 / 29 / 46); the Yacht club build had drifted to 17 ad-hoc
+sizes against no stated system. D12's two production deviations still bind: Dynamic Type
+scaling via `relativeTo:`, and a dark-palette variant.
 
 ## 5. Data flow summaries
 

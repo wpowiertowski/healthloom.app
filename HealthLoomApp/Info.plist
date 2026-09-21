@@ -45,6 +45,13 @@
 	<string>HealthLoom reads your Apple Health workouts, heart rate, and sleep data so it can avoid creating duplicate entries when it imports the same activity from your Fitbit, and so your on-device AI coach can reference your recent activity, sleep, and vitals to give you personalized guidance.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>HealthLoom writes your steps, heart rate, sleep, and weight data from your Fitbit (synced via the Google Health API) into Apple Health, so all your health data lives in one place.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Archivo.ttf</string>
+		<string>IBMPlexMono-Regular.ttf</string>
+		<string>IBMPlexMono-Medium.ttf</string>
+		<string>IBMPlexMono-SemiBold.ttf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

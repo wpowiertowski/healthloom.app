@@ -89,7 +89,7 @@ struct SettingsView: View {
     var body: some View {
         ThemedScreen(title: "Sync Settings", chrome: chrome) {
             Text("Turn off a type to stop syncing it. Data already written to Apple Health or saved on-device is not deleted -- that's a separate step in a future release.")
-                .font(Theme.font(13, .regular, relativeTo: .footnote))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -109,10 +109,10 @@ struct SettingsView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Connect Google")
-                                    .font(Theme.font(15, .medium, relativeTo: .callout))
+                                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .callout))
                                     .foregroundStyle(Theme.ink)
                                 Text("Sync steps, heart rate, weight, and sleep from Fitbit or Pixel Watch.")
-                                    .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                                     .foregroundStyle(Theme.secondary)
                             }
                             Spacer()
@@ -188,7 +188,7 @@ struct SettingsView: View {
                 )
                 if insightAuthStatus == .denied {
                     Text("Notifications are off for HealthLoom — enable them in Settings to receive morning insights.")
-                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -200,7 +200,7 @@ struct SettingsView: View {
             .padding(.top, 20)
 
             Text("After the first sync past 5am, HealthLoom generates one insight — on-device unless Apple cloud (PCC) is enabled in AI Models and generation via Apple cloud is on above. The lock-screen notification shows the headline only (numbers removed) unless details are on.")
-                .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -228,7 +228,7 @@ struct SettingsView: View {
             ThemedPanel {
                 HStack {
                     Text(cloudSyncStatusText)
-                        .font(Theme.font(14, .regular, relativeTo: .subheadline))
+                        .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
                         .foregroundStyle(Theme.secondary)
                         .accessibilityIdentifier("settings.icloud.status")
                     Spacer()
@@ -237,14 +237,14 @@ struct SettingsView: View {
                             await appEnvironment.cloudSync.syncNow()
                         }
                     }
-                    .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                    .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .accessibilityIdentifier("settings.icloud.syncNow")
                 }
                 .padding(.horizontal, 16).padding(.vertical, 13)
                 if case .failed(let message) = appEnvironment.cloudSync.status {
                     ThemedRowDivider()
                     Text(message)
-                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -273,7 +273,7 @@ struct SettingsView: View {
             ThemedPanel {
                 if appEnvironment.tipStore.tipCount > 0 {
                     Text("Thanks for supporting HealthLoom — \(appEnvironment.tipStore.tipCount) tip\(appEnvironment.tipStore.tipCount == 1 ? "" : "s") so far!")
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16).padding(.vertical, 11)
@@ -300,15 +300,15 @@ struct SettingsView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(product.displayName)
-                                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                                        .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                                         .foregroundStyle(Theme.ink)
                                     Text(product.description)
-                                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                                         .foregroundStyle(Theme.secondary)
                                 }
                                 Spacer()
                                 Text(product.displayPrice)
-                                    .font(Theme.font(15, .regular, relativeTo: .subheadline))
+                                    .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
                                     .foregroundStyle(Theme.secondary)
                                     .monospacedDigit()
                             }
@@ -326,7 +326,7 @@ struct SettingsView: View {
                         ThemedRowDivider()
                     }
                     Text("Couldn't load tips — check your connection and try again.")
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16).padding(.vertical, 13)
@@ -338,7 +338,7 @@ struct SettingsView: View {
                         }
                     } label: {
                         Text("Retry")
-                            .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                             .foregroundStyle(Theme.ink)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16).padding(.vertical, 13)
@@ -347,7 +347,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.tips.retry")
                 } else if slot == .comingSoon {
                     Text("Tips are coming soon — in-app purchase products are being set up.")
-                        .font(Theme.font(13, .regular, relativeTo: .footnote))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16).padding(.vertical, 13)
@@ -363,7 +363,7 @@ struct SettingsView: View {
                 if case .failed(let message) = appEnvironment.tipStore.lastResult {
                     ThemedRowDivider()
                     Text(message)
-                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -378,7 +378,7 @@ struct SettingsView: View {
                 if appEnvironment.tipStore.lastResult == .pendingApproval {
                     ThemedRowDivider()
                     Text("Waiting for approval — the tip completes if approved in the App Store.")
-                        .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                         .foregroundStyle(Theme.secondary)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -407,7 +407,7 @@ struct SettingsView: View {
                 } label: {
                     HStack {
                         Text("Export my data")
-                            .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                             .foregroundStyle(Theme.ink)
                         Spacer()
                         if isExporting {
@@ -428,7 +428,7 @@ struct SettingsView: View {
                     ShareLink(item: exportURL, subject: Text("HealthLoom data export")) {
                         HStack {
                             Text("Share export file")
-                                .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                                .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                                 .foregroundStyle(Theme.accentDeep)
                             Spacer()
                             Image(systemName: "square.and.arrow.up")
@@ -462,7 +462,7 @@ struct SettingsView: View {
             .padding(.top, 20)
 
             Text("Export downloads LocalSample rows, your knowledge profile, and chat history as one JSON file. Disconnect & wipe signs out of Google, deletes saved keys, HealthKit samples HealthLoom wrote, all app data, and settings — then restart the app.")
-                .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -503,7 +503,7 @@ struct SettingsView: View {
             .padding(.top, 20)
 
             Text("When on, activities your Apple Watch recorded win: overlapping Fitbit workouts and their heart rate, steps, energy, and distance aren't duplicated into Apple Health -- the Fitbit session is kept in HealthLoom as a supplement instead. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
-                .font(Theme.font(11.5, .regular, relativeTo: .caption))
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.tertiary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)

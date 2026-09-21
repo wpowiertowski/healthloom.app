@@ -861,6 +861,54 @@ no UI automation).
 **Tests:** AppIntentsTesting suite per intent; opt-out ⇒ entities absent from the index;
 sync intent respects the same in-flight coalescing as every other trigger (WP-09).
 
+### WP-40 · Concrete Glass design system
+**Depends on:** WP-33, WP-37 · **Decision:** architecture.md **D16** (supersedes D12).
+**Mockup:** `Design/healthloom-bill-glass.html` (locked).
+
+**Steps:**
+1. **Tokens** (`Today/Theme.swift`) — keep every shipped colour and add no new one
+   (D16.1); add the 1.25 type ladder (`Theme.Step`) and `Theme.mono` beside
+   `Theme.font`.
+2. **Typefaces** — bundle Archivo (one variable TTF; nine named instances register as
+   real faces, so `.weight()` resolves a true cut — verified via CoreText before
+   bundling) and IBM Plex Mono at the three used weights. Both OFL, licences bundled.
+   Wired through `project.yml` → `UIAppFonts`.
+3. **Instrument** (`Today/JunghansDial.swift`, replaces `TickScale.swift`) — Bill's
+   Junghans minute track: 60 ticks, every fifth an hour index, rotated-square cursor,
+   score seated inside. Drawn in one `Canvas` pass. Clamping and the caller-supplied
+   VoiceOver label/value carry over verbatim from the linear scale.
+4. **Signal index** (`SignalIndex`) — four flat cells, filled left to right by
+   `Readiness.signalsUsed`. A count, not an identity: the cells are one colour and
+   carry no labels, because naming or colouring them per signal would assert a mapping
+   `signalsUsed` cannot back.
+5. **Control layer** — tab bar becomes a glass capsule (`.glassEffect(.regular,
+   in: .capsule)`), in flow; header buttons get `.glassEffect` in a 36 pt circle inside
+   the 44 pt touch target.
+6. **De-iconography** (D16.2) — remove `ActivityRow`'s per-activity symbol; apply the
+   type ladder by *role* across all 126 remaining call sites (uppercase/tracked labels →
+   `Theme.mono(micro)`, prose → `Theme.font(caption/body/…)`), never by size alone.
+7. **Re-record** all 46 snapshot references.
+
+**Tests:** existing snapshot matrix (light/dark × XS/XL/AXXXL) re-recorded and green;
+UI-test identifiers unchanged (`tabbar.*`, `activities.row.<id>.title|.detail` — no test
+referenced the removed `.icon`); full bundle + UI suite green, zero compiler warnings.
+
+**Deliberately out of scope — follow-up 1, true refraction.** The capsule refracts the
+canvas, not scrolling content, because `.safeAreaInset(edge: .bottom)` does not reach
+through the `NavigationStack` each non-Today tab creates for itself (see D16). Hoisting
+those six stacks into one shell-owned `NavigationStack` would fix it and simplify the
+shell, but it is a navigation change with its own UI-test surface.
+
+**Deliberately out of scope — follow-up 2:** the mockup's four
+labelled, individually-coloured signal bars. They need `ReadinessEngine` to publish both
+*which* signals contributed and each one's magnitude; today it publishes only a count.
+Its validity rules (`valid(_:in:)`) are internal to CoachKit, so deriving presence in the
+app would duplicate them and drift — the repo's own "literal drift" bug shape. The fix is
+a `contributingSignals(inputs:)` on the engine that `score(inputs:)` itself uses, so there
+is one definition; that is a CoachKit public-API change with its own tests and belongs in
+its own work package, not riding a design PR. Until then `SignalIndex` renders the count
+honestly and the four concrete fields stay unshipped rather than faked.
+
 ---
 
 ## Sequencing summary
@@ -872,6 +920,7 @@ P1  WP-11..18  full mapping, backfill, background ..... complete data
 P2  WP-19..26  on-device coach + transparency ......... private AI
 P3  WP-27..32  PCC/Claude/Gemini tiers, consent, evals  model choice
 P4  WP-33..39  Yacht club UI, insights, wipe, launch .. polish
+P5  WP-40      Concrete Glass design system ........... Bill x Liquid Glass
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

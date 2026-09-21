@@ -33,17 +33,19 @@ struct SyncLogRow: View {
                         .frame(width: 6, height: 6)
                         .accessibilityIdentifier("synclog.row.\(entry.id).statusIcon")
                     Text(displayName)
-                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                         .foregroundStyle(Theme.ink)
                         .accessibilityIdentifier("synclog.row.\(entry.id).name")
                     Spacer()
                     Text(entry.timestamp, style: .relative)
-                        .font(Theme.font(11, .regular, relativeTo: .caption2))
+                        .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
                         .foregroundStyle(Theme.tertiary)
                         .accessibilityIdentifier("synclog.row.\(entry.id).timestamp")
                 }
+                // Count, not prose (D16.3) -- and tabular, so the column
+                // of item counts lines up down the log.
                 Text("\(entry.itemCount) item\(entry.itemCount == 1 ? "" : "s")")
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                     .accessibilityIdentifier("synclog.row.\(entry.id).count")
                 // WP-12b: watch-priority suppression bookkeeping (architecture
@@ -53,7 +55,7 @@ struct SyncLogRow: View {
                 // on `Label` reporting one identifier on two elements.
                 if let suppressedCount = entry.suppressedCount, suppressedCount > 0 {
                     Text("\(suppressedCount) deferred to Apple Watch")
-                        .font(Theme.font(11, .regular, relativeTo: .caption2))
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption2))
                         .foregroundStyle(Theme.tertiary)
                         .accessibilityIdentifier("synclog.row.\(entry.id).suppressed")
                 }

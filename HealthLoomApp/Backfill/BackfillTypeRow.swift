@@ -34,13 +34,15 @@ struct BackfillTypeRow: View {
                         .frame(width: 6, height: 6)
                         .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).statusIcon")
                     Text(displayName)
-                        .font(Theme.font(14, .medium, relativeTo: .subheadline))
+                        .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                         .foregroundStyle(Theme.ink)
                         .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).name")
                     Spacer()
                 }
+                // Progress reading (D16.3), tabular so it does not jitter
+                // as the numbers tick up.
                 Text(progressText)
-                    .font(Theme.font(12, .regular, relativeTo: .caption))
+                    .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                     .accessibilityIdentifier("backfill.row.\(status.dataType.rawValue).progress")
                 if let lastError = status.lastError {
