@@ -326,6 +326,17 @@ not silkscreen. Sizes follow one geometric ladder, ratio 1.25 anchored at 9.5 pt
 sizes against no stated system. D12's two production deviations still bind: Dynamic Type
 scaling via `relativeTo:`, and a dark-palette variant.
 
+**D16.4 — A control label repeated on every row is noise, not a label.** When the same
+control appears once per item, its visible label says nothing about *that* item while
+reading as loud as the item's own content — the You tab printed "Use for AI replies" six
+times, once per fact, at body weight. State it once under the section header (where it
+can also say what the control *does*, which a control label never does), drop it from the
+rows, and keep it as the control's `accessibilityLabel` so VoiceOver still names every
+switch. Per-row controls then sit inline on the item's metadata line instead of claiming
+a divider and a full-width row of their own. The 44 pt target is unaffected: it comes
+from `.frame(minHeight: 44)`, not from the label's width — the You screen's `.hitRegion`
+audit (test-plan §6) covers exactly this.
+
 ## 5. Data flow summaries
 
 **Sync (incremental):** trigger (foreground / BGAppRefresh / manual) → `SyncEngine.sync(type)`

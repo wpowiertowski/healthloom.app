@@ -909,6 +909,38 @@ is one definition; that is a CoachKit public-API change with its own tests and b
 its own work package, not riding a design PR. Until then `SignalIndex` renders the count
 honestly and the four concrete fields stay unshipped rather than faked.
 
+### WP-41 · You tab density
+
+**Depends on:** WP-40 · **Decision:** architecture.md **D16.4**.
+
+Every fact rendered as two stacked halves split by a divider — content above, a
+full-width "Use for AI replies" toggle row below — so six facts read as twelve blocks and
+the same control label was printed six times.
+
+**Steps:**
+1. One card per fact, no internal divider. Fact text, then a single line carrying
+   metadata and both controls.
+2. Per-row control label removed (D16.4); stated once under the section header as
+   "Switch a fact off to stop the coach using it in replies", kept as the toggle's
+   `accessibilityLabel`. `Edit` gains a field-naming label — six buttons labelled "Edit"
+   were ambiguous under VoiceOver.
+3. Corrected fields stop printing their provenance twice: the source line drops to the
+   date alone when the "Your correction" badge is present. The pair had overflowed the
+   row and truncated the date away (`User correction · S…`).
+4. Source/date line moves to `Theme.mono` (D16.3 — it is a reading, not prose).
+5. Section prose aligns flush with the section headers; it had been indented 16 pt inside
+   `ThemedScreen`'s own 22 pt gutter.
+6. The app's last `.red` (Erase chat history) becomes `Theme.accentDeep`. The palette has
+   no red; the destructive signal survives where it matters, in the confirmation dialog's
+   `role: .destructive`.
+
+**Tests:** `YouTabUITests` unchanged and green, including its `.hitRegion` accessibility
+audit — the compacted toggle keeps a 44 pt target with no visible label. Every pinned
+identifier (`you.ai.*`, `you.edit.*`, `you.clinical.*`, `you.correction.*`, `you.row.*`)
+survives.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -921,6 +953,7 @@ P2  WP-19..26  on-device coach + transparency ......... private AI
 P3  WP-27..32  PCC/Claude/Gemini tiers, consent, evals  model choice
 P4  WP-33..39  Yacht club UI, insights, wipe, launch .. polish
 P5  WP-40      Concrete Glass design system ........... Bill x Liquid Glass
+P5  WP-41      You tab density ......................... one card per fact
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement
