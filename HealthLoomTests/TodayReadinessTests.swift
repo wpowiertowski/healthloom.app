@@ -166,23 +166,52 @@ struct ReadinessScoreHistoryTests {
 
 @Suite("ReadinessInputsProvider.display")
 struct ReadinessDisplayMappingTests {
+    /// Four usable readings — the full-signal day.
+    private static let fullInputs = ReadinessInputs(
+        hrvRatio: 1.05,
+        restingHRDeltaBeatsPerMinute: -1,
+        sleepHours: 7.2,
+        sleepEfficiency: 0.9,
+        priorDayStrain: 0.4
+    )
+    /// Sleep and prior-day load never arrived.
+    private static let partialInputs = ReadinessInputs(
+        hrvRatio: 1.05,
+        restingHRDeltaBeatsPerMinute: -1
+    )
+
     @Test func zeroSignalsMapsToPending() {
-        #expect(ReadinessInputsProvider.display(Readiness(score: 50, signalsUsed: 0)) == .pending)
+        #expect(ReadinessInputsProvider.display(
+            Readiness(score: 50, signalsUsed: 0),
+            inputs: ReadinessInputs()
+        ) == .pending)
     }
 
     @Test func scoredPassesNilDeltaThrough() {
-        // H1: a missing delta stays nil so the hero renders the based-on-N
-        // caption — the old `?? 0` coercion rendered a "+0 vs 30-day
+        // H1: a missing delta stays nil so the hero explains the absent
+        // comparison — the old `?? 0` coercion rendered a "+0 vs 30-day
         // average" against an average that didn't exist.
-        #expect(ReadinessInputsProvider.display(Readiness(
-            score: 82, deltaVsAverage: 6, signalsUsed: 4
-        )) == .scored(score: 82, deltaVsBaseline: 6, signalsUsed: 4))
-        #expect(ReadinessInputsProvider.display(Readiness(
-            score: 78, deltaVsAverage: nil, signalsUsed: 4
-        )) == .scored(score: 78, deltaVsBaseline: nil, signalsUsed: 4))
-        #expect(ReadinessInputsProvider.display(Readiness(
-            score: 70, deltaVsAverage: nil, signalsUsed: 2
-        )) == .scored(score: 70, deltaVsBaseline: nil, signalsUsed: 2))
+        #expect(ReadinessInputsProvider.display(
+            Readiness(score: 82, deltaVsAverage: 6, signalsUsed: 4),
+            inputs: Self.fullInputs
+        ) == .scored(score: 82, deltaVsBaseline: 6, signals: Set(ReadinessSignal.allCases)))
+        #expect(ReadinessInputsProvider.display(
+            Readiness(score: 78, deltaVsAverage: nil, signalsUsed: 4),
+            inputs: Self.fullInputs
+        ) == .scored(score: 78, deltaVsBaseline: nil, signals: Set(ReadinessSignal.allCases)))
+    }
+
+    @Test("a partial day names which signals reported, not just how many")
+    // catches: the hero being handed a bare count and having to guess the
+    // nouns — a row lit for a signal that never reported.
+    func partialDayCarriesTheSignalNames() {
+        let display = ReadinessInputsProvider.display(
+            Readiness(score: 70, deltaVsAverage: nil, signalsUsed: 2),
+            inputs: Self.partialInputs
+        )
+        #expect(display == .scored(
+            score: 70, deltaVsBaseline: nil, signals: [.hrv, .restingHR]
+        ))
     }
 }
 

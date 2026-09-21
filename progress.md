@@ -5269,3 +5269,81 @@ presence app-side would duplicate the validity rules and drift — the repo's ow
 drift" bug shape. The fix is `ReadinessEngine.contributingSignals(inputs:)` that
 `score(inputs:)` itself consumes, so there is one definition: a CoachKit public-API
 change with its own tests, its own WP, not riding a design PR.
+
+## WP-41 · You tab density (branch `you-page-density` from main a861113)
+
+Owner: "cleanup the You page, it is very busy" (screenshot). The cause was structural,
+not cosmetic: each fact rendered as **two** stacked halves inside one panel, split by a
+`ThemedRowDivider` — content above, a full-width `ThemedToggleRow` below — so six facts
+read as twelve blocks, and **"Use for AI replies" was printed six times** at body weight,
+competing with the facts themselves while saying nothing about any individual one.
+
+**Fix (architecture.md D16.4).** One card per fact, no divider: fact text, then a single
+line carrying the source/date and both controls inline. The per-row label is stated once
+under the section header — as "Switch a fact off to stop the coach using it in replies",
+which also says what the control *does*, something a control label never did — and kept
+as the toggle's `accessibilityLabel`. `Edit` gained a field-naming label too: six buttons
+all announcing "Edit" were ambiguous under VoiceOver.
+
+**The 44 pt question, settled empirically.** Removing the visible label shrinks a
+`Toggle`'s accessibility element to the switch (~51×31), which would fail the You
+screen's `.hitRegion` audit (test-plan §6). `.frame(minWidth: 44, minHeight: 44)` +
+`.contentShape(Rectangle())` does expand the element — `YouTabUITests` including
+`performAccessibilityAudit(for: [.hitRegion])` passes. Worth knowing before compacting
+any other labelled control.
+
+**Two more found by screenshotting the result rather than trusting the diff:**
+`User correction · S…` — a corrected field printed its provenance twice (source line
+*and* "Your correction" badge) and the pair overflowed the row, truncating the date away;
+the source line now drops to the date alone when the badge is present. And the section
+prose sat 16 pt inside `ThemedScreen`'s own 22 pt gutter, so it was visibly indented
+against every header on the screen — now flush.
+
+**Last `.red` in the app is gone.** `YouView`'s "Erase chat history" was the only one
+(`grep` confirms zero remain): the palette has no red, rust is its single functional
+colour, and ThemedChrome already maps attention/error onto `accentDeep`. The destructive
+signal is not lost — the confirmation dialog's `role: .destructive` still renders
+system-red at the moment the choice actually matters.
+
+**Tests:** `YouTabUITests` green including the hit-region audit; every pinned identifier
+(`you.ai.*`, `you.edit.*`, `you.clinical.*`, `you.correction.*`, `you.row.*`) unchanged.
+
+## WP-42 · Name the readiness signals (branch `you-page-density`, on top of WP-41)
+
+Owner, on the Today hero: "the readiness mentions 4 signals but doesn't mention what
+those are." Correct, and it was WP-40's own stated follow-up: `SignalIndex` could only
+render a *count*, because `Readiness` publishes `signalsUsed` and nothing finer. Its
+cells therefore filled left-to-right and asserted nothing about identity — which is
+exactly why WP-40 refused to label or colour them.
+
+**Closed at the source, not in the view.** `ReadinessEngine.contributingSignals(inputs:)`
+is now the single definition of "usable reading", and `score(inputs:recentScores:)` was
+refactored to consume it instead of re-testing the same four fields. Deriving the set
+app-side would have duplicated the validity predicates and drifted from the weighting
+that produced the score — the repo's own "literal drift" shape, here surfacing as a lit
+row for a signal the score never counted. `Readiness.signalsUsed` is that set's count, so
+the two cannot disagree. The public initialiser is untouched: **none of its 12 call sites
+moved**, which is what kept this additive rather than a breaking API change.
+
+**UI.** Four named rows — HRV, Resting HR, Sleep, Prior load — filled when that signal
+reported, hollow when it did not, in the engine's own weighting order so the column reads
+the same every morning. Display strings live app-side (a CoachKit domain enum has no
+business carrying UI copy) behind an exhaustive `switch` with no `default`, so a fifth
+signal fails the build rather than rendering an unnamed row. VoiceOver gets the nouns
+too, including the missing ones by name — fill state is invisible to it.
+
+**The caption stopped repeating itself.** With the rows naming everything, "based on N of
+4 signals" said nothing new, so the line now does the job the rows cannot: explaining an
+absent comparison. "No 30-day average yet" before history exists; "Comparison needs all
+four signals" when a partial score would otherwise be measured against a full-signal
+average. H1's rule was always this — it was just never stated on screen.
+
+**Tests:** three CoachKit tests on `contributingSignals` (identity vs count; invalid
+readings missing rather than contributing zero; all four reportable, since `allCases` is
+what the hero iterates). `display` gains a partial-day case asserting the *names*. New
+`partialHero` snapshot subject pins the two-hollow-row rendering across light/dark ×
+XS/XL/AXXXL. All 195 CoachKit tests still pass — the score refactor is behaviour-
+identical, which the existing golden vectors prove.
+
+**Still open:** each signal's *magnitude*. The rows show whether a signal reported, not
+how strongly it scored; that needs the engine to publish its subscores.

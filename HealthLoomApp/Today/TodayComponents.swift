@@ -16,6 +16,7 @@
 // here is a dumb, value-driven view (the `SyncTypeRow`/`ActivityRow`
 // "dumb row, smart container" convention).
 
+import CoachKit
 import SwiftUI
 
 // MARK: - Header (brand + sync status)
@@ -68,7 +69,10 @@ struct TodayHeader: View {
 /// asserting a "+0 vs 30-day average" that was never computed.
 enum ReadinessDisplay: Equatable {
     case pending
-    case scored(score: Int, deltaVsBaseline: Int?, signalsUsed: Int)
+    /// `signals` is the engine's own `contributingSignals` set, not a count:
+    /// the hero names which of the four reported, so it cannot settle for
+    /// "3 of 4" without knowing *which* three (WP-42).
+    case scored(score: Int, deltaVsBaseline: Int?, signals: Set<ReadinessSignal>)
 }
 
 struct HeroInstrument: View {
@@ -117,7 +121,7 @@ struct HeroInstrument: View {
 
     private var readout: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SignalIndex(signalsUsed: signalsUsed)
+            SignalIndex(signals: signals)
             captionText
         }
     }
@@ -172,10 +176,10 @@ struct HeroInstrument: View {
         }
     }
 
-    private var signalsUsed: Int {
+    private var signals: Set<ReadinessSignal> {
         switch readiness {
-        case .pending: return 0
-        case .scored(_, _, let signalsUsed): return signalsUsed
+        case .pending: return []
+        case .scored(_, _, let signals): return signals
         }
     }
 
@@ -193,11 +197,13 @@ struct HeroInstrument: View {
                 .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        case .scored(_, let delta, let signalsUsed):
-            // WP-33 step 4's insufficient-signals caption, shared with the
-            // day-one full-signal case (H1): 4 signals and no history is
-            // still "based on 4 of 4 signals", not a comparison against
-            // an average that doesn't exist.
+        case .scored(_, let delta, let signals):
+            let signalsUsed = signals.count
+            // The rows above now name every signal and show which reported,
+            // so repeating "based on N of 4 signals" here says nothing new.
+            // This line's job is the *comparison* — and when there isn't
+            // one, saying why (H1: never assert a "+0 vs average" that was
+            // never computed, but do explain the silence).
             if let delta, signalsUsed >= 4 {
                 // iOS 26 deprecated `Text + Text`; interpolating pre-styled
                 // Text values preserves each run's own font/color.
@@ -209,8 +215,16 @@ struct HeroInstrument: View {
                     .foregroundStyle(Theme.secondary)
                 Text("\(deltaText)\(averageText)")
                     .fixedSize(horizontal: false, vertical: true)
+            } else if delta == nil {
+                Text("No 30-day average yet")
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("based on \(signalsUsed) of 4 signals")
+                // A delta exists but the day is short a signal: comparing a
+                // partial score against a full-signal average would flatter
+                // or punish it for the wrong reason.
+                Text("Comparison needs all four signals")
                     .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -219,39 +233,71 @@ struct HeroInstrument: View {
     }
 }
 
-/// How many of the four readiness signals reported this morning, as four
-/// flat fields filled left to right.
+/// Which of the four readiness signals reported this morning — named, one
+/// row each, filled when that signal contributed and hollow when it did not.
 ///
-/// It is a **count, not an identity**. `Readiness` publishes `signalsUsed`
-/// and nothing finer, so cell 2 being filled does not mean "resting HR
-/// reported" -- it means two of four did. That is why the cells are one
-/// colour and carry no labels: colouring or naming them per signal would
-/// assert a mapping the data cannot back, and a legend that lies is worse
-/// than no legend. VoiceOver says exactly what is true ("2 of 4").
+/// Naming them is the point. "based on 3 of 4 signals" told the user a
+/// number and left them to guess the nouns; a hollow row labelled *Sleep*
+/// says which reading is missing and, by implication, what to do about it.
 ///
-/// Giving each signal its own concrete field (the mockup's four-colour row)
-/// needs `ReadinessEngine` to publish which signals contributed. Its
-/// validity rules are internal to CoachKit, so deriving presence here would
-/// duplicate them and drift; publishing them is its own work package
-/// (see implementation-plan.md WP-40).
+/// The set comes from `ReadinessEngine.contributingSignals` — the same
+/// predicate the engine scores with — so a lit row and a weighted signal can
+/// never disagree. Order is `ReadinessSignal.allCases`, i.e. the engine's
+/// weighting order, so the column reads the same every morning.
 struct SignalIndex: View {
-    let signalsUsed: Int
-
-    private static let total = 4
+    let signals: Set<ReadinessSignal>
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<Self.total, id: \.self) { index in
-                Rectangle()
-                    .fill(index < signalsUsed ? Theme.accent : Theme.border)
-                    .frame(height: 7)
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(ReadinessSignal.allCases, id: \.self) { signal in
+                let isReporting = signals.contains(signal)
+                HStack(spacing: 8) {
+                    Text(Self.name(signal))
+                        .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
+                        .foregroundStyle(isReporting ? Theme.secondary : Theme.tertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        // Sized for the longest label ("Resting HR") at XL,
+                        // not for the shortest: a fixed column is what keeps
+                        // the four bars on one axis, and 60pt clipped two of
+                        // the four names to "Resting…" / "Prior lo…".
+                        .frame(width: 80, alignment: .leading)
+                    Rectangle()
+                        .fill(isReporting ? Theme.accent : Theme.border)
+                        .frame(height: 6)
+                }
             }
         }
-        .frame(maxWidth: 132)
+        .frame(maxWidth: 190, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Signals reporting")
-        .accessibilityValue("\(signalsUsed) of \(Self.total)")
+        .accessibilityLabel("Signals")
+        .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier("today.readiness.signals")
+    }
+
+    /// UI copy lives here, not on the enum: `ReadinessSignal` is a CoachKit
+    /// domain type and has no business carrying display strings. The switch
+    /// is exhaustive with no `default`, so a fifth signal fails the build
+    /// here rather than rendering an unnamed row.
+    private static func name(_ signal: ReadinessSignal) -> String {
+        switch signal {
+        case .hrv: return "HRV"
+        case .restingHR: return "Resting HR"
+        case .sleep: return "Sleep"
+        case .strain: return "Prior load"
+        }
+    }
+
+    /// VoiceOver gets the nouns too, and the missing ones by name — the
+    /// fill state is invisible to it.
+    private var accessibilityValue: String {
+        let reporting = ReadinessSignal.allCases.filter { signals.contains($0) }.map(Self.name)
+        let missing = ReadinessSignal.allCases.filter { !signals.contains($0) }.map(Self.name)
+        guard !reporting.isEmpty else { return "No signals reporting" }
+        let lead = "\(reporting.count) of \(ReadinessSignal.allCases.count) reporting: "
+            + reporting.joined(separator: ", ")
+        guard !missing.isEmpty else { return lead }
+        return lead + ". Missing: " + missing.joined(separator: ", ")
     }
 }
 

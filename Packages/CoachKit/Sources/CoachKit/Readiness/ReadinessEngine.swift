@@ -109,6 +109,19 @@ public struct Readiness: Sendable, Equatable, Hashable {
     }
 }
 
+/// The four inputs a readiness score can stand on.
+///
+/// A fixed set: `Readiness.signalsUsed` is this set's count, and the Today
+/// hero names each one so "based on 3 of 4 signals" can say *which* three.
+/// Declaration order is the engine's own weighting order, so any UI that
+/// lists them reads the same way every morning.
+public enum ReadinessSignal: String, Sendable, Hashable, CaseIterable {
+    case hrv
+    case restingHR
+    case sleep
+    case strain
+}
+
 public enum ReadinessEngine {
     /// The one constant weight table (WP-23 step 1): HRV .30, resting HR .25,
     /// sleep .30, prior-day strain .15. Working constants -- golden-vector
@@ -193,27 +206,55 @@ public enum ReadinessEngine {
     /// - Parameter recentScores: past `Readiness.score` values (newest last;
     ///   order irrelevant), for the delta. Supplied by the caller -- this
     ///   engine keeps no history itself.
+    /// Which of the four signals `inputs` carries a usable reading for.
+    ///
+    /// `score(inputs:recentScores:)` below consumes this instead of
+    /// re-testing the same fields, so "usable" has exactly ONE definition.
+    /// That matters because a caller now wants to show *which* signals a
+    /// score stands on (the Today hero): deriving that independently would
+    /// duplicate these predicates and drift from the engine that actually
+    /// weighted them — the repo's "literal drift" bug shape. Invalid
+    /// readings count as missing, never as zero, per `score`'s
+    /// degrade-don't-crash rule.
+    public static func contributingSignals(inputs: ReadinessInputs) -> Set<ReadinessSignal> {
+        var signals: Set<ReadinessSignal> = []
+        if let ratio = inputs.hrvRatio, ratio.isFinite, ratio > 0 {
+            signals.insert(.hrv)
+        }
+        if valid(inputs.restingHRDeltaBeatsPerMinute, in: -Double.infinity...Double.infinity) != nil {
+            signals.insert(.restingHR)
+        }
+        if valid(inputs.sleepHours, in: 0...24) != nil {
+            signals.insert(.sleep)
+        }
+        if valid(inputs.priorDayStrain, in: 0...1) != nil {
+            signals.insert(.strain)
+        }
+        return signals
+    }
+
     public static func score(inputs: ReadinessInputs, recentScores: [Int] = []) -> Readiness {
+        let signals = contributingSignals(inputs: inputs)
         var weightedSum = 0.0
         var weightSum = 0.0
-        var signalsUsed = 0
         func accumulate(subscore: Double, weight: Double) {
             weightedSum += weight * subscore
             weightSum += weight
-            signalsUsed += 1
         }
 
-        if let ratio = inputs.hrvRatio, ratio.isFinite, ratio > 0 {
+        // Each `guard`-free unwrap below is safe by construction: membership
+        // in `signals` is exactly the validity test for that field.
+        if signals.contains(.hrv), let ratio = inputs.hrvRatio {
             accumulate(subscore: hrvSubscore(ratio: ratio), weight: hrvWeight)
         }
-        if let delta = valid(inputs.restingHRDeltaBeatsPerMinute, in: -Double.infinity...Double.infinity) {
+        if signals.contains(.restingHR), let delta = inputs.restingHRDeltaBeatsPerMinute {
             accumulate(subscore: restingHRSubscore(deltaBeatsPerMinute: delta), weight: restingHRWeight)
         }
-        if let hours = valid(inputs.sleepHours, in: 0...24) {
+        if signals.contains(.sleep), let hours = inputs.sleepHours {
             let efficiency = valid(inputs.sleepEfficiency, in: 0...1)
             accumulate(subscore: sleepSubscore(hours: hours, efficiency: efficiency), weight: sleepWeight)
         }
-        if let strain = valid(inputs.priorDayStrain, in: 0...1) {
+        if signals.contains(.strain), let strain = inputs.priorDayStrain {
             accumulate(subscore: strainSubscore(load: strain), weight: strainWeight)
         }
 
@@ -222,10 +263,10 @@ public enum ReadinessEngine {
         }
         let score = Int(clamped((weightedSum / weightSum).rounded()))
         var delta: Int? = nil
-        if !recentScores.isEmpty, signalsUsed > 0 {
+        if !recentScores.isEmpty, !signals.isEmpty {
             let raw = (Double(score) - average(recentScores)).rounded()
             delta = Int(exactly: raw) ?? (raw > 0 ? Int.max : Int.min)
         }
-        return Readiness(score: score, deltaVsAverage: delta, signalsUsed: signalsUsed)
+        return Readiness(score: score, deltaVsAverage: delta, signalsUsed: signals.count)
     }
 }

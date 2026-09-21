@@ -27,16 +27,19 @@
 		20A485CD83CFCF49478E495E /* InsightNotificationContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E381DBA043CB6A38E879E72 /* InsightNotificationContent.swift */; };
 		22FEC24995F8BE791E356586 /* TodayHeaderModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6556B2420E8B57E0F8E800EF /* TodayHeaderModel.swift */; };
 		23547BB1A459FBBD35FBA783 /* InsightNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18ADA5529703601F668C1171 /* InsightNotifier.swift */; };
+		242C7897686494C62D500D3E /* partialHero-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 30AAA632D5A289D1207D9F65 /* partialHero-light-XS.png */; };
 		24BF1DA9A8827911C5D208AA /* firstScoreHero-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 9EF17EA63843B91DDD68835B /* firstScoreHero-light-AXXXL.png */; };
 		250709DBAFEAB24E7497B296 /* SyncLogRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C20223920D2E1C8ABDD339C /* SyncLogRow.swift */; };
 		2680FC0F0AFAC0642C3623C7 /* IncrementalConsentPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBAA1E7DA64850E3A734C4DA /* IncrementalConsentPresenter.swift */; };
 		26A45FF6C1261F7087033CFD /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEC2B77B57DEAB44ECA35881 /* TodayView.swift */; };
 		26BCAEA64CE04C06D9EF857B /* ThemedChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAEBB2ED3F0DBC079C134BF3 /* ThemedChrome.swift */; };
 		2ACA1E5E98ADDE76C39785F2 /* ReadinessInputsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82307F3DCDEC63D97FCCD8A8 /* ReadinessInputsProvider.swift */; };
+		2B79E6664EFF0B3A2CD0451A /* partialHero-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 527F7F561453C920E502613D /* partialHero-light-XL.png */; };
 		2E5E7F25678332B63801E247 /* LaunchConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 684D125F122263B9C8B36DF7 /* LaunchConfiguration.swift */; };
 		300EA9C544535888D0E728C9 /* HealthLoomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C757C1A9219A4BB6DA975B7 /* HealthLoomTests.swift */; };
 		336B7C67D8107E69B31ED955 /* CoreModel in Frameworks */ = {isa = PBXBuildFile; productRef = EE11D1CFF3865EA9E00E615E /* CoreModel */; };
 		33F6BEA0C1AB5B131D8C3BB5 /* BackfillTypeRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6887CC7FE72328E60FDEC841 /* BackfillTypeRow.swift */; };
+		34AFD8D1F02A206E5F6D7639 /* partialHero-dark-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 743FE285F8BC5AF3F996B40B /* partialHero-dark-XS.png */; };
 		34E677A1DCDEB8E3DE9868CF /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2921CADF9CDEABED39EEBD2 /* Theme.swift */; };
 		3503E652EAF260A2E189A3AF /* OnboardingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB656C8472D8FEEA7C18D12 /* OnboardingUITests.swift */; };
 		36FAC8A558C9F88FE1C59B70 /* pendingHero-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 6AB1335672312871972EA0E9 /* pendingHero-light-XL.png */; };
@@ -61,6 +64,7 @@
 		519DEDD89749CDBBC3A48C7D /* coachPlaceholder-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 3D782A717E1B19E8E369A794 /* coachPlaceholder-dark-XL.png */; };
 		5229B6E467C5B89B3E8E0601 /* MorningInsightRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8460C28AB30A18A1B7E2C510 /* MorningInsightRunner.swift */; };
 		55FEE3F9B3EA30E0AC8A4B4A /* ActivityRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B9221EBE339839E2668C8B7 /* ActivityRow.swift */; };
+		5652948EFCE10D704D9F8BF2 /* partialHero-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 1FC1E567908ACB8259F2DB38 /* partialHero-light-AXXXL.png */; };
 		58FD08EA6BC139F50C54B2F1 /* WipeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C7E8440C6C4B17FA19FA8D2 /* WipeCoordinatorTests.swift */; };
 		5A45447394A9B6FCE61EC16C /* coachPlaceholder-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 9126F67A6EF4050877C5972A /* coachPlaceholder-light-XS.png */; };
 		5A6C8AD2CBA00716249B5D83 /* ActivitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 512DEA311614493254B22A85 /* ActivitiesView.swift */; };
@@ -70,6 +74,7 @@
 		675771FDB666B124CCD20A68 /* ExportBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F03C2B48B04337062E5A9937 /* ExportBuilderTests.swift */; };
 		6785BB083F905D6DC7C0A9DF /* StubGoogleReconcileClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 509E3E08BFA749BE0BDEADD6 /* StubGoogleReconcileClient.swift */; };
 		679D4EBF53631B0692A7B82D /* TipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F875C16F1AF47B687F198099 /* TipStore.swift */; };
+		687F35AADF3A057690A52FAC /* partialHero-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 00E2E6498DB6594A3C34FA30 /* partialHero-dark-XL.png */; };
 		6A20CB0AA63596B0D3E1B713 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0396CF67FD2C9E20AD61935D /* AppEnvironment.swift */; };
 		6A63BBE607DB184F3EE8AFA1 /* DashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A91996932882FB416D173C /* DashboardUITests.swift */; };
 		6D7F1E86CE93ECE287462D44 /* CoachChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30FD6CED69D7B5609EA0D90 /* CoachChatViewModelTests.swift */; };
@@ -84,6 +89,7 @@
 		7F51052791BA242535758BEA /* SyncPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6178D14A5880F164881EA242 /* SyncPreferences.swift */; };
 		7FAAC93F6CB6392CBEBB5A25 /* CoachChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A52F8620BDD4DD02BD6A6E7C /* CoachChatView.swift */; };
 		8005140904A8D8B7771D21BF /* InsightTierRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2191A17BC6ED3A225B84F4C /* InsightTierRouter.swift */; };
+		80EC64EF287D6C612EF499FE /* partialHero-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 7769B15C05B6C0BEF0E59FBB /* partialHero-dark-AXXXL.png */; };
 		8254AEDC3014182F55D52E32 /* pendingHero-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 5E82F20E3ED3440A6B5AD6BA /* pendingHero-dark-XL.png */; };
 		83CE9F79DA40887E71B299E3 /* AIModelsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C1A6AFD50CEB5638CB78EC /* AIModelsViewModelTests.swift */; };
 		8679E00F954C322A8043325F /* WipeFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F96F321D8A03337BD0E89E06 /* WipeFlowView.swift */; };
@@ -193,6 +199,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		00E2E6498DB6594A3C34FA30 /* partialHero-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "partialHero-dark-XL.png"; sourceTree = "<group>"; };
 		02C1A6AFD50CEB5638CB78EC /* AIModelsViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModelsViewModelTests.swift; sourceTree = "<group>"; };
 		0396CF67FD2C9E20AD61935D /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		05A1015831358C181ACD32BB /* panel-dark-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "panel-dark-XS.png"; sourceTree = "<group>"; };
@@ -217,6 +224,7 @@
 		19ACC74CFE335BD5CAC2B60B /* StoreProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreProtectionTests.swift; sourceTree = "<group>"; };
 		1A4E209B61B8777CC35D75C0 /* AIModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModelsView.swift; sourceTree = "<group>"; };
 		1F411CF3B4D339BCAE5E9F4B /* OnboardingFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowView.swift; sourceTree = "<group>"; };
+		1FC1E567908ACB8259F2DB38 /* partialHero-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "partialHero-light-AXXXL.png"; sourceTree = "<group>"; };
 		1FD7410A0B9774FEF271F549 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		20FA9FE2182F8E17B9299FBF /* pendingHero-dark-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "pendingHero-dark-AXXXL.png"; sourceTree = "<group>"; };
 		23510BBAB3D1FEF1A1074200 /* GoogleConnectionSetting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleConnectionSetting.swift; sourceTree = "<group>"; };
@@ -227,6 +235,7 @@
 		2B01212EEF38BB0B5E7B49D8 /* welcome-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "welcome-dark-XL.png"; sourceTree = "<group>"; };
 		2B322C46D38152457304B3A0 /* PromptEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEditorView.swift; sourceTree = "<group>"; };
 		2C20223920D2E1C8ABDD339C /* SyncLogRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncLogRow.swift; sourceTree = "<group>"; };
+		30AAA632D5A289D1207D9F65 /* partialHero-light-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "partialHero-light-XS.png"; sourceTree = "<group>"; };
 		352DEBD107C79BE367ADD1D8 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		36F1600A03436FC4FB84A521 /* TodaySnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodaySnapshotTests.swift; sourceTree = "<group>"; };
 		3AA5DF674AC3FE2C1689652B /* TipStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TipStoreTests.swift; sourceTree = "<group>"; };
@@ -243,6 +252,7 @@
 		509E3E08BFA749BE0BDEADD6 /* StubGoogleReconcileClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubGoogleReconcileClient.swift; sourceTree = "<group>"; };
 		512DEA311614493254B22A85 /* ActivitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitiesView.swift; sourceTree = "<group>"; };
 		51ED544BBB6FE7133E24FCC9 /* MorningInsightTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MorningInsightTests.swift; sourceTree = "<group>"; };
+		527F7F561453C920E502613D /* partialHero-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "partialHero-light-XL.png"; sourceTree = "<group>"; };
 		5628D5360463B146A727C76D /* coachInsight-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachInsight-light-XL.png"; sourceTree = "<group>"; };
 		56FDCC3E30EFF4768DCF32AE /* coachPlaceholder-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachPlaceholder-light-AXXXL.png"; sourceTree = "<group>"; };
 		57D3E1F4CF05962C558B46D8 /* YouViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouViewModel.swift; sourceTree = "<group>"; };
@@ -267,8 +277,10 @@
 		6AB1335672312871972EA0E9 /* pendingHero-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "pendingHero-light-XL.png"; sourceTree = "<group>"; };
 		6B58EFF23C7AB7E83F43FEF8 /* HealthLoomApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthLoomApp.swift; sourceTree = "<group>"; };
 		7005717228C2AB50D2468A1A /* CoachAvailabilityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachAvailabilityChecker.swift; sourceTree = "<group>"; };
+		743FE285F8BC5AF3F996B40B /* partialHero-dark-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "partialHero-dark-XS.png"; sourceTree = "<group>"; };
 		755F461766380A79B2F297E1 /* scoredHero-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "scoredHero-dark-XL.png"; sourceTree = "<group>"; };
 		76EEBFF4547AE5EB12EC9B2A /* IBMPlexMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Medium.ttf"; sourceTree = "<group>"; };
+		7769B15C05B6C0BEF0E59FBB /* partialHero-dark-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "partialHero-dark-AXXXL.png"; sourceTree = "<group>"; };
 		77AA4ED3AE3E1358873E2DEA /* WorkspaceUnsupportedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceUnsupportedView.swift; sourceTree = "<group>"; };
 		7864808117705B414497C116 /* CoachChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachChatViewModel.swift; sourceTree = "<group>"; };
 		7AFD66A4E1466C453723363F /* TodayMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayMetrics.swift; sourceTree = "<group>"; };
@@ -734,6 +746,12 @@
 				5FA41B36FFB4A4D18BE188AC /* panel-light-AXXXL.png */,
 				8DB65107E5622A86BF645716 /* panel-light-XL.png */,
 				F172CCA3319330D18B0C3C4C /* panel-light-XS.png */,
+				7769B15C05B6C0BEF0E59FBB /* partialHero-dark-AXXXL.png */,
+				00E2E6498DB6594A3C34FA30 /* partialHero-dark-XL.png */,
+				743FE285F8BC5AF3F996B40B /* partialHero-dark-XS.png */,
+				1FC1E567908ACB8259F2DB38 /* partialHero-light-AXXXL.png */,
+				527F7F561453C920E502613D /* partialHero-light-XL.png */,
+				30AAA632D5A289D1207D9F65 /* partialHero-light-XS.png */,
 				20FA9FE2182F8E17B9299FBF /* pendingHero-dark-AXXXL.png */,
 				5E82F20E3ED3440A6B5AD6BA /* pendingHero-dark-XL.png */,
 				ECDE5B503B794B587E3A09DE /* pendingHero-dark-XS.png */,
@@ -939,6 +957,12 @@
 				02ABBBD1C21C78714BA6CC35 /* panel-light-AXXXL.png in Resources */,
 				4D2CFC5438DCF8ACCADBBCE2 /* panel-light-XL.png in Resources */,
 				0D8B6524427DB04086719567 /* panel-light-XS.png in Resources */,
+				80EC64EF287D6C612EF499FE /* partialHero-dark-AXXXL.png in Resources */,
+				687F35AADF3A057690A52FAC /* partialHero-dark-XL.png in Resources */,
+				34AFD8D1F02A206E5F6D7639 /* partialHero-dark-XS.png in Resources */,
+				5652948EFCE10D704D9F8BF2 /* partialHero-light-AXXXL.png in Resources */,
+				2B79E6664EFF0B3A2CD0451A /* partialHero-light-XL.png in Resources */,
+				242C7897686494C62D500D3E /* partialHero-light-XS.png in Resources */,
 				AC39A70937F4394B8C0BC06E /* pendingHero-dark-AXXXL.png in Resources */,
 				8254AEDC3014182F55D52E32 /* pendingHero-dark-XL.png in Resources */,
 				74E00BD5EE434E7707E94179 /* pendingHero-dark-XS.png in Resources */,

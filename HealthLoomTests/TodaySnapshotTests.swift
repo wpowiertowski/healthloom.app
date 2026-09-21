@@ -15,17 +15,30 @@
 // assertions.
 
 import SwiftUI
+import CoachKit
 import Testing
 import UIKit
 @testable import HealthLoom
 
 private enum TodaySnapshotSubject {
     static var scoredHero: some View {
-        HeroInstrument(readiness: .scored(score: 82, deltaVsBaseline: 6, signalsUsed: 4))
+        HeroInstrument(readiness: .scored(
+            score: 82, deltaVsBaseline: 6, signals: Set(ReadinessSignal.allCases)
+        ))
     }
 
     static var firstScoreHero: some View {
-        HeroInstrument(readiness: .scored(score: 78, deltaVsBaseline: nil, signalsUsed: 4))
+        HeroInstrument(readiness: .scored(
+            score: 78, deltaVsBaseline: nil, signals: Set(ReadinessSignal.allCases)
+        ))
+    }
+
+    /// A short day: sleep and prior-day load never arrived, so two rows
+    /// render hollow and the caption explains the withheld comparison.
+    static var partialHero: some View {
+        HeroInstrument(readiness: .scored(
+            score: 70, deltaVsBaseline: 4, signals: [.hrv, .restingHR]
+        ))
     }
 
     static var pendingHero: some View {
@@ -59,6 +72,7 @@ struct TodaySnapshotTests {
         let subjects: [(String, AnyView)] = [
             ("scoredHero", AnyView(TodaySnapshotSubject.scoredHero)),
             ("firstScoreHero", AnyView(TodaySnapshotSubject.firstScoreHero)),
+            ("partialHero", AnyView(TodaySnapshotSubject.partialHero)),
             ("pendingHero", AnyView(TodaySnapshotSubject.pendingHero)),
             ("panel", AnyView(TodaySnapshotSubject.panel)),
             ("coachInsight", AnyView(TodaySnapshotSubject.coachInsight)),

@@ -6,6 +6,11 @@
 //   - Profile: every field (display text, source, as-of) with its AI-context
 //     toggle. Clinical fields carry a "Clinical" badge and start excluded
 //     (D8); correction-pinned fields carry a "Your correction" badge.
+//     WP-41: one card per fact, not two stacked halves. The per-row
+//     "Use for AI replies" label is gone -- it was identical on every
+//     card, so it carried no per-row information while reading as loud
+//     as the fact itself; it is stated once under the section header and
+//     survives for VoiceOver as the toggle's accessibility label.
 //   - Correct: per-field Edit opens the correction sheet — the saved text
 //     pins a user correction that beats re-derivation (see `KnowledgeStore`
 //     `pinCorrection`), keeping the field's sharing posture.
@@ -35,6 +40,8 @@ struct YouView: View {
     @State private var correctionDraft = ""
     @State private var confirmReset = false
     @State private var confirmWipe = false
+    /// Drives the one-line/stacked switch in each fact card (see below).
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(viewModel: YouViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -93,6 +100,16 @@ struct YouView: View {
     @ViewBuilder
     private var profileSection: some View {
         ThemedSectionHeader(title: "What the coach knows")
+        // Said once, instead of six times. This also says what the toggle
+        // *does*, which the repeated control label never did.
+        // Flush with the section header above it. `ThemedScreen` already
+        // owns the 22pt gutter, so any extra horizontal padding here reads
+        // as a stray indent against every header on the screen.
+        Text("Switch a fact off to stop the coach using it in replies.")
+            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
+            .foregroundStyle(Theme.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 10)
         if viewModel.fields.isEmpty {
             ThemedPanel {
                 Text("Nothing here yet. Chat with the coach and your profile will appear.")
@@ -105,56 +122,103 @@ struct YouView: View {
         } else {
             ForEach(viewModel.fields, id: \.key) { field in
                 ThemedPanel {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(field.displayText)
-                                .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
-                                .foregroundStyle(Theme.ink)
-                            Spacer()
-                            if field.isClinical {
-                                Text("Clinical")
-                                    .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption2))
-                                    .foregroundStyle(Theme.accent)
-                                    .accessibilityIdentifier("you.clinical.\(field.key)")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(field.displayText)
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
+                            .foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // Metadata and controls share one line. At
+                        // accessibility sizes they stack: the badges and
+                        // the two controls cannot hold a single row once
+                        // the text doubles in size.
+                        if dynamicTypeSize.isAccessibilitySize {
+                            metadata(for: field)
+                            controls(for: field)
+                        } else {
+                            HStack(spacing: 8) {
+                                metadata(for: field)
+                                Spacer(minLength: 8)
+                                controls(for: field)
                             }
-                        }
-                        Text("\(field.source) · \(field.asOf.formatted(date: .abbreviated, time: .omitted))")
-                            .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
-                            .foregroundStyle(Theme.secondary)
-                        if field.source == KnowledgeStore.correctionSourceLabel {
-                            Text("Your correction")
-                                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
-                                .foregroundStyle(Theme.secondary)
-                                .accessibilityIdentifier("you.correction.\(field.key)")
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 11)
-                    ThemedRowDivider()
-                    HStack {
-                        ThemedToggleRow(
-                            title: "Use for AI replies",
-                            accessibilityIdentifier: "you.ai.\(field.key)",
-                            isOn: Binding(
-                                get: { !field.excludedFromAI },
-                                set: { viewModel.setExcluded(!$0, forKey: field.key) }
-                            )
-                        )
-                        // Fixed size: the Toggle is horizontally greedy and
-                        // would otherwise squeeze this button to zero width
-                        // (seen as a 0-wide frame in UI tests).
-                        Button("Edit") {
-                            correctionDraft = field.displayText
-                            editingKey = field.key
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                        .accessibilityIdentifier("you.edit.\(field.key)")
-                        .padding(.trailing, 16)
-                    }
+                    .padding(.vertical, 10)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("you.row.\(field.key)")
             }
+        }
+    }
+
+    /// Source, as-of date and any badges — the fact's provenance.
+    @ViewBuilder
+    private func metadata(for field: ProfileField) -> some View {
+        let isCorrection = field.source == KnowledgeStore.correctionSourceLabel
+        HStack(spacing: 6) {
+            // D16.3: a source-and-timestamp line is an instrument reading.
+            //
+            // A corrected field drops its source here: the badge beside it
+            // already says "Your correction", and printing the same fact
+            // twice cost the row so much width that the date truncated away
+            // ("User correction · S…"). The badge keeps the provenance; the
+            // line keeps the date.
+            Text(isCorrection
+                 ? field.asOf.formatted(date: .abbreviated, time: .omitted)
+                 : "\(field.source) · \(field.asOf.formatted(date: .abbreviated, time: .omitted))")
+                .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption))
+                .foregroundStyle(Theme.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            if field.isClinical {
+                ThemedBadge(
+                    text: "Clinical",
+                    style: .accent,
+                    accessibilityIdentifier: "you.clinical.\(field.key)"
+                )
+            }
+            if isCorrection {
+                ThemedBadge(
+                    text: "Your correction",
+                    accessibilityIdentifier: "you.correction.\(field.key)"
+                )
+            }
+        }
+    }
+
+    /// The fact's two controls. Both keep a 44 pt target (the You screen
+    /// runs a `.hitRegion` accessibility audit, test-plan §6) even though
+    /// the switch and the label are visually smaller than that.
+    @ViewBuilder
+    private func controls(for field: ProfileField) -> some View {
+        HStack(spacing: 12) {
+            Toggle(
+                "Use for AI replies",
+                isOn: Binding(
+                    get: { !field.excludedFromAI },
+                    set: { viewModel.setExcluded(!$0, forKey: field.key) }
+                )
+            )
+            .labelsHidden()
+            .tint(Theme.accent)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            // The visible label is gone, so the control states its job here
+            // or VoiceOver reads six unnamed switches.
+            .accessibilityLabel("Use for AI replies")
+            .accessibilityIdentifier("you.ai.\(field.key)")
+
+            Button("Edit") {
+                correctionDraft = field.displayText
+                editingKey = field.key
+            }
+            .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption))
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            // Six buttons all labelled "Edit" are ambiguous out of context.
+            .accessibilityLabel("Edit \(field.displayText)")
+            .accessibilityIdentifier("you.edit.\(field.key)")
         }
     }
 
@@ -170,8 +234,14 @@ struct YouView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 11)
                 ThemedRowDivider()
+                // The only `.red` left in the app was here. The palette has
+                // no red -- rust is its one functional colour (Theme.swift),
+                // and ThemedChrome maps attention/error onto `accentDeep`.
+                // The destructive signal is not lost: the confirmation
+                // dialog's `role: .destructive` still renders system-red at
+                // the moment the choice actually matters.
                 Button("Erase chat history") { confirmWipe = true }
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.accentDeep)
                     .accessibilityIdentifier("you.forget.chat")
                     .padding(.horizontal, 16)
                     .padding(.vertical, 11)
@@ -180,7 +250,7 @@ struct YouView: View {
         Text("Excluding a field above stops future use immediately; past replies already sent can't be recalled.")
             .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
             .foregroundStyle(Theme.secondary)
-            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 8)
     }
 

@@ -214,7 +214,7 @@ struct TodayView: View {
         if result.signalsUsed > 0 {
             scoreHistory.record(score: result.score)
         }
-        readiness = ReadinessInputsProvider.display(result)
+        readiness = ReadinessInputsProvider.display(result, inputs: inputs)
     }
 }
 

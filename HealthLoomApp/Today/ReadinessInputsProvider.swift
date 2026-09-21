@@ -74,14 +74,24 @@ final class ReadinessInputsProvider {
 
     /// Maps an engine result onto the hero's display states. Pure: zero
     /// usable signals is `.pending` (never the engine's all-nil 50), and
-    /// a missing delta passes through as nil (H1) — the hero renders
-    /// "based on N of 4 signals", never an uncomputed "+0 average".
-    static func display(_ readiness: Readiness) -> ReadinessDisplay {
-        guard readiness.signalsUsed > 0 else { return .pending }
+    /// a missing delta passes through as nil (H1) — the hero explains the
+    /// absent comparison, never an uncomputed "+0 average".
+    ///
+    /// Takes the `inputs` the score was computed from, not just the score:
+    /// the hero names *which* signals contributed (WP-42), and only the
+    /// inputs know that.
+    static func display(_ readiness: Readiness, inputs: ReadinessInputs) -> ReadinessDisplay {
+        // One source for "which signals reported": the engine's own
+        // predicate, which is also what weighted the score. `signalsUsed`
+        // is this set's count, so gating on the set rather than consulting
+        // both keeps the pending rule (zero usable signals never renders as
+        // a real score) reading off a single fact.
+        let signals = ReadinessEngine.contributingSignals(inputs: inputs)
+        guard !signals.isEmpty else { return .pending }
         return .scored(
             score: readiness.score,
             deltaVsBaseline: readiness.deltaVsAverage,
-            signalsUsed: readiness.signalsUsed
+            signals: signals
         )
     }
 

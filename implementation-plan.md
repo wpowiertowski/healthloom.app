@@ -899,15 +899,77 @@ through the `NavigationStack` each non-Today tab creates for itself (see D16). H
 those six stacks into one shell-owned `NavigationStack` would fix it and simplify the
 shell, but it is a navigation change with its own UI-test surface.
 
-**Deliberately out of scope — follow-up 2:** the mockup's four
-labelled, individually-coloured signal bars. They need `ReadinessEngine` to publish both
-*which* signals contributed and each one's magnitude; today it publishes only a count.
-Its validity rules (`valid(_:in:)`) are internal to CoachKit, so deriving presence in the
-app would duplicate them and drift — the repo's own "literal drift" bug shape. The fix is
-a `contributingSignals(inputs:)` on the engine that `score(inputs:)` itself uses, so there
-is one definition; that is a CoachKit public-API change with its own tests and belongs in
-its own work package, not riding a design PR. Until then `SignalIndex` renders the count
-honestly and the four concrete fields stay unshipped rather than faked.
+**Deliberately out of scope — follow-up 2 (CLOSED by WP-42):** naming which signals a
+score stands on. `SignalIndex` shipped as a count because `Readiness` publishes only
+`signalsUsed`, and colouring or labelling cells per signal would have asserted a mapping
+the data could not back. WP-42 adds `ReadinessEngine.contributingSignals(inputs:)` — one
+definition, consumed by `score` itself — and the rows are now named and honest.
+
+The *magnitude* of each signal is still unpublished; the rows show whether a signal
+reported, not how strongly it scored. That remains open, and needs the engine to expose
+its subscores.
+
+### WP-41 · You tab density
+
+**Depends on:** WP-40 · **Decision:** architecture.md **D16.4**.
+
+Every fact rendered as two stacked halves split by a divider — content above, a
+full-width "Use for AI replies" toggle row below — so six facts read as twelve blocks and
+the same control label was printed six times.
+
+**Steps:**
+1. One card per fact, no internal divider. Fact text, then a single line carrying
+   metadata and both controls.
+2. Per-row control label removed (D16.4); stated once under the section header as
+   "Switch a fact off to stop the coach using it in replies", kept as the toggle's
+   `accessibilityLabel`. `Edit` gains a field-naming label — six buttons labelled "Edit"
+   were ambiguous under VoiceOver.
+3. Corrected fields stop printing their provenance twice: the source line drops to the
+   date alone when the "Your correction" badge is present. The pair had overflowed the
+   row and truncated the date away (`User correction · S…`).
+4. Source/date line moves to `Theme.mono` (D16.3 — it is a reading, not prose).
+5. Section prose aligns flush with the section headers; it had been indented 16 pt inside
+   `ThemedScreen`'s own 22 pt gutter.
+6. The app's last `.red` (Erase chat history) becomes `Theme.accentDeep`. The palette has
+   no red; the destructive signal survives where it matters, in the confirmation dialog's
+   `role: .destructive`.
+
+**Tests:** `YouTabUITests` unchanged and green, including its `.hitRegion` accessibility
+audit — the compacted toggle keeps a 44 pt target with no visible label. Every pinned
+identifier (`you.ai.*`, `you.edit.*`, `you.clinical.*`, `you.correction.*`, `you.row.*`)
+survives.
+
+---
+
+### WP-42 · Name the readiness signals
+
+**Depends on:** WP-40 · **Decision:** architecture.md **D16.5** (closes WP-40's
+stated follow-up).
+
+The hero said "based on 4 of 4 signals" and never named one. `SignalIndex` could only
+show a count because `Readiness` publishes only `signalsUsed`, so its cells filled
+left-to-right and asserted nothing about identity.
+
+**Steps:**
+1. **CoachKit, additively:** `ReadinessSignal` (hrv / restingHR / sleep / strain, in the
+   engine's own weighting order) and `ReadinessEngine.contributingSignals(inputs:)`.
+   `score(inputs:recentScores:)` is refactored to consume it, so "usable reading" has one
+   definition. `Readiness`'s initialiser is untouched — none of its 12 call sites move.
+2. `ReadinessDisplay.scored` carries the signal *set* instead of a count;
+   `ReadinessInputsProvider.display(_:inputs:)` takes the inputs the score came from
+   (`refreshReadiness` already has them in scope).
+3. `SignalIndex` renders four named rows, filled or hollow per signal, with a VoiceOver
+   value that names the reporting and the missing ones.
+4. The caption stops repeating the count and explains an absent comparison instead:
+   "No 30-day average yet" / "Comparison needs all four signals".
+
+**Tests:** three CoachKit tests on `contributingSignals` (identity vs count; invalid
+readings are missing, never a contributing zero; all four reportable — `allCases` is what
+the hero iterates). `ReadinessInputsProvider.display` gains a partial-day case asserting
+the *names*. New `partialHero` snapshot subject pins the two-hollow-row rendering across
+the light/dark × XS/XL/AXXXL matrix.
+
+---
 
 ---
 
@@ -921,6 +983,8 @@ P2  WP-19..26  on-device coach + transparency ......... private AI
 P3  WP-27..32  PCC/Claude/Gemini tiers, consent, evals  model choice
 P4  WP-33..39  Yacht club UI, insights, wipe, launch .. polish
 P5  WP-40      Concrete Glass design system ........... Bill x Liquid Glass
+P5  WP-41      You tab density ......................... one card per fact
+P5  WP-42      Name the readiness signals ............. count -> nouns
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement
