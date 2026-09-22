@@ -58,6 +58,10 @@ struct TodayView: View {
     }
     @State private var preferences = TodayMetricPreferences()
     @State private var readings: [TodayMetricKind: TodayMetricReading] = [:]
+    /// Kinds established to have no data at all in the availability window,
+    /// so their row is dropped rather than shown empty. Starts empty: a row
+    /// appears until absence is *proven*, never while it is unknown.
+    @State private var unavailableKinds: Set<TodayMetricKind> = []
     @State private var readiness: ReadinessDisplay = .pending
     @State private var isEditing = false
     private let provider = TodayMetricsProvider()
@@ -191,13 +195,18 @@ struct TodayView: View {
         // WP-37: display units follow the locale (single-sourced from
         // CoachKit's mapping — HealthKit keeps canonical units).
         let unitSystem = ContextAssembler.defaultUnitSystem(for: .current)
-        return preferences.visibleKinds.map { kind in
+        let kinds = TodayMetricKind.rows(
+            visible: preferences.visibleKinds,
+            unavailable: unavailableKinds
+        )
+        return kinds.map { kind in
             TodayMetricFormatter.display(kind: kind, reading: readings[kind], unitSystem: unitSystem)
         }
     }
 
     private func refreshReadings() async {
         readings = await provider.readings(for: preferences.visibleKinds)
+        unavailableKinds = await provider.unavailableKinds(among: preferences.visibleKinds)
     }
 
     /// WP-33 step 1's readiness binding: aggregates -> engine -> history

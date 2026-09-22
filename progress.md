@@ -5385,3 +5385,47 @@ what reported instead of counting absences as zero; every subscore on 0...100). 
 re-deriving it. Snapshot fixtures carry subscores whose weighted mean is the score shown
 beside them, so the references pin the coherence the bars promise. 198 CoachKit tests
 pass; the `score` refactor is behaviour-identical, proven by the untouched golden vectors.
+
+## WP-44 · HRV on the Today panel (branch `today-hrv` from main f2f10c8)
+
+Owner: "add hrv (hide the hrv metric if there has been no hrv in the data over last
+30 days)."
+
+**The row.** `TodayMetricKind.hrv`, in `defaultVisible` directly after `.heart` — same
+organ, and the readiness hero's heaviest signal. Reads `heartRateVariabilitySDNN` in
+milliseconds, the same quantity and unit `ReadinessInputsProvider` baselines against, so
+the panel row and the hero's HRV bar cannot describe different numbers. Already present
+in `SyncPreferences.healthKitReadTypes` (round-10 item 2 put it there for readiness), so
+no authorization change and no new consent prompt.
+
+**The hide rule (D16.6).** Two deliberately different windows, answering two different
+questions. `latestSampleRecency` (7 days) governs whether a reading is *fresh enough to
+show*; the new 30-day `availabilityWindowDays` governs whether the person *records this
+metric at all*. A quiet week shows "No data yet"; a silent month removes the row. Right
+for HRV specifically because plenty of devices never produce it, so its empty state would
+not be a *yet* — and a row that can never fill is furniture.
+
+**Fails open, deliberately.** A failed query, or authorization never granted (reads never
+reveal denial, WP-06), reports the kind as AVAILABLE — the row appears with its empty
+state rather than vanishing. Hiding is for absence positively established, never for
+absence we could not check. The opposite default would make the metric silently disappear
+for anyone whose permissions are merely unsettled, which is the worse failure and an
+invisible one.
+
+**The migration nobody asks for but everyone needs.** `defaultVisible` alone would not
+have reached existing users: a stored order bypasses it entirely, so anyone who has ever
+reordered or hidden a metric would never see HRV and would reasonably report the feature
+as broken. `load` now offers HRV once into a pre-existing order, inserting after Heart
+(or at the front if Heart is hidden), marked by `hrvOfferedKey`. The marker is
+load-bearing: an order lacking HRV *before* the feature and one where the user has since
+hidden it are identical in storage, and without it a deliberate hide would be undone on
+every launch.
+
+**Tests:** formatting (whole ms, own unit) and the spoken unit (WP-37's rule that spoken
+matches displayed — HRV falling into the `.heart` branch it sits beside would say "beats
+per minute"); the filter drops only hiding kinds, so a quiet Steps week still shows its
+empty state instead of vanishing; the migration inserts once, places sensibly with Heart
+hidden, never duplicates, and does not undo a hide. Two pre-existing
+`TodayMetricPreferences` expectations updated for the new default set — a genuine
+expectation change (five rows where there were four), not a defect. Panel snapshot gains
+the HRV row across the light/dark × XS/XL/AXXXL matrix.

@@ -57,12 +57,84 @@ final class TodayMetricsProvider {
             return await todaySum(.activeEnergyBurned, unit: .kilocalorie(), from: startOfDay, to: now)
         case .heart:
             return await latestSample(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), now: now)
+        case .hrv:
+            // SDNN in milliseconds — the same quantity and unit the
+            // readiness engine baselines against, so the panel row and the
+            // hero's HRV bar can never describe different numbers.
+            return await latestSample(
+                .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), now: now
+            )
         case .bloodOxygen:
             return await latestSample(.oxygenSaturation, unit: .percent(), now: now)
         case .weight:
             return await latestSample(.bodyMass, unit: .gramUnit(with: .kilo), now: now)
         case .sleep:
             return await lastNightAsleepSeconds(now: now, startOfDay: startOfDay)
+        }
+    }
+
+    /// Which of `kinds` have **no** sample at all in the trailing
+    /// `TodayMetricKind.availabilityWindowDays`, and so should not render a
+    /// row (`TodayMetricKind.hidesWhenUnavailable`).
+    ///
+    /// Deliberately a different question from `readings(for:)`, which asks
+    /// whether a *fresh* reading exists. A month of total silence means the
+    /// person does not record this metric; a quiet week just means the row
+    /// shows its empty state.
+    ///
+    /// Same fail-open posture as every other query here: a failure (denied
+    /// authorization included — reads never reveal denial, WP-06) reports
+    /// the kind as available, so the row appears with its empty state
+    /// rather than vanishing on an error. Hiding is for the case we
+    /// positively established, never for the case we could not check.
+    func unavailableKinds(
+        among kinds: [TodayMetricKind],
+        now: Date = Date()
+    ) async -> Set<TodayMetricKind> {
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        var unavailable: Set<TodayMetricKind> = []
+        for kind in kinds where TodayMetricKind.hidesWhenUnavailable.contains(kind) {
+            if await hasNoSamples(for: kind, now: now) {
+                unavailable.insert(kind)
+            }
+        }
+        return unavailable
+    }
+
+    private func hasNoSamples(for kind: TodayMetricKind, now: Date) async -> Bool {
+        guard let identifier = availabilityIdentifier(for: kind),
+              let type = HKObjectType.quantityType(forIdentifier: identifier)
+        else { return false }
+        guard let start = calendar.date(
+            byAdding: .day, value: -TodayMetricKind.availabilityWindowDays, to: now
+        ) else { return false }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: now, options: [])
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                // Fail open: an error means "could not establish absence".
+                guard error == nil else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                continuation.resume(returning: samples?.isEmpty ?? false)
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    /// Only the hiding kinds need one; the switch is exhaustive so a new
+    /// member of `hidesWhenUnavailable` cannot be added without deciding
+    /// what it queries.
+    private func availabilityIdentifier(for kind: TodayMetricKind) -> HKQuantityTypeIdentifier? {
+        switch kind {
+        case .hrv: return .heartRateVariabilitySDNN
+        case .heart, .steps, .sleep, .bloodOxygen, .weight, .distance, .activeEnergy:
+            return nil
         }
     }
 

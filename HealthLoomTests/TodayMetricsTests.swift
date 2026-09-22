@@ -22,10 +22,12 @@ struct TodayMetricPreferencesTests {
         try EphemeralDefaults(prefix: "todaymetrics")
     }
 
-    @Test func freshDefaultsShowTheMockupsDefaultFour() throws {
+    @Test func freshDefaultsShowTheDefaultRows() throws {
         let ephemeral1 = try makeDefaults()
         let preferences = TodayMetricPreferences(defaults: ephemeral1.defaults)
-        #expect(preferences.visibleKinds == [.heart, .steps, .sleep, .bloodOxygen])
+        // HRV joined the defaults beside Heart; it is dropped at render
+        // time for anyone without the data, not omitted from the order.
+        #expect(preferences.visibleKinds == [.heart, .hrv, .steps, .sleep, .bloodOxygen])
         #expect(preferences.hiddenKinds == [.weight, .distance, .activeEnergy])
     }
 
@@ -38,11 +40,11 @@ struct TodayMetricPreferencesTests {
         preferences.hide(.sleep)
         preferences.show(.weight)
 
-        #expect(preferences.visibleKinds == [.heart, .steps, .bloodOxygen, .weight])
+        #expect(preferences.visibleKinds == [.heart, .hrv, .steps, .bloodOxygen, .weight])
         #expect(preferences.hiddenKinds.contains(.sleep))
 
         let reloaded = TodayMetricPreferences(defaults: defaults)
-        #expect(reloaded.visibleKinds == [.heart, .steps, .bloodOxygen, .weight])
+        #expect(reloaded.visibleKinds == [.heart, .hrv, .steps, .bloodOxygen, .weight])
     }
 
     @Test func showingAnAlreadyVisibleKindDoesNotDuplicate() {
@@ -302,5 +304,104 @@ struct TodayRecencyTests {
         #expect(!TodayMetricsProvider.isFresh(reading(daysAgo: 8), now: now))
         #expect(!TodayMetricsProvider.isFresh(reading(daysAgo: 90), now: now))
         #expect(!TodayMetricsProvider.isFresh(TodayMetricReading(value: 72, date: nil), now: now))
+    }
+}
+
+@Suite("Today HRV row")
+struct TodayHRVRowTests {
+    private let unitSystem = UnitSystem.metric
+
+    @Test("renders whole milliseconds with its own unit")
+    // catches: HRV borrowing another kind's formatting — a bpm unit, or
+    // HealthKit's raw decimals widening the value column for precision the
+    // measurement does not have.
+    func formatsMilliseconds() {
+        let display = TodayMetricFormatter.display(
+            kind: .hrv,
+            reading: TodayMetricReading(value: 42.37, date: nil),
+            locale: Locale(identifier: "en_US"),
+            unitSystem: unitSystem
+        )
+        #expect(display.value == "42")
+        #expect(display.unit == "ms")
+        #expect(display.name == "HRV")
+    }
+
+    @Test("speaks milliseconds, not the neighbouring heart row's bpm")
+    // catches: WP-37's rule that spoken units match displayed ones, broken
+    // by HRV falling into the `.heart` branch it sits beside.
+    func speaksItsOwnUnit() {
+        let display = TodayMetricFormatter.display(
+            kind: .hrv,
+            reading: TodayMetricReading(value: 42, date: nil),
+            locale: Locale(identifier: "en_US"),
+            unitSystem: unitSystem
+        )
+        #expect(display.accessibilityText.contains("milliseconds"))
+        #expect(!display.accessibilityText.contains("beats per minute"))
+    }
+
+    @Test("a kind with no data in the window loses its row entirely")
+    // catches: HRV rendering a permanently empty "No data yet" row on a
+    // device that never records it — the row can never fill, so it is
+    // furniture.
+    func unavailableKindIsDropped() {
+        let visible = TodayMetricKind.defaultVisible
+        #expect(visible.contains(.hrv))
+        let rows = TodayMetricKind.rows(visible: visible, unavailable: [.hrv])
+        #expect(!rows.contains(.hrv))
+        // Nothing else moves or disappears with it.
+        #expect(rows == visible.filter { $0 != .hrv })
+    }
+
+    @Test("only the hiding kinds can be dropped")
+    // catches: the filter generalising, so a quiet week would silently
+    // remove Steps or Sleep instead of showing their empty state.
+    func nonHidingKindsSurviveUnavailability() {
+        let rows = TodayMetricKind.rows(
+            visible: TodayMetricKind.defaultVisible,
+            unavailable: [.steps, .sleep, .bloodOxygen]
+        )
+        #expect(rows == TodayMetricKind.defaultVisible)
+    }
+
+    @Test("an order saved before HRV existed gains it once, next to Heart")
+    @MainActor
+    // catches: existing users never seeing the new row, because a stored
+    // order bypasses `defaultVisible` entirely.
+    func migrationInsertsAfterHeart() {
+        #expect(
+            TodayMetricPreferences.offeringHRV(to: [.heart, .steps, .sleep])
+            == [.heart, .hrv, .steps, .sleep]
+        )
+        // Heart hidden: HRV still has to land somewhere sensible.
+        #expect(TodayMetricPreferences.offeringHRV(to: [.steps, .sleep]) == [.hrv, .steps, .sleep])
+        // Already present: untouched, so the offer cannot duplicate it.
+        #expect(
+            TodayMetricPreferences.offeringHRV(to: [.steps, .hrv]) == [.steps, .hrv]
+        )
+    }
+
+    @Test("the offer happens once, so hiding HRV sticks")
+    // catches: the migration re-adding HRV on every launch and overriding a
+    // deliberate hide — the reason it needs a marker rather than a
+    // contains-check.
+    @MainActor
+    func migrationDoesNotUndoADeliberateHide() {
+        let suite = "hrv-offer-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            Issue.record("could not create a defaults suite")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        // An order stored before HRV existed.
+        defaults.set(["heart", "steps"], forKey: "com.healthloom.settings.todayMetricOrder")
+        #expect(TodayMetricPreferences(defaults: defaults).visibleKinds == [.heart, .hrv, .steps])
+
+        // The user hides it; a later launch must respect that.
+        let prefs = TodayMetricPreferences(defaults: defaults)
+        prefs.hide(.hrv)
+        #expect(TodayMetricPreferences(defaults: defaults).visibleKinds == [.heart, .steps])
     }
 }

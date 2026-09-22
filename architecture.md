@@ -372,6 +372,25 @@ their range, pulled toward the heavier ones. And a reporting signal always draws
 minimum sliver: a genuine near-zero subscore must not be indistinguishable from the empty
 track of a signal that never arrived, which are different facts.
 
+**D16.6 — A row that can never fill is furniture; hide it.** Every Today metric renders
+"No data yet" when a reading is missing, which is right for metrics anyone *could*
+record: a phone counts steps, a scale reports weight, and the empty state is a genuine
+*yet*. HRV is not like that — plenty of devices never produce it, so the empty row would
+be permanent, and a row that can never fill costs scan cost forever while earning none
+back.
+
+So `TodayMetricKind.hidesWhenUnavailable` names the kinds that vanish instead, on
+evidence: no sample at all in a 30-day window. That window is deliberately much longer
+than `latestSampleRecency` (7 days), because the two answer different questions — "is
+this number current?" versus "does this person record this at all?". A quiet week shows
+the empty state; a silent month removes the row.
+
+The probe **fails open**: a query error, or authorization never granted (reads never
+reveal denial, WP-06), reports the kind as available, so the row appears with its empty
+state rather than vanishing. Hiding is for absence positively established, never for
+absence we could not check — the failure mode of the opposite choice is a metric that
+silently disappears for the user whose permissions are merely unsettled.
+
 ## 5. Data flow summaries
 
 **Sync (incremental):** trigger (foreground / BGAppRefresh / manual) → `SyncEngine.sync(type)`

@@ -29,6 +29,7 @@ typealias TodayReorderDestination = ReorderDifference<
 /// `reorderContainer` requires `Item.ID: Sendable`.
 enum TodayMetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case heart
+    case hrv
     case steps
     case sleep
     case bloodOxygen
@@ -38,13 +39,43 @@ enum TodayMetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var id: String { rawValue }
 
-    /// The mockup's default four rows, in its order (heart / steps / sleep /
-    /// blood oxygen).
-    static let defaultVisible: [TodayMetricKind] = [.heart, .steps, .sleep, .bloodOxygen]
+    /// The default rows, in order. HRV sits beside Heart — they read the
+    /// same organ — and is the readiness hero's heaviest signal, so a user
+    /// who has it wants it on the panel. A user who does *not* record HRV
+    /// never sees the row at all (`hidesWhenUnavailable`).
+    static let defaultVisible: [TodayMetricKind] = [.heart, .hrv, .steps, .sleep, .bloodOxygen]
+
+    /// Kinds that disappear entirely when the data is simply absent,
+    /// instead of rendering a permanently empty row.
+    ///
+    /// Every other metric has a plausible path to data for anyone: a phone
+    /// counts steps, a scale reports weight. HRV is different — plenty of
+    /// devices never record it, so "No data yet" would not be a *yet*, it
+    /// would be forever, and a row that can never fill is furniture.
+    static let hidesWhenUnavailable: Set<TodayMetricKind> = [.hrv]
+
+    /// How far back to look before deciding such a kind has no data.
+    ///
+    /// Deliberately much longer than `TodayMetricsProvider.latestSampleRecency`
+    /// (7 days), which governs whether a reading is fresh enough to *show*.
+    /// The two answer different questions: "is this number current?" versus
+    /// "does this person record this at all?". A month of silence is the
+    /// second.
+    static let availabilityWindowDays = 30
+
+    /// Drops the kinds that hide themselves when unavailable. Pure, so the
+    /// rule is pinned without HealthKit.
+    static func rows(
+        visible: [TodayMetricKind],
+        unavailable: Set<TodayMetricKind>
+    ) -> [TodayMetricKind] {
+        visible.filter { !(hidesWhenUnavailable.contains($0) && unavailable.contains($0)) }
+    }
 
     var displayName: String {
         switch self {
         case .heart: return "Heart"
+        case .hrv: return "HRV"
         case .steps: return "Steps"
         case .sleep: return "Sleep"
         case .bloodOxygen: return "Blood oxygen"
@@ -92,6 +123,7 @@ struct TodayMetricDisplay: Identifiable, Equatable {
         let spokenUnit: String
         switch kind {
         case .heart: spokenUnit = "beats per minute"
+        case .hrv: spokenUnit = "milliseconds"
         case .bloodOxygen: spokenUnit = "percent"
         case .weight: spokenUnit = unitSystem == .metric ? "kilograms" : "pounds"
         case .distance: spokenUnit = unitSystem == .metric ? "kilometers" : "miles"
@@ -147,6 +179,19 @@ enum TodayMetricFormatter {
                 sub: timestampSub(reading.date, prefix: "Latest"),
                 value: groupedCount(reading.value, locale: locale),
                 unit: "bpm",
+                progress: nil,
+                unitSystem: unitSystem
+            )
+        case .hrv:
+            // Canonical reading is milliseconds (SDNN), the same unit the
+            // readiness engine baselines against. Whole milliseconds: the
+            // decimals HealthKit carries are below the noise floor of the
+            // measurement and only add width.
+            return TodayMetricDisplay(
+                kind: kind,
+                sub: timestampSub(reading.date, prefix: "Latest"),
+                value: groupedCount(reading.value.rounded(), locale: locale),
+                unit: "ms",
                 progress: nil,
                 unitSystem: unitSystem
             )
@@ -237,6 +282,13 @@ enum TodayMetricFormatter {
 @Observable
 final class TodayMetricPreferences {
     private static let defaultsKey = "com.healthloom.settings.todayMetricOrder"
+    /// Marks that the stored order has been offered HRV once.
+    ///
+    /// Needed to tell two states apart that look identical in storage: an
+    /// order saved *before* HRV existed, and one where the user has since
+    /// hidden it. Without the marker a deliberate hide would be undone on
+    /// every launch. Set the first time either way.
+    private static let hrvOfferedKey = "com.healthloom.settings.todayMetricOrder.hrvOffered"
 
     private let defaults: UserDefaults
     private(set) var visibleKinds: [TodayMetricKind]
@@ -342,6 +394,7 @@ final class TodayMetricPreferences {
     /// relaunch leg still exercises real persistence.
     static func reset(in defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: defaultsKey)
+        defaults.removeObject(forKey: hrvOfferedKey)
     }
 
     private func persist() {
@@ -349,6 +402,28 @@ final class TodayMetricPreferences {
     }
 
     private static func load(from defaults: UserDefaults) -> [TodayMetricKind] {
-        decode(defaults.stringArray(forKey: defaultsKey))
+        let stored = defaults.stringArray(forKey: defaultsKey)
+        let decoded = decode(stored)
+        guard stored != nil, !defaults.bool(forKey: hrvOfferedKey) else { return decoded }
+        // An order saved before HRV existed: insert it once, in its default
+        // position, and record that we have. Safe to do unasked — the row
+        // only ever renders for someone who actually records HRV.
+        defaults.set(true, forKey: hrvOfferedKey)
+        let migrated = offeringHRV(to: decoded)
+        defaults.set(migrated.map(\.rawValue), forKey: defaultsKey)
+        return migrated
+    }
+
+    /// Inserts HRV after Heart (its `defaultVisible` neighbour), or at the
+    /// front when Heart itself is hidden. Pure.
+    static func offeringHRV(to visible: [TodayMetricKind]) -> [TodayMetricKind] {
+        guard !visible.contains(.hrv) else { return visible }
+        var result = visible
+        if let heart = result.firstIndex(of: .heart) {
+            result.insert(.hrv, at: result.index(after: heart))
+        } else {
+            result.insert(.hrv, at: result.startIndex)
+        }
+        return result
     }
 }
