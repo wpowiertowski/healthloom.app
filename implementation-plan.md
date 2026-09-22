@@ -1003,6 +1003,36 @@ which the existing golden vectors prove.
 
 ---
 
+### WP-44 · HRV on the Today panel
+
+**Depends on:** WP-33, WP-43 · **Decision:** architecture.md **D16.6**.
+
+HRV is the readiness hero's heaviest signal but had no row of its own on the panel.
+
+**Steps:**
+1. `TodayMetricKind.hrv`, in `defaultVisible` directly after `.heart` — same organ, and
+   the hero's top signal. Reads `heartRateVariabilitySDNN` in milliseconds, the same
+   quantity and unit `ReadinessInputsProvider` baselines against, so the row and the
+   hero's HRV bar cannot describe different numbers. Already in
+   `SyncPreferences.healthKitReadTypes`, so no authorization change.
+2. Formats as whole milliseconds with a `ms` unit; speaks "milliseconds" (WP-37's rule
+   that spoken units match displayed ones).
+3. `hidesWhenUnavailable` + `availabilityWindowDays` (30) + the pure
+   `TodayMetricKind.rows(visible:unavailable:)` filter; `TodayMetricsProvider
+   .unavailableKinds(among:now:)` establishes absence, failing open (D16.6).
+4. One-time migration: an order saved before HRV existed gains it after Heart, marked by
+   `hrvOfferedKey` so a later deliberate hide is not undone on every launch — the two
+   states are otherwise indistinguishable in storage.
+
+**Tests:** formatting and spoken unit; the filter drops only hiding kinds (a quiet Steps
+week must still show its empty state, not vanish); the migration inserts once, places
+sensibly when Heart is hidden, never duplicates, and does not undo a hide. Two
+pre-existing `TodayMetricPreferences` expectations updated for the new default set — a
+genuine expectation change, five rows where there were four. Panel snapshot gains the HRV
+row.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1018,6 +1048,7 @@ P5  WP-40      Concrete Glass design system ........... Bill x Liquid Glass
 P5  WP-41      You tab density ......................... one card per fact
 P5  WP-42      Name the readiness signals ............. count -> nouns
 P5  WP-43      Readiness bars show magnitude ........... presence -> subscore
+P5  WP-44      HRV on the Today panel .................. hidden when absent
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

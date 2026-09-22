@@ -55,6 +55,7 @@ private enum TodaySnapshotSubject {
     static var panel: some View {
         InstrumentPanel(metrics: [
             TodayMetricDisplay(kind: .heart, sub: "Resting · steady", value: "62", unit: "bpm", progress: nil, unitSystem: .imperial),
+            TodayMetricDisplay(kind: .hrv, sub: "Latest · 06:12", value: "42", unit: "ms", progress: nil, unitSystem: .imperial),
             TodayMetricDisplay(kind: .steps, sub: "68% of 10,000 goal", value: "8,240", unit: nil, progress: 0.68, unitSystem: .imperial),
             TodayMetricDisplay(kind: .sleep, sub: "No data yet", value: nil, unit: nil, progress: nil, unitSystem: .imperial),
             TodayMetricDisplay(
