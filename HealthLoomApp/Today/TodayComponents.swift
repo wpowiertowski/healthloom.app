@@ -69,10 +69,11 @@ struct TodayHeader: View {
 /// asserting a "+0 vs 30-day average" that was never computed.
 enum ReadinessDisplay: Equatable {
     case pending
-    /// `signals` is the engine's own `contributingSignals` set, not a count:
-    /// the hero names which of the four reported, so it cannot settle for
-    /// "3 of 4" without knowing *which* three (WP-42).
-    case scored(score: Int, deltaVsBaseline: Int?, signals: Set<ReadinessSignal>)
+    /// `signalScores` is the engine's own per-signal subscore table, not a
+    /// count and not a presence set: the hero draws each bar at its real
+    /// magnitude, and `score` is exactly the weighted mean of these values
+    /// (WP-43). A signal absent from the table had no usable reading.
+    case scored(score: Int, deltaVsBaseline: Int?, signalScores: [ReadinessSignal: Double])
 }
 
 struct HeroInstrument: View {
@@ -121,7 +122,7 @@ struct HeroInstrument: View {
 
     private var readout: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SignalIndex(signals: signals)
+            SignalIndex(signalScores: signalScores)
             captionText
         }
     }
@@ -176,10 +177,10 @@ struct HeroInstrument: View {
         }
     }
 
-    private var signals: Set<ReadinessSignal> {
+    private var signalScores: [ReadinessSignal: Double] {
         switch readiness {
-        case .pending: return []
-        case .scored(_, _, let signals): return signals
+        case .pending: return [:]
+        case .scored(_, _, let signalScores): return signalScores
         }
     }
 
@@ -197,8 +198,8 @@ struct HeroInstrument: View {
                 .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        case .scored(_, let delta, let signals):
-            let signalsUsed = signals.count
+        case .scored(_, let delta, let signalScores):
+            let signalsUsed = signalScores.count
             // The rows above now name every signal and show which reported,
             // so repeating "based on N of 4 signals" here says nothing new.
             // This line's job is the *comparison* — and when there isn't
@@ -233,28 +234,34 @@ struct HeroInstrument: View {
     }
 }
 
-/// Which of the four readiness signals reported this morning — named, one
-/// row each, filled when that signal contributed and hollow when it did not.
+/// The four readiness signals, each drawn at its own 0...100 subscore.
 ///
-/// Naming them is the point. "based on 3 of 4 signals" told the user a
-/// number and left them to guess the nouns; a hollow row labelled *Sleep*
-/// says which reading is missing and, by implication, what to do about it.
+/// The bar length is the signal's actual contribution, on the same scale as
+/// the score beside it — and the score is exactly the weighted mean of these
+/// four values. That coherence is the point: an earlier cut filled the bars
+/// by *presence* ("this signal reported"), so a healthy-but-imperfect day
+/// showed four full bars next to a total of 82 and read as broken
+/// arithmetic. A bar promises magnitude; it now keeps that promise.
 ///
-/// The set comes from `ReadinessEngine.contributingSignals` — the same
-/// predicate the engine scores with — so a lit row and a weighted signal can
-/// never disagree. Order is `ReadinessSignal.allCases`, i.e. the engine's
-/// weighting order, so the column reads the same every morning.
+/// The weights differ (HRV .30, resting HR .25, sleep .30, prior load .15),
+/// so the total is not the plain average of the bars — it sits inside their
+/// range, pulled toward the heavier ones.
+///
+/// Values come from `ReadinessEngine.signalScores`, the same table `score`
+/// averages, so a bar can never disagree with the number it explains. A
+/// signal with no usable reading is absent from the table and renders as an
+/// empty track with a dimmed label.
 struct SignalIndex: View {
-    let signals: Set<ReadinessSignal>
+    let signalScores: [ReadinessSignal: Double]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(ReadinessSignal.allCases, id: \.self) { signal in
-                let isReporting = signals.contains(signal)
+                let subscore = signalScores[signal]
                 HStack(spacing: 8) {
                     Text(Self.name(signal))
                         .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
-                        .foregroundStyle(isReporting ? Theme.secondary : Theme.tertiary)
+                        .foregroundStyle(subscore == nil ? Theme.tertiary : Theme.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         // Sized for the longest label ("Resting HR") at XL,
@@ -262,15 +269,28 @@ struct SignalIndex: View {
                         // the four bars on one axis, and 60pt clipped two of
                         // the four names to "Resting…" / "Prior lo…".
                         .frame(width: 80, alignment: .leading)
-                    Rectangle()
-                        .fill(isReporting ? Theme.accent : Theme.border)
-                        .frame(height: 6)
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(Theme.border)
+                            if let subscore {
+                                // A reporting signal always shows something:
+                                // a genuine near-zero subscore would
+                                // otherwise be indistinguishable from the
+                                // empty track of a signal that never
+                                // arrived, which are different facts.
+                                Rectangle()
+                                    .fill(Theme.accent)
+                                    .frame(width: max(2, proxy.size.width * min(max(subscore / 100, 0), 1)))
+                            }
+                        }
+                    }
+                    .frame(height: 6)
                 }
             }
         }
         .frame(maxWidth: 190, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Signals")
+        .accessibilityLabel("Readiness signals")
         .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier("today.readiness.signals")
     }
@@ -288,16 +308,20 @@ struct SignalIndex: View {
         }
     }
 
-    /// VoiceOver gets the nouns too, and the missing ones by name — the
-    /// fill state is invisible to it.
+    /// VoiceOver gets the numbers, not the bar lengths it cannot see, and
+    /// the missing signals by name.
     private var accessibilityValue: String {
-        let reporting = ReadinessSignal.allCases.filter { signals.contains($0) }.map(Self.name)
-        let missing = ReadinessSignal.allCases.filter { !signals.contains($0) }.map(Self.name)
+        let reporting = ReadinessSignal.allCases.compactMap { signal -> String? in
+            guard let subscore = signalScores[signal] else { return nil }
+            return "\(Self.name(signal)) \(Int(subscore.rounded())) of 100"
+        }
+        let missing = ReadinessSignal.allCases
+            .filter { signalScores[$0] == nil }
+            .map(Self.name)
         guard !reporting.isEmpty else { return "No signals reporting" }
-        let lead = "\(reporting.count) of \(ReadinessSignal.allCases.count) reporting: "
-            + reporting.joined(separator: ", ")
+        let lead = reporting.joined(separator: ", ")
         guard !missing.isEmpty else { return lead }
-        return lead + ". Missing: " + missing.joined(separator: ", ")
+        return lead + ". Not reporting: " + missing.joined(separator: ", ")
     }
 }
 

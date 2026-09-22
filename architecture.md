@@ -337,7 +337,8 @@ a divider and a full-width row of their own. The 44 pt target is unaffected: it 
 from `.frame(minHeight: 44)`, not from the label's width — the You screen's `.hitRegion`
 audit (test-plan §6) covers exactly this.
 
-**D16.5 — A count of inputs must name the inputs.** "Based on 3 of 4 signals" tells a
+**D16.5 — A count of inputs must name the inputs, and a bar must mean magnitude.**
+"Based on 3 of 4 signals" tells a
 user a number and leaves them to guess the nouns — and gives them nothing to act on when
 one is missing. The Today hero names all four (HRV, resting HR, sleep, prior load), one
 row each, filled when that signal reported and hollow when it did not, so a short day
@@ -355,6 +356,21 @@ The caption beneath stops repeating the count (the rows carry it) and does the o
 they cannot: explaining an absent comparison — "No 30-day average yet" before history
 exists, "Comparison needs all four signals" when a partial score would be measured
 against a full-signal average (H1's rule, now stated rather than implied).
+
+Naming them was not enough. The first cut filled each bar by *presence* — lit if that
+signal reported — which put four full bars beside a total of 82 and read as broken
+arithmetic, because **a bar is a magnitude encoding and a full one claims 100**. The
+engine now publishes `signalScores(inputs:)`: each contributing signal's own 0...100
+subscore, on the same scale as the total, which is exactly their weighted mean. Bars are
+drawn at those values, so the rows are arithmetic the reader can follow. `score` consumes
+the same table, so a bar can never disagree with the number it explains, and a test pins
+that identity.
+
+Two consequences to keep in mind. The weights differ (HRV .30, resting HR .25, sleep .30,
+prior load .15), so the total is *not* the plain average of the bars — it sits inside
+their range, pulled toward the heavier ones. And a reporting signal always draws a
+minimum sliver: a genuine near-zero subscore must not be indistinguishable from the empty
+track of a signal that never arrived, which are different facts.
 
 ## 5. Data flow summaries
 

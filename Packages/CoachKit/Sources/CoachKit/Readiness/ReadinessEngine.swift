@@ -206,56 +206,70 @@ public enum ReadinessEngine {
     /// - Parameter recentScores: past `Readiness.score` values (newest last;
     ///   order irrelevant), for the delta. Supplied by the caller -- this
     ///   engine keeps no history itself.
+    /// The weight each signal carries in the final mean. Reads off the
+    /// constants above — one table, not two.
+    public static func weight(of signal: ReadinessSignal) -> Double {
+        switch signal {
+        case .hrv: return hrvWeight
+        case .restingHR: return restingHRWeight
+        case .sleep: return sleepWeight
+        case .strain: return strainWeight
+        }
+    }
+
+    /// Each contributing signal's own 0...100 subscore — on the *same scale
+    /// as the final score*, which is exactly their weighted mean.
+    ///
+    /// This is what lets the Today hero draw a signal's bar at its real
+    /// magnitude instead of just "reported / didn't". A row filled to 68
+    /// beside a total of 82 is then arithmetic the user can follow; four
+    /// full bars beside 82 was not.
+    ///
+    /// A signal absent from the returned dictionary had no usable reading.
+    /// Invalid values count as missing, never as a contributing zero —
+    /// `score`'s degrade-don't-crash rule.
+    public static func signalScores(inputs: ReadinessInputs) -> [ReadinessSignal: Double] {
+        var scores: [ReadinessSignal: Double] = [:]
+        if let ratio = inputs.hrvRatio, ratio.isFinite, ratio > 0 {
+            scores[.hrv] = hrvSubscore(ratio: ratio)
+        }
+        if let delta = valid(inputs.restingHRDeltaBeatsPerMinute, in: -Double.infinity...Double.infinity) {
+            scores[.restingHR] = restingHRSubscore(deltaBeatsPerMinute: delta)
+        }
+        if let hours = valid(inputs.sleepHours, in: 0...24) {
+            scores[.sleep] = sleepSubscore(
+                hours: hours,
+                efficiency: valid(inputs.sleepEfficiency, in: 0...1)
+            )
+        }
+        if let strain = valid(inputs.priorDayStrain, in: 0...1) {
+            scores[.strain] = strainSubscore(load: strain)
+        }
+        return scores
+    }
+
     /// Which of the four signals `inputs` carries a usable reading for.
     ///
-    /// `score(inputs:recentScores:)` below consumes this instead of
-    /// re-testing the same fields, so "usable" has exactly ONE definition.
-    /// That matters because a caller now wants to show *which* signals a
-    /// score stands on (the Today hero): deriving that independently would
-    /// duplicate these predicates and drift from the engine that actually
-    /// weighted them — the repo's "literal drift" bug shape. Invalid
-    /// readings count as missing, never as zero, per `score`'s
-    /// degrade-don't-crash rule.
+    /// Derived from `signalScores` rather than re-testing the same fields,
+    /// so "usable" has exactly ONE definition and a lit row can never
+    /// disagree with the weighting that produced the score — the repo's
+    /// "literal drift" bug shape.
     public static func contributingSignals(inputs: ReadinessInputs) -> Set<ReadinessSignal> {
-        var signals: Set<ReadinessSignal> = []
-        if let ratio = inputs.hrvRatio, ratio.isFinite, ratio > 0 {
-            signals.insert(.hrv)
-        }
-        if valid(inputs.restingHRDeltaBeatsPerMinute, in: -Double.infinity...Double.infinity) != nil {
-            signals.insert(.restingHR)
-        }
-        if valid(inputs.sleepHours, in: 0...24) != nil {
-            signals.insert(.sleep)
-        }
-        if valid(inputs.priorDayStrain, in: 0...1) != nil {
-            signals.insert(.strain)
-        }
-        return signals
+        Set(signalScores(inputs: inputs).keys)
     }
 
     public static func score(inputs: ReadinessInputs, recentScores: [Int] = []) -> Readiness {
-        let signals = contributingSignals(inputs: inputs)
+        let scores = signalScores(inputs: inputs)
         var weightedSum = 0.0
         var weightSum = 0.0
-        func accumulate(subscore: Double, weight: Double) {
-            weightedSum += weight * subscore
-            weightSum += weight
-        }
-
-        // Each `guard`-free unwrap below is safe by construction: membership
-        // in `signals` is exactly the validity test for that field.
-        if signals.contains(.hrv), let ratio = inputs.hrvRatio {
-            accumulate(subscore: hrvSubscore(ratio: ratio), weight: hrvWeight)
-        }
-        if signals.contains(.restingHR), let delta = inputs.restingHRDeltaBeatsPerMinute {
-            accumulate(subscore: restingHRSubscore(deltaBeatsPerMinute: delta), weight: restingHRWeight)
-        }
-        if signals.contains(.sleep), let hours = inputs.sleepHours {
-            let efficiency = valid(inputs.sleepEfficiency, in: 0...1)
-            accumulate(subscore: sleepSubscore(hours: hours, efficiency: efficiency), weight: sleepWeight)
-        }
-        if signals.contains(.strain), let strain = inputs.priorDayStrain {
-            accumulate(subscore: strainSubscore(load: strain), weight: strainWeight)
+        // Iterated in `allCases` order, not dictionary order: floating-point
+        // addition is not associative, so summing in an arbitrary order
+        // could move the rounded score by one.
+        for signal in ReadinessSignal.allCases {
+            guard let subscore = scores[signal] else { continue }
+            let signalWeight = weight(of: signal)
+            weightedSum += signalWeight * subscore
+            weightSum += signalWeight
         }
 
         guard weightSum > 0 else {
@@ -263,10 +277,10 @@ public enum ReadinessEngine {
         }
         let score = Int(clamped((weightedSum / weightSum).rounded()))
         var delta: Int? = nil
-        if !recentScores.isEmpty, !signals.isEmpty {
+        if !recentScores.isEmpty, !scores.isEmpty {
             let raw = (Double(score) - average(recentScores)).rounded()
             delta = Int(exactly: raw) ?? (raw > 0 ? Int.max : Int.min)
         }
-        return Readiness(score: score, deltaVsAverage: delta, signalsUsed: signals.count)
+        return Readiness(score: score, deltaVsAverage: delta, signalsUsed: scores.count)
     }
 }

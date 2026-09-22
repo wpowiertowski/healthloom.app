@@ -231,3 +231,60 @@ struct ReadinessContributingSignalsTests {
         #expect(Set(ReadinessSignal.allCases) == signals)
     }
 }
+
+@Suite("ReadinessEngine.signalScores")
+struct ReadinessSignalScoresTests {
+    @Test("the total is exactly the weighted mean of the published subscores")
+    // catches: the hero drawing bars from one set of numbers while the score
+    // comes from another — the defect that made four full bars sit beside a
+    // total of 82 and read as broken arithmetic.
+    func totalIsTheWeightedMeanOfTheBars() {
+        let inputs = ReadinessInputs(
+            hrvRatio: 0.92,
+            restingHRDeltaBeatsPerMinute: 3,
+            sleepHours: 6.75,
+            sleepEfficiency: 0.88,
+            priorDayStrain: 0.55
+        )
+        let scores = ReadinessEngine.signalScores(inputs: inputs)
+        #expect(scores.count == 4)
+
+        var weighted = 0.0
+        var weights = 0.0
+        for signal in ReadinessSignal.allCases {
+            guard let subscore = scores[signal] else { continue }
+            weighted += ReadinessEngine.weight(of: signal) * subscore
+            weights += ReadinessEngine.weight(of: signal)
+        }
+        let expected = Int((weighted / weights).rounded())
+        #expect(ReadinessEngine.score(inputs: inputs).score == expected)
+    }
+
+    @Test("a partial day renormalises over the signals that reported")
+    // catches: a missing signal being treated as a zero subscore, which would
+    // drag the total down while its bar sat empty and unexplained.
+    func partialDayRenormalises() {
+        let inputs = ReadinessInputs(hrvRatio: 1.0, restingHRDeltaBeatsPerMinute: 0)
+        let scores = ReadinessEngine.signalScores(inputs: inputs)
+        #expect(scores.keys.sorted { $0.rawValue < $1.rawValue } == [.hrv, .restingHR])
+        // Both reported subscores are 100, so the total is 100 — not 50,
+        // which is what counting the two absent signals as zero would give.
+        #expect(ReadinessEngine.score(inputs: inputs).score == 100)
+    }
+
+    @Test("every published subscore sits on the score's own 0...100 scale")
+    // catches: a subscore escaping 0...100, which would render a bar wider
+    // than its track or inverted.
+    func subscoresShareTheScoreScale() {
+        let extremes = ReadinessInputs(
+            hrvRatio: 0.01,
+            restingHRDeltaBeatsPerMinute: 400,
+            sleepHours: 0,
+            sleepEfficiency: 0,
+            priorDayStrain: 1
+        )
+        for (_, subscore) in ReadinessEngine.signalScores(inputs: extremes) {
+            #expect(subscore >= 0 && subscore <= 100)
+        }
+    }
+}
