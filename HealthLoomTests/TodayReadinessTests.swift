@@ -191,27 +191,37 @@ struct ReadinessDisplayMappingTests {
         // H1: a missing delta stays nil so the hero explains the absent
         // comparison — the old `?? 0` coercion rendered a "+0 vs 30-day
         // average" against an average that didn't exist.
+        let full = ReadinessEngine.signalScores(inputs: Self.fullInputs)
         #expect(ReadinessInputsProvider.display(
             Readiness(score: 82, deltaVsAverage: 6, signalsUsed: 4),
             inputs: Self.fullInputs
-        ) == .scored(score: 82, deltaVsBaseline: 6, signals: Set(ReadinessSignal.allCases)))
+        ) == .scored(score: 82, deltaVsBaseline: 6, signalScores: full))
         #expect(ReadinessInputsProvider.display(
             Readiness(score: 78, deltaVsAverage: nil, signalsUsed: 4),
             inputs: Self.fullInputs
-        ) == .scored(score: 78, deltaVsBaseline: nil, signals: Set(ReadinessSignal.allCases)))
+        ) == .scored(score: 78, deltaVsBaseline: nil, signalScores: full))
     }
 
-    @Test("a partial day names which signals reported, not just how many")
-    // catches: the hero being handed a bare count and having to guess the
-    // nouns — a row lit for a signal that never reported.
-    func partialDayCarriesTheSignalNames() {
+    @Test("a partial day carries only the signals that reported, with their subscores")
+    // catches: the hero being handed presence instead of magnitude — bars
+    // drawn full for every reporting signal regardless of how it scored,
+    // which put four full bars beside a total of 82.
+    func partialDayCarriesSubscores() {
         let display = ReadinessInputsProvider.display(
             Readiness(score: 70, deltaVsAverage: nil, signalsUsed: 2),
             inputs: Self.partialInputs
         )
-        #expect(display == .scored(
-            score: 70, deltaVsBaseline: nil, signals: [.hrv, .restingHR]
-        ))
+        guard case .scored(_, _, let scores) = display else {
+            Issue.record("expected a scored display, got \(display)")
+            return
+        }
+        #expect(Set(scores.keys) == [.hrv, .restingHR])
+        // The values are the engine's, not re-derived here.
+        #expect(scores == ReadinessEngine.signalScores(inputs: Self.partialInputs))
+        // And they are real magnitudes on the score's own scale, not flags.
+        for (_, subscore) in scores {
+            #expect(subscore >= 0 && subscore <= 100)
+        }
     }
 }
 

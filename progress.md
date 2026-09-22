@@ -5347,3 +5347,41 @@ identical, which the existing golden vectors prove.
 
 **Still open:** each signal's *magnitude*. The rows show whether a signal reported, not
 how strongly it scored; that needs the engine to publish its subscores.
+
+## WP-43 · Readiness bars show magnitude, not presence (branch `you-page-density`)
+
+Owner, on the WP-42 hero: "the bars ... seem to have incorrect math done on them as the
+bars are currently full yet the score is 82/100." The arithmetic was right; the
+*encoding* was wrong. WP-42 filled each bar by **presence** — lit if that signal had a
+usable reading — because the engine published which signals contributed and not how much.
+A bar is a magnitude encoding, and a full one claims 100, so four full bars beside a
+total of 82 read as broken. This was WP-42's own stated open item, and it took a reader
+about ten seconds to find it, which is the argument for closing such gaps rather than
+shipping them with a footnote.
+
+**Fix.** `ReadinessEngine.signalScores(inputs:)` publishes each contributing signal's
+0...100 subscore — the same scale as the total, which is exactly their weighted mean.
+`contributingSignals(inputs:)` is now that table's keys and `score(inputs:recentScores:)`
+consumes it, so the bars, the presence set and the number they explain all read off ONE
+definition. A test pins the identity directly: the score equals the weighted mean of the
+published subscores.
+
+**Two things worth knowing.** The weights differ (.30/.25/.30/.15), so the total is *not*
+the plain average of the bars — it sits inside their range, pulled toward the heavier
+ones; a reader doing mental arithmetic will be close but not exact, and that is correct.
+And a reporting signal always draws a 2pt minimum: a genuine near-zero subscore must not
+be indistinguishable from the empty track of a signal that never arrived, which are
+different facts.
+
+**One non-obvious correctness point.** `score`'s accumulation iterates
+`ReadinessSignal.allCases` rather than the subscore dictionary, because floating-point
+addition is not associative and Swift's dictionary order is not stable — summing in an
+arbitrary order could move the rounded score by one. The golden vectors would have caught
+it eventually and confusingly; iterating a declared order avoids the class entirely.
+
+**Tests:** three CoachKit tests (weighted-mean identity; a partial day renormalises over
+what reported instead of counting absences as zero; every subscore on 0...100). The
+`display` test now asserts the provider passes the engine's table through rather than
+re-deriving it. Snapshot fixtures carry subscores whose weighted mean is the score shown
+beside them, so the references pin the coherence the bars promise. 198 CoachKit tests
+pass; the `score` refactor is behaviour-identical, proven by the untouched golden vectors.

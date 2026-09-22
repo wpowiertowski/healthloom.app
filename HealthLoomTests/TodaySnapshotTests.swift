@@ -22,22 +22,29 @@ import UIKit
 
 private enum TodaySnapshotSubject {
     static var scoredHero: some View {
+        // Subscores whose weighted mean is the 82 beside them, so the
+        // reference pins the coherence the bars promise.
         HeroInstrument(readiness: .scored(
-            score: 82, deltaVsBaseline: 6, signals: Set(ReadinessSignal.allCases)
+            score: 82,
+            deltaVsBaseline: 6,
+            signalScores: [.hrv: 91, .restingHR: 84, .sleep: 76, .strain: 72]
         ))
     }
 
     static var firstScoreHero: some View {
         HeroInstrument(readiness: .scored(
-            score: 78, deltaVsBaseline: nil, signals: Set(ReadinessSignal.allCases)
+            score: 78,
+            deltaVsBaseline: nil,
+            signalScores: [.hrv: 80, .restingHR: 74, .sleep: 79, .strain: 77]
         ))
     }
 
     /// A short day: sleep and prior-day load never arrived, so two rows
-    /// render hollow and the caption explains the withheld comparison.
+    /// render as empty track and the caption explains the withheld
+    /// comparison. The two that did report sit at different lengths.
     static var partialHero: some View {
         HeroInstrument(readiness: .scored(
-            score: 70, deltaVsBaseline: 4, signals: [.hrv, .restingHR]
+            score: 70, deltaVsBaseline: 4, signalScores: [.hrv: 62, .restingHR: 88]
         ))
     }
 

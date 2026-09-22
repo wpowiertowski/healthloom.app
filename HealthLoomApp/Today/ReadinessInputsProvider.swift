@@ -78,20 +78,20 @@ final class ReadinessInputsProvider {
     /// absent comparison, never an uncomputed "+0 average".
     ///
     /// Takes the `inputs` the score was computed from, not just the score:
-    /// the hero names *which* signals contributed (WP-42), and only the
-    /// inputs know that.
+    /// the hero names which signals contributed (WP-42) and draws each at
+    /// its own subscore (WP-43), and only the inputs know either.
     static func display(_ readiness: Readiness, inputs: ReadinessInputs) -> ReadinessDisplay {
-        // One source for "which signals reported": the engine's own
-        // predicate, which is also what weighted the score. `signalsUsed`
-        // is this set's count, so gating on the set rather than consulting
-        // both keeps the pending rule (zero usable signals never renders as
-        // a real score) reading off a single fact.
-        let signals = ReadinessEngine.contributingSignals(inputs: inputs)
-        guard !signals.isEmpty else { return .pending }
+        // One source for both "which signals reported" and "how much each
+        // contributed": the engine's own subscore table, which is exactly
+        // what `score` took the weighted mean of. Gating on it rather than
+        // consulting `signalsUsed` too keeps the pending rule (zero usable
+        // signals never renders as a real score) reading off a single fact.
+        let signalScores = ReadinessEngine.signalScores(inputs: inputs)
+        guard !signalScores.isEmpty else { return .pending }
         return .scored(
             score: readiness.score,
             deltaVsBaseline: readiness.deltaVsAverage,
-            signals: signals
+            signalScores: signalScores
         )
     }
 

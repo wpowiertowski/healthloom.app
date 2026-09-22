@@ -971,6 +971,38 @@ the light/dark × XS/XL/AXXXL matrix.
 
 ---
 
+### WP-43 · Readiness bars show magnitude, not presence
+
+**Depends on:** WP-42 · **Decision:** architecture.md **D16.5** (closes WP-42's stated
+follow-up).
+
+WP-42 named the four signals but could only fill their bars by presence, because the
+engine published which signals contributed and not how much. Four full bars beside a
+total of 82 read as broken arithmetic — a bar promises magnitude.
+
+**Steps:**
+1. `ReadinessEngine.signalScores(inputs:)` publishes each contributing signal's 0...100
+   subscore — the same scale as the total, which is their weighted mean.
+   `contributingSignals(inputs:)` becomes its keys, and `score(inputs:recentScores:)`
+   consumes the table, so all three read off one definition.
+2. `weight(of:)` exposes the weight table already declared as constants.
+3. `score`'s accumulation iterates `ReadinessSignal.allCases`, not dictionary order:
+   floating-point addition is not associative, and an arbitrary order could move the
+   rounded score by one.
+4. `ReadinessDisplay.scored` carries `[ReadinessSignal: Double]`; `SignalIndex` draws each
+   bar at `subscore / 100`, with a 2pt minimum so a near-zero reading stays distinct from
+   an absent one. VoiceOver reads the numbers, which it cannot infer from bar length.
+
+**Tests:** three CoachKit tests — the total *is* the weighted mean of the published
+subscores (the exact coherence the bars promise); a partial day renormalises over what
+reported rather than counting absences as zero; every subscore sits on 0...100. The
+`display` test asserts the provider passes the engine's own table through rather than
+re-deriving it. Snapshot fixtures carry subscores whose weighted mean is the score shown
+beside them. All 198 CoachKit tests pass — the `score` refactor is behaviour-identical,
+which the existing golden vectors prove.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -985,6 +1017,7 @@ P4  WP-33..39  Yacht club UI, insights, wipe, launch .. polish
 P5  WP-40      Concrete Glass design system ........... Bill x Liquid Glass
 P5  WP-41      You tab density ......................... one card per fact
 P5  WP-42      Name the readiness signals ............. count -> nouns
+P5  WP-43      Readiness bars show magnitude ........... presence -> subscore
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement
