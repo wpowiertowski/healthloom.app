@@ -896,7 +896,7 @@ referenced the removed `.icon`); full bundle + UI suite green, zero compiler war
 **Deliberately out of scope — follow-up 1, true refraction.** The capsule refracts the
 canvas, not scrolling content, because `.safeAreaInset(edge: .bottom)` does not reach
 through the `NavigationStack` each non-Today tab creates for itself (see D16). Hoisting
-those six stacks into one shell-owned `NavigationStack` would fix it and simplify the
+those five stacks into one shell-owned `NavigationStack` would fix it and simplify the
 shell, but it is a navigation change with its own UI-test surface.
 
 **Deliberately out of scope — follow-up 2 (CLOSED by WP-42):** naming which signals a

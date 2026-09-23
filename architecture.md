@@ -293,8 +293,8 @@ each non-Today tab wraps itself in, so those screens kept claiming full height, 
 capsule covered what they pinned to the bottom, and taps meant for Coach's input bar
 landed on the tab underneath it. Today — the one tab with no `NavigationStack` — was
 unaffected, which is what identified the cause. Closing the gap means the shell owning
-one `NavigationStack` instead of six: a navigation change, not a design one, and its own
-work package.
+one `NavigationStack` instead of five (one per non-Today tab): a navigation change, not a
+design one, and its own work package.
 
 `Design/healthloom-bill-glass.html` is the locked mockup. Three sub-decisions:
 
@@ -322,9 +322,11 @@ are labelled and carry no semantics of their own.
 the Ulm school actually set in) for language; **IBM Plex Mono** for anything read off an
 instrument — units, timestamps, counts, uppercase section labels. Nav labels are language,
 not silkscreen. Sizes follow one geometric ladder, ratio 1.25 anchored at 9.5 pt
-(9.5 / 12 / 15 / 18.5 / 23 / 29 / 46); the Yacht club build had drifted to 17 ad-hoc
-sizes against no stated system. D12's two production deviations still bind: Dynamic Type
-scaling via `relativeTo:`, and a dark-palette variant.
+(9.5 / 12 / 15 / 18.5 / 23 / 29 / 46). The first six are rungs 0–5 rounded to the nearest
+half point; 46 is rung 7 (45.3) rounded up, as the locked mockup sets it, and rung 6 (≈36)
+is unused. The Yacht club build had drifted to 17 ad-hoc sizes against no stated system.
+D12's two production deviations still bind: Dynamic Type scaling via `relativeTo:`, and a
+dark-palette variant.
 
 **D16.4 — A control label repeated on every row is noise, not a label.** When the same
 control appears once per item, its visible label says nothing about *that* item while

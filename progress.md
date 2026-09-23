@@ -5429,3 +5429,35 @@ hidden, never duplicates, and does not undo a hide. Two pre-existing
 `TodayMetricPreferences` expectations updated for the new default set — a genuine
 expectation change (five rows where there were four), not a defect. Panel snapshot gains
 the HRV row across the light/dark × XS/XL/AXXXL matrix.
+
+## Handoff-review fixes (branch `handoff-fixes` from main b4d8f5b)
+
+Fixes from reviewing the WP-40…44 session handoff. No product code changes.
+
+**`make test` enforces the xcodegen pin.** The pin check lived only in `make xcode`;
+`make test` — which the pre-commit hook runs — called a bare `xcodegen generate`, the exact
+skew the Makefile header warns about. The check is now its own `check-xcodegen` target,
+a prerequisite of both, so it runs before the package suites. Probe: a fake `xcodegen`
+reporting 2.45.4 first on `PATH` → `make test` exits 2 at `check-xcodegen`, nothing else
+runs; the real 2.46.0 passes.
+
+**YouTab typing flake fixed structurally.** `testCorrectionPersists` failed on PR #51's
+first CI attempt with the typed text spliced into the prefill (`"~8,200 steps/day (30-~9,000
+…"`) — a missed triple-tap select-all, *after* the PR #32 retype-once guard. Retyping the
+same gesture can't fix a gesture problem, so the test no longer selects:
+`replaceText(in:with:)` taps past the last glyph, deletes the reported prefill by count,
+re-reads (a mid-text cursor leaves a short suffix the next trailing tap clears), then types
+and verifies, three attempts, failing with the typing-fidelity message.
+Verified on iPhone 18 Pro / iOS 27.0: `YouTabUITests` × 10 iterations
+(`-run-tests-until-failure`) → 40/40 passed, zero compiler warnings. Mutation checks —
+catches: a clear that deletes nothing (`count: 0`) → red with the prefill plus three
+appended copies and the typing-fidelity message; a clear that skips entirely → red with
+"no keyboard focus" (its trailing tap is also what focuses the field).
+
+**Doc corrections.** The shell would hoist **five** per-tab `NavigationStack`s, not six
+(Today has none): fixed in `architecture.md` D16, `implementation-plan.md` WP-40 follow-up 1
+and the `HomeView.swift` header (the WP-40 entry above keeps its original wording as a log).
+The type ladder skips a rung: 9.5 / 12 / 15 / 18.5 / 23 / 29 are n = 0–5 of 9.5 × 1.25ⁿ;
+`display` 46 is n = 7 (45.3, rounded up to the mockup's value); n = 6 (≈36) is unused.
+Stated in D16.3 and the `Theme.Step` comment so `display` isn't later "fixed" as off-ladder.
+No rationale for the skip is recorded anywhere, so none is claimed.

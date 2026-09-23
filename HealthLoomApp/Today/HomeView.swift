@@ -27,7 +27,7 @@
 //
 // So the bar is glass over the canvas, not over moving content. Getting
 // true refraction needs the tab shell to own one `NavigationStack`
-// instead of six, which is a navigation change, not a design one -- see
+// instead of five, which is a navigation change, not a design one -- see
 // implementation-plan.md WP-40's follow-up.
 
 import SwiftUI
