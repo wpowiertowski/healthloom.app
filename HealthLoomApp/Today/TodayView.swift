@@ -172,7 +172,15 @@ struct TodayView: View {
             }
             .padding(.horizontal, 22).padding(.bottom, 24)
         }
+        // Not a `ThemedScreen`, so it reserves the floating bar's height
+        // itself (HomeView).
+        .clearsTabBar()
         .background(Theme.canvas.ignoresSafeArea())
+        // Today draws its own header and has never had a navigation bar.
+        // It now sits in the shell's `NavigationStack` (HomeView), so the
+        // bar is hidden here the way `ThemedScreen` hides it for the other
+        // tab roots -- otherwise an empty bar would push the header down.
+        .toolbar(.hidden, for: .navigationBar)
         .task(id: preferences.visibleKinds) {
             await refreshReadings()
             await refreshReadiness()

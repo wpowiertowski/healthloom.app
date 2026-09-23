@@ -893,11 +893,11 @@ sync intent respects the same in-flight coalescing as every other trigger (WP-09
 UI-test identifiers unchanged (`tabbar.*`, `activities.row.<id>.title|.detail` — no test
 referenced the removed `.icon`); full bundle + UI suite green, zero compiler warnings.
 
-**Deliberately out of scope — follow-up 1, true refraction.** The capsule refracts the
-canvas, not scrolling content, because `.safeAreaInset(edge: .bottom)` does not reach
-through the `NavigationStack` each non-Today tab creates for itself (see D16). Hoisting
-those six stacks into one shell-owned `NavigationStack` would fix it and simplify the
-shell, but it is a navigation change with its own UI-test surface.
+**Deliberately out of scope — follow-up 1 (CLOSED by WP-45): true refraction.** The
+capsule refracted the canvas, not scrolling content, because `.safeAreaInset(edge:
+.bottom)` does not reach through a `NavigationStack`. The premise that hoisting the
+per-tab stacks into one would fix it turned out wrong — an outer inset doesn't cross even
+one stack — so WP-45 floats the bar as an overlay and hands its height down instead (D16.7).
 
 **Deliberately out of scope — follow-up 2 (CLOSED by WP-42):** naming which signals a
 score stands on. `SignalIndex` shipped as a count because `Readiness` publishes only
@@ -1033,6 +1033,32 @@ row.
 
 ---
 
+### WP-45 · Floating tab bar
+
+**Depends on:** WP-40 · **Decision:** architecture.md **D16.7**.
+
+The glass capsule sat in flow, so it only ever refracted the canvas (WP-40 follow-up 1).
+
+**Steps:**
+1. The shell (`HomeView`) owns the one `NavigationStack`; Coach, You, Data, Activities
+   and Settings stop creating their own. Keyed on the selected tab so switching tabs pops
+   pushed screens, as destroying a per-tab stack used to.
+2. The bar is an overlay on the stack, so it floats over tab roots and pushed screens.
+   Its measured height is published as the `tabBarClearance` environment value.
+3. `ThemedScreen` reserves that height as bottom safe area (`.clearsTabBar()`); `TodayView`
+   and `WipeFlowView` — under the bar but not `ThemedScreen`s — apply it directly. Today
+   hides the navigation bar it now sits under.
+
+**Tests:** `DashboardUITests.testFloatingTabBarOverPushedScreen` covers the bar staying
+up on a pushed screen, that screen's last row scrolling above it, and a tab switch
+popping the push. The existing UI suite covers tab roots: Coach's input and send (the
+WP-40 failure, taps landing on the tab under the capsule) and bottom-of-list taps
+(Activities link, tip-jar retry) all failed under the outer-inset build. Verified
+visually on iPhone 18 Pro: rows pass under the glass at rest, and with the keyboard up
+the bar rides on it with the focused field above.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1049,6 +1075,7 @@ P5  WP-41      You tab density ......................... one card per fact
 P5  WP-42      Name the readiness signals ............. count -> nouns
 P5  WP-43      Readiness bars show magnitude ........... presence -> subscore
 P5  WP-44      HRV on the Today panel .................. hidden when absent
+P5  WP-45      Floating tab bar ........................ content always clears it
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

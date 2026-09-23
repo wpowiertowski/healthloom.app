@@ -22,6 +22,46 @@ final class YouTabUITests: XCTestCase {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
     }
 
+    /// Replaces a text field's contents without a select-all gesture.
+    ///
+    /// A triple-tap select-all is the flaky step on loaded runners: when
+    /// it misses, the tap leaves the cursor mid-prefill and the typed text
+    /// is spliced into it (PR #32, and again PR #51 after a retype-once
+    /// guard was added). Deleting the known prefill needs no selection:
+    /// tap past the last glyph to park the cursor at the end, delete as
+    /// many characters as the field reports, and re-read. If the cursor
+    /// still landed mid-text, the leftover suffix is short enough that the
+    /// next trailing tap lands after it. The typed result is verified the
+    /// same way, since the keyboard can also drop characters.
+    @MainActor
+    private func replaceText(
+        in field: XCUIElement, with text: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        for _ in 0..<3 {
+            clear(field)
+            field.typeText(text)
+            if (field.value as? String) == text { return }
+        }
+        XCTFail(
+            "field holds \(String(describing: field.value)) after three attempts, "
+                + "expected \(text) — typing fidelity failure, not a product regression",
+            file: file, line: line
+        )
+    }
+
+    /// Empties a text field by deleting from the end. An empty
+    /// `UITextField` reports its placeholder as its value.
+    @MainActor
+    private func clear(_ field: XCUIElement) {
+        for _ in 0..<3 {
+            let current = (field.value as? String) ?? ""
+            if current.isEmpty || current == field.placeholderValue { return }
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        }
+    }
+
     /// Launches into the You scenario, lands on the You tab.
     @MainActor
     private func openYou(_ app: XCUIApplication) -> XCUIElementQuery {
@@ -77,27 +117,11 @@ final class YouTabUITests: XCTestCase {
         let field = app.textFields["you.correct.field"]
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         let expectedCorrection = "~9,000 steps/day (my tracker)"
-        // Triple-tap selects the pre-filled text so typing replaces it.
-        field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
-        field.typeText(expectedCorrection)
-        // Loaded runners can mangle gesture typing (a missed select-all
-        // appends to the prefill, or the keyboard drops characters) — and
-        // a mangled save fails the exact-text assertion below with no
-        // indication the typing was at fault (PR #32 CI red). Verify what
-        // the field holds BEFORE saving and retype once if it drifted;
-        // the save then pins exactly this string.
-        if (field.value as? String) != expectedCorrection {
-            field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
-            field.typeText(expectedCorrection)
-            XCTAssertEqual(
-                field.value as? String, expectedCorrection,
-                "correction field holds mangled text after retype — typing fidelity failure, not a product regression"
-            )
-        }
+        replaceText(in: field, with: expectedCorrection)
         anyElement["you.correct.save"].tap()
         XCTAssertFalse(anyElement["you.correct.sheet"].waitForExistence(timeout: 5))
         // The corrected text renders with the correction badge.
-        XCTAssertTrue(app.staticTexts["~9,000 steps/day (my tracker)"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[expectedCorrection].waitForExistence(timeout: 10))
         XCTAssertTrue(anyElement["you.correction.steps.dailyAverage"].exists)
     }
 

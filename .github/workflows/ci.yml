@@ -316,7 +316,7 @@ jobs:
           fi
           echo "Selected simulator: $(xcrun simctl list devices available | grep -F "$udid")"
           # Kick off the boot now, without waiting, so springboard warms up
-          # while xcodegen and the ~5 min build below run. Launching the
+          # while the ~5 min build below runs. Launching the
           # first UI-tested app on a cold-booting simulator timed out at
           # xcodebuild's launch deadline ("Timed out while launching
           # application via Xcode", PR #7 run 2) -- the simulator only
@@ -324,16 +324,12 @@ jobs:
           xcrun simctl boot "$udid" 2>/dev/null || true
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
-      - name: Generate Xcode project (xcodegen)
-        run: |
-          set -euo pipefail
-          # xcodegen ships via Homebrew on GitHub's macOS runners; project.yml
-          # is the committed source of truth, the .xcodeproj itself is not
-          # committed here (unlike lumivault.app, which commits its .xcodeproj
-          # directly -- HealthLoom deliberately regenerates it in CI instead,
-          # to avoid .pbxproj merge conflicts across parallel work streams).
-          brew install xcodegen
-          xcodegen generate
+      # No xcodegen step: this job builds the COMMITTED HealthLoom.xcodeproj,
+      # the same bytes Xcode Cloud archives to TestFlight. The project-drift
+      # job (pinned XcodeGen, checksum-verified) proves it matches
+      # project.yml, so regenerating here would add nothing but a second,
+      # unpinned generator -- and would test a project that isn't the one
+      # that ships. A stale commit fails project-drift, not silently here.
 
       - name: Wait for simulator boot to finish
         # Usually instant -- the boot started before the build. `-b` boots

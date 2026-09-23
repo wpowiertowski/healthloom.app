@@ -25,75 +25,73 @@ struct CoachChatView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            // Tab-root scaffold shared with Dashboard/Settings (round-2
-            // #12): the app header + tier slot come from the theme, and
-            // `isScrollable: false` leaves scrolling to the transcript's
-            // own ScrollView (a chat column must not double-scroll).
-            ThemedScreen(title: "Coach", isScrollable: false) {
-                // WP-32 tier switcher: the slot text (unchanged copy +
-                // identifier, so existing tests keep passing) is the menu
-                // label; the menu offers enabled tiers only — a tier that
-                // cannot serve never appears, and `selectTier` re-validates
-                // stale picks (blocked at dispatch, not just at the menu).
-                Menu {
-                    if viewModel.enabledTiers.isEmpty {
-                        Text("No tiers available")
-                    } else {
-                        ForEach(viewModel.enabledTiers) { tier in
-                            Button {
-                                viewModel.selectTier(tier)
-                            } label: {
-                                if viewModel.selectedTier == tier {
-                                    Label(tier.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(tier.displayName)
-                                }
+        // Tab-root scaffold shared with Dashboard/Settings (round-2
+        // #12): the app header + tier slot come from the theme, and
+        // `isScrollable: false` leaves scrolling to the transcript's
+        // own ScrollView (a chat column must not double-scroll).
+        ThemedScreen(title: "Coach", isScrollable: false) {
+            // WP-32 tier switcher: the slot text (unchanged copy +
+            // identifier, so existing tests keep passing) is the menu
+            // label; the menu offers enabled tiers only — a tier that
+            // cannot serve never appears, and `selectTier` re-validates
+            // stale picks (blocked at dispatch, not just at the menu).
+            Menu {
+                if viewModel.enabledTiers.isEmpty {
+                    Text("No tiers available")
+                } else {
+                    ForEach(viewModel.enabledTiers) { tier in
+                        Button {
+                            viewModel.selectTier(tier)
+                        } label: {
+                            if viewModel.selectedTier == tier {
+                                Label(tier.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(tier.displayName)
                             }
-                            .accessibilityIdentifier("chat.tier.\(tier.rawValue)")
                         }
+                        .accessibilityIdentifier("chat.tier.\(tier.rawValue)")
                     }
-                } label: {
-                    Text(viewModel.enabledTierNames.isEmpty ? "Off" : viewModel.enabledTierNames)
-                        .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption))
-                        .foregroundStyle(Theme.secondary)
-                        // WP-37: 44pt target for the menu label (audit-small).
-                        .frame(minWidth: 44, minHeight: 44)
-                        .contentShape(Rectangle())
                 }
-                // Identifier on the Menu (not the label Text): labeling
-                // both reports the id twice and every lookup goes
-                // ambiguous — the menu's own label still carries the
-                // slot text the existing tests assert on.
-                .accessibilityIdentifier("chat.tierSlot")
-            } content: {
-                VStack(spacing: 0) {
-                    if viewModel.availability != .available {
-                        ThemedCallout(
-                            title: "Coach unavailable",
-                            message: [viewModel.availability.userMessage, viewModel.availability.fallbackSuggestion]
-                                .filter { !$0.isEmpty }
-                                .joined(separator: " "),
-                            accessibilityIdentifier: "chat.unavailable"
-                        )
-                        .padding(.vertical)
-                    }
-                    CoachTurnList(viewModel: viewModel)
-                    if let errorMessage = viewModel.errorMessage {
-                        ThemedErrorText(message: errorMessage, accessibilityIdentifier: "chat.error")
-                    }
-                    inputBar
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // `.contain` (not the default): the screen identifier must
-                // NOT override the children's own identifiers (`chat.input`,
-                // `chat.send`, ...) the UI tests query -- without this the
-                // container collapses them all to `chat.screen`.
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("chat.screen")
-                .onAppear { viewModel.onAppear() }
-                .onDisappear { viewModel.onDisappear() }
+            } label: {
+                Text(viewModel.enabledTierNames.isEmpty ? "Off" : viewModel.enabledTierNames)
+                    .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption))
+                    .foregroundStyle(Theme.secondary)
+                    // WP-37: 44pt target for the menu label (audit-small).
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
+            // Identifier on the Menu (not the label Text): labeling
+            // both reports the id twice and every lookup goes
+            // ambiguous — the menu's own label still carries the
+            // slot text the existing tests assert on.
+            .accessibilityIdentifier("chat.tierSlot")
+        } content: {
+            VStack(spacing: 0) {
+                if viewModel.availability != .available {
+                    ThemedCallout(
+                        title: "Coach unavailable",
+                        message: [viewModel.availability.userMessage, viewModel.availability.fallbackSuggestion]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " "),
+                        accessibilityIdentifier: "chat.unavailable"
+                    )
+                    .padding(.vertical)
+                }
+                CoachTurnList(viewModel: viewModel)
+                if let errorMessage = viewModel.errorMessage {
+                    ThemedErrorText(message: errorMessage, accessibilityIdentifier: "chat.error")
+                }
+                inputBar
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // `.contain` (not the default): the screen identifier must
+            // NOT override the children's own identifiers (`chat.input`,
+            // `chat.send`, ...) the UI tests query -- without this the
+            // container collapses them all to `chat.screen`.
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("chat.screen")
+            .onAppear { viewModel.onAppear() }
+            .onDisappear { viewModel.onDisappear() }
         }
     }
 

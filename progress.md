@@ -5429,3 +5429,78 @@ hidden, never duplicates, and does not undo a hide. Two pre-existing
 `TodayMetricPreferences` expectations updated for the new default set — a genuine
 expectation change (five rows where there were four), not a defect. Panel snapshot gains
 the HRV row across the light/dark × XS/XL/AXXXL matrix.
+
+## Handoff-review fixes (branch `handoff-fixes` from main b4d8f5b)
+
+Fixes from reviewing the WP-40…44 session handoff. No product code changes.
+
+**`make test` enforces the xcodegen pin.** The pin check lived only in `make xcode`;
+`make test` — which the pre-commit hook runs — called a bare `xcodegen generate`, the exact
+skew the Makefile header warns about. The check is now its own `check-xcodegen` target,
+a prerequisite of both, so it runs before the package suites. Probe: a fake `xcodegen`
+reporting 2.45.4 first on `PATH` → `make test` exits 2 at `check-xcodegen`, nothing else
+runs; the real 2.46.0 passes.
+
+**YouTab typing flake fixed structurally.** `testCorrectionPersists` failed on PR #51's
+first CI attempt with the typed text spliced into the prefill (`"~8,200 steps/day (30-~9,000
+…"`) — a missed triple-tap select-all, *after* the PR #32 retype-once guard. Retyping the
+same gesture can't fix a gesture problem, so the test no longer selects:
+`replaceText(in:with:)` taps past the last glyph, deletes the reported prefill by count,
+re-reads (a mid-text cursor leaves a short suffix the next trailing tap clears), then types
+and verifies, three attempts, failing with the typing-fidelity message.
+Verified on iPhone 18 Pro / iOS 27.0: `YouTabUITests` × 10 iterations
+(`-run-tests-until-failure`) → 40/40 passed, zero compiler warnings. Mutation checks —
+catches: a clear that deletes nothing (`count: 0`) → red with the prefill plus three
+appended copies and the typing-fidelity message; a clear that skips entirely → red with
+"no keyboard focus" (its trailing tap is also what focuses the field).
+
+**Doc corrections.** The shell would hoist **five** per-tab `NavigationStack`s, not six
+(Today has none): fixed in `architecture.md` D16, `implementation-plan.md` WP-40 follow-up 1
+and the `HomeView.swift` header (the WP-40 entry above keeps its original wording as a log).
+The type ladder skips a rung: 9.5 / 12 / 15 / 18.5 / 23 / 29 are n = 0–5 of 9.5 × 1.25ⁿ;
+`display` 46 is n = 7 (45.3, rounded up to the mockup's value); n = 6 (≈36) is unused.
+Stated in D16.3 and the `Theme.Step` comment so `display` isn't later "fixed" as off-ladder.
+No rationale for the skip is recorded anywhere, so none is claimed.
+
+## WP-45 · Floating tab bar (branch `handoff-fixes`, on top of the handoff-review fixes)
+
+Closes WP-40 follow-up 1 (D16.7). Same branch as the fixes above at the owner's request.
+
+**The premise was wrong, measured.** WP-40 concluded an outer `.safeAreaInset` failed
+because five per-tab `NavigationStack`s blocked it, and that one shell-owned stack would
+fix it. Built exactly that: four UI tests failed the same way WP-40's did (Coach input at
+y 761–795 under a capsule starting ≈ 774; the tap landed on `tabbar.you`). An inset
+outside a `NavigationStack` never reaches its content, one stack or five. Inside, on the
+root, it works (input moved to 695–729) but makes the bar part of the root screen, so it
+disappears on every push. Owner's intent: the bar floats over every screen, always, and
+content hidden behind it must be scrollable above it.
+
+**What shipped.** `HomeView` owns the one stack, keyed on the selected tab (a tab switch
+pops pushed screens, as destroying a per-tab stack did). The bar is an overlay on the
+stack, measured with `onGeometryChange` (labels scale with Dynamic Type), and its height
+is published as the `tabBarClearance` environment value on the stack, so pushed screens
+inherit it. `ThemedScreen` applies `.clearsTabBar()` (bottom `safeAreaPadding`), which
+covers every themed root and pushed screen by construction; `TodayView` and
+`WipeFlowView` apply it directly. Today hides the navigation bar it now sits under.
+Coach and Data lose their own stacks; the Dashboard preview wraps one.
+
+**Verified visually** (iPhone 18 Pro, iOS 27.0, temporary capture test, not committed):
+rows pass under the glass at rest; the last Settings row scrolls fully above the bar on a
+pushed screen; with the keyboard up the bar rides on it and Coach's field sits above it.
+
+**Tests.** Full app suite green, zero compiler warnings: unit bundle 292, UI 29 (1
+self-skipped). The four UI tests that failed under the outer-inset build (Activities link,
+Coach stream + trace, tip-jar retry) pass, so they already catch content trapped under
+the bar on tab roots. New `DashboardUITests.testFloatingTabBarOverPushedScreen`, catches:
+the bar leaving on push; a pushed screen that doesn't reserve the bar (last row ends at
+816 against a bar at 781 with `.clearsTabBar()` removed from `ThemedScreen`); a tab
+switch that doesn't pop (fails with `.id(selection)` removed). Both mutants were run. The
+first draft asserted `isHittable`, which reported Settings' last row hittable at y 889,
+off-screen, so it now swipes until the list stops moving and compares frames.
+
+**Also on this branch (handoff open items).** CI's app job no longer runs an unpinned
+`brew install xcodegen && xcodegen generate`: it builds the committed project, the same
+bytes Xcode Cloud archives, and project-drift (pinned, checksummed) proves those match
+`project.yml`. The job's stale comment claiming the project isn't committed is gone.
+README's Testing and Requirements sections now say the project is committed, regenerated
+with `make xcode`, and drift-checked.

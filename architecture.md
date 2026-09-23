@@ -286,15 +286,9 @@ assigned to **different layers**, which is also Apple's own content/control mode
 The split is load-bearing, not stylistic: refraction only reads as refraction when there
 is precise geometry behind it to bend, and a blurred soft surface shows nothing.
 
-**What ships, and the gap.** The bar is a glass capsule, but it sits *in flow* and so
-refracts the canvas, not moving content. Floating it in `.safeAreaInset(edge: .bottom)`
-was tried and reverted: the outer inset does not reach through the `NavigationStack`
-each non-Today tab wraps itself in, so those screens kept claiming full height, the
-capsule covered what they pinned to the bottom, and taps meant for Coach's input bar
-landed on the tab underneath it. Today — the one tab with no `NavigationStack` — was
-unaffected, which is what identified the cause. Closing the gap means the shell owning
-one `NavigationStack` instead of six: a navigation change, not a design one, and its own
-work package.
+**The bar floats (D16.7).** The capsule floats over every screen, so content scrolls
+beneath it and the glass refracts real geometry — see D16.7 for how content is kept
+reachable.
 
 `Design/healthloom-bill-glass.html` is the locked mockup. Three sub-decisions:
 
@@ -322,9 +316,11 @@ are labelled and carry no semantics of their own.
 the Ulm school actually set in) for language; **IBM Plex Mono** for anything read off an
 instrument — units, timestamps, counts, uppercase section labels. Nav labels are language,
 not silkscreen. Sizes follow one geometric ladder, ratio 1.25 anchored at 9.5 pt
-(9.5 / 12 / 15 / 18.5 / 23 / 29 / 46); the Yacht club build had drifted to 17 ad-hoc
-sizes against no stated system. D12's two production deviations still bind: Dynamic Type
-scaling via `relativeTo:`, and a dark-palette variant.
+(9.5 / 12 / 15 / 18.5 / 23 / 29 / 46). The first six are rungs 0–5 rounded to the nearest
+half point; 46 is rung 7 (45.3) rounded up, as the locked mockup sets it, and rung 6 (≈36)
+is unused. The Yacht club build had drifted to 17 ad-hoc sizes against no stated system.
+D12's two production deviations still bind: Dynamic Type scaling via `relativeTo:`, and a
+dark-palette variant.
 
 **D16.4 — A control label repeated on every row is noise, not a label.** When the same
 control appears once per item, its visible label says nothing about *that* item while
@@ -390,6 +386,29 @@ reveal denial, WP-06), reports the kind as available, so the row appears with it
 state rather than vanishing. Hiding is for absence positively established, never for
 absence we could not check — the failure mode of the opposite choice is a metric that
 silently disappears for the user whose permissions are merely unsettled.
+
+**D16.7 — The bar floats over everything; content can always clear it.** The tab-bar
+capsule floats above every screen — tab roots and pushed screens alike — so scrolling
+content passes beneath it and the glass has geometry to bend. Floating must never trap
+content: every screen reserves the bar's height as bottom safe area, so a scroll view can
+always bring its last row above the bar, and a fixed layout (Coach's input) ends above
+it. With the keyboard up the bar rides on the keyboard and the focused field stays above
+the bar.
+
+Mechanism (`HomeView`): the shell owns the one `NavigationStack` (keyed on the selected
+tab, so a tab switch pops pushed screens as the old per-tab stacks did), draws the bar
+as an overlay, measures it, and publishes its height as the `tabBarClearance`
+environment value on the stack. `ThemedScreen` applies it (`.clearsTabBar()`), so every
+themed screen is covered by construction; `TodayView` and `WipeFlowView`, the two
+screens under the bar that aren't `ThemedScreen`s, apply it directly. Measured, not a
+constant, because the labels scale with Dynamic Type.
+
+Why not `.safeAreaInset`: an inset applied outside a `NavigationStack` never reaches the
+content inside it — measured with five per-tab stacks (WP-40's reverted attempt, where
+Coach's input sat under the capsule and taps hit the tab beneath) and again with one.
+Applied inside, on the root screen, it works but makes the bar part of that screen, so
+it disappears on every push. The environment value crosses the stack boundary where the
+inset cannot.
 
 ## 5. Data flow summaries
 

@@ -1,17 +1,22 @@
-.PHONY: xcode test clean prune-branches
+.PHONY: xcode test clean prune-branches check-xcodegen
 
 # Pinned generator (third-party F1): a bare `xcodegen generate` resolves
 # whatever is on PATH (2.45.4 via brew), but the committed project and
 # CI's drift job are pinned to XCODEGEN_VERSION — a version skew here
 # produces bytes the drift gate rejects. Source of truth stays the ci.yml
-# env block (single pin, no duplication).
-xcode:
+# env block (single pin, no duplication). Every target that regenerates
+# the project depends on this check, `test` included: the pre-commit hook
+# runs `make test`, so an unchecked regeneration there would hand the
+# commit a project the drift gate rejects after the next `brew upgrade`.
+check-xcodegen:
 	@pinned=$$(grep '^  XCODEGEN_VERSION:' .github/workflows/ci.yml | awk -F'"' '{print $$2}'); \
 	actual=$$(xcodegen --version | awk '{print $$NF}'); \
 	if [ "$$actual" != "$$pinned" ]; then \
 		echo "error: xcodegen $$actual on PATH, pinned is $$pinned — install it (see ci.yml project-drift job)." >&2; \
 		exit 1; \
 	fi
+
+xcode: check-xcodegen
 	xcodegen generate
 	open HealthLoom.xcodeproj
 
@@ -19,7 +24,7 @@ xcode:
 # (Variable keeps its name so CI/local scripts referencing it survive.)
 XCODE_BETA := /Applications/Xcode.app/Contents/Developer
 
-test:
+test: check-xcodegen
 	@test -d "$(XCODE_BETA)" || { \
 		echo "error: $(XCODE_BETA) not found -- the app target needs the iOS 27 SDK from Xcode 27. Install Xcode 27." >&2; \
 		exit 1; \

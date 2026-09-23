@@ -118,14 +118,16 @@ Design/                  Yacht club design system reference (HTML + SwiftUI mock
 
 ## Testing
 
-CI runs a per-package `swift test -Xswiftc -warnings-as-errors` matrix, then generates
-the Xcode project via `xcodegen` and runs `xcodebuild build test` for the `HealthLoom`
-scheme on an iOS Simulator — warnings fail the build in both stages. `make test` runs
-the same package-by-package `swift test` + build locally; `make xcode` regenerates and
-opens the project.
+CI runs a per-package `swift test -Xswiftc -warnings-as-errors` matrix, then runs
+`xcodebuild build test` for the `HealthLoom` scheme on an iOS Simulator against the
+committed `HealthLoom.xcodeproj` — the same project Xcode Cloud archives — with warnings
+failing the build in both stages. A separate *XcodeGen Drift* job regenerates the project
+with the pinned XcodeGen and fails if the commit is stale. `make test` runs the same
+package-by-package `swift test` + build locally; `make xcode` regenerates (after checking
+the XcodeGen version against the pin) and opens the project.
 
 ```bash
-xcodegen generate                                     # regenerate HealthLoom.xcodeproj from project.yml
+make xcode                                            # regenerate HealthLoom.xcodeproj (pinned XcodeGen) and open it
 swift test --package-path Packages/SyncKit            # run a single package's tests
 xcodebuild test -project HealthLoom.xcodeproj \
   -scheme HealthLoom -destination 'platform=iOS Simulator,name=iPhone 17'
@@ -154,7 +156,7 @@ and zero failures.
   iOS 27 simulators); the package `swift test` jobs run on `macos-26` with Xcode 26.x
   (the manifests deliberately stay at `swift-tools-version: 6.2`) — see the Toolchain
   note in [implementation-plan.md](implementation-plan.md)
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) — `project.yml` is the source of truth; the `.xcodeproj` is not committed
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) at the version pinned in `.github/workflows/ci.yml` (`XCODEGEN_VERSION`) — `project.yml` is the source of truth, and the generated `HealthLoom.xcodeproj` is **committed** (Xcode Cloud builds from it and has no XcodeGen step). Regenerate with `make xcode` after any structural change and commit the result; CI's drift job rejects a stale project
 - A Google Cloud OAuth client for the Google Health API (see [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md))
 
 ## Status & Roadmap

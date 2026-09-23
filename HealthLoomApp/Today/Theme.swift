@@ -63,7 +63,10 @@ enum Theme {
     // Bill sized by rule, not by eye: one geometric ladder, ratio 1.25,
     // anchored at 9.5 pt. Every size in the app is a step on it. The
     // Yacht club build had drifted to 17 distinct sizes against no stated
-    // system; these seven replace them.
+    // system; these seven replace them. Rungs are 9.5 x 1.25^n: the first
+    // six are n = 0-5 rounded to the nearest half point; `display` is
+    // n = 7 (45.3) rounded up to the locked mockup's 46, and n = 6 (~36)
+    // is unused. So `display` is on the ladder, one rung skipped.
     enum Step {
         /// Instrument labels, units, timestamps.
         static let micro: CGFloat = 9.5
