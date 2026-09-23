@@ -64,72 +64,70 @@ struct DashboardView: View {
     // Data tab matches Today. Structure, data flow, copy and every
     // accessibility identifier are unchanged -- only the presentation.
     var body: some View {
-        NavigationStack {
-            ThemedScreen(title: "HealthLoom") {
-                // The toolbar's two items, redrawn as themed header actions
-                // (the system navigation bar is hidden for tab roots -- see
-                // ThemedChrome.swift's "Navigation chrome" note).
-                NavigationLink(destination: SettingsView(chrome: .pushed)) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 18, weight: .light))
-                        .foregroundStyle(Theme.ink)
-                        .frame(width: 24, height: 24)
-                        // WP-37: 44pt touch target (the 24pt glyph alone
-                        // fails the hit-region audit).
-                        .padding(10)
-                        .contentShape(Rectangle())
+        ThemedScreen(title: "HealthLoom") {
+            // The toolbar's two items, redrawn as themed header actions
+            // (the system navigation bar is hidden for tab roots -- see
+            // ThemedChrome.swift's "Navigation chrome" note).
+            NavigationLink(destination: SettingsView(chrome: .pushed)) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18, weight: .light))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 24, height: 24)
+                    // WP-37: 44pt touch target (the 24pt glyph alone
+                    // fails the hit-region audit).
+                    .padding(10)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+            .accessibilityIdentifier("dashboard.settings")
+
+            ThemedIconButton(
+                systemImage: "arrow.triangle.2.circlepath",
+                accessibilityLabel: "Sync Now",
+                accessibilityIdentifier: "dashboard.syncNow",
+                isBusy: isSyncing,
+                action: syncNow
+            )
+            .disabled(isSyncing)
+        } content: {
+            ephemeralStoreWarning
+            googleConnectPanel
+            freshnessHeader
+                .padding(.top, 18)
+
+            ThemedSectionHeader(title: "Your Data")
+            ThemedPanel {
+                ForEach(Array(orderedRows.enumerated()), id: \.element.0) { index, row in
+                    if index > 0 { ThemedRowDivider() }
+                    SyncTypeRow(type: row.0, state: row.1)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Settings")
-                .accessibilityIdentifier("dashboard.settings")
+            }
 
-                ThemedIconButton(
-                    systemImage: "arrow.triangle.2.circlepath",
-                    accessibilityLabel: "Sync Now",
-                    accessibilityIdentifier: "dashboard.syncNow",
-                    isBusy: isSyncing,
-                    action: syncNow
-                )
-                .disabled(isSyncing)
-            } content: {
-                ephemeralStoreWarning
-                googleConnectPanel
-                freshnessHeader
-                    .padding(.top, 18)
-
-                ThemedSectionHeader(title: "Your Data")
-                ThemedPanel {
-                    ForEach(Array(orderedRows.enumerated()), id: \.element.0) { index, row in
-                        if index > 0 { ThemedRowDivider() }
-                        SyncTypeRow(type: row.0, state: row.1)
-                    }
+            ThemedSectionHeader(title: "Not in Apple Health")
+            ThemedPanel {
+                ForEach(Array(localOnlyRows.enumerated()), id: \.element.0) { index, row in
+                    if index > 0 { ThemedRowDivider() }
+                    LocalOnlyTypeRow(type: row.0, samples: row.1)
                 }
+            }
 
-                ThemedSectionHeader(title: "Not in Apple Health")
-                ThemedPanel {
-                    ForEach(Array(localOnlyRows.enumerated()), id: \.element.0) { index, row in
-                        if index > 0 { ThemedRowDivider() }
-                        LocalOnlyTypeRow(type: row.0, samples: row.1)
-                    }
+            // WP-15 / WP-12b nav links, unchanged in behavior -- now one
+            // panel of themed rows rather than two bare `List` sections.
+            ThemedSectionHeader(title: "More")
+            ThemedPanel {
+                ThemedNavRow(
+                    title: "Historical Backfill",
+                    accessibilityIdentifier: "dashboard.backfill.link"
+                ) {
+                    BackfillView()
                 }
-
-                // WP-15 / WP-12b nav links, unchanged in behavior -- now one
-                // panel of themed rows rather than two bare `List` sections.
-                ThemedSectionHeader(title: "More")
-                ThemedPanel {
-                    ThemedNavRow(
-                        title: "Historical Backfill",
-                        accessibilityIdentifier: "dashboard.backfill.link"
-                    ) {
-                        BackfillView()
-                    }
-                    ThemedRowDivider()
-                    ThemedNavRow(
-                        title: "Activities",
-                        accessibilityIdentifier: "dashboard.activities.link"
-                    ) {
-                        ActivitiesView(chrome: .pushed)
-                    }
+                ThemedRowDivider()
+                ThemedNavRow(
+                    title: "Activities",
+                    accessibilityIdentifier: "dashboard.activities.link"
+                ) {
+                    ActivitiesView(chrome: .pushed)
                 }
             }
         }
@@ -247,6 +245,7 @@ struct DashboardView: View {
 }
 
 #Preview {
-    DashboardView()
+    // The app shell (HomeView) supplies the stack in the running app.
+    NavigationStack { DashboardView() }
         .environment(AppEnvironment())
 }

@@ -70,6 +70,9 @@ struct WipeFlowView: View {
             }
             Spacer(minLength: 0)
         }
+        // Pushed under the floating tab bar but not a `ThemedScreen`, so it
+        // reserves the bar's height itself (HomeView).
+        .clearsTabBar()
         .background(Theme.canvas.ignoresSafeArea())
         .navigationBarBackButtonHidden(isDone)
         .interactiveDismissDisabled(isDone)

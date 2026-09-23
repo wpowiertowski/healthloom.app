@@ -286,15 +286,9 @@ assigned to **different layers**, which is also Apple's own content/control mode
 The split is load-bearing, not stylistic: refraction only reads as refraction when there
 is precise geometry behind it to bend, and a blurred soft surface shows nothing.
 
-**What ships, and the gap.** The bar is a glass capsule, but it sits *in flow* and so
-refracts the canvas, not moving content. Floating it in `.safeAreaInset(edge: .bottom)`
-was tried and reverted: the outer inset does not reach through the `NavigationStack`
-each non-Today tab wraps itself in, so those screens kept claiming full height, the
-capsule covered what they pinned to the bottom, and taps meant for Coach's input bar
-landed on the tab underneath it. Today — the one tab with no `NavigationStack` — was
-unaffected, which is what identified the cause. Closing the gap means the shell owning
-one `NavigationStack` instead of five (one per non-Today tab): a navigation change, not a
-design one, and its own work package.
+**The bar floats (D16.7).** The capsule floats over every screen, so content scrolls
+beneath it and the glass refracts real geometry — see D16.7 for how content is kept
+reachable.
 
 `Design/healthloom-bill-glass.html` is the locked mockup. Three sub-decisions:
 
@@ -392,6 +386,29 @@ reveal denial, WP-06), reports the kind as available, so the row appears with it
 state rather than vanishing. Hiding is for absence positively established, never for
 absence we could not check — the failure mode of the opposite choice is a metric that
 silently disappears for the user whose permissions are merely unsettled.
+
+**D16.7 — The bar floats over everything; content can always clear it.** The tab-bar
+capsule floats above every screen — tab roots and pushed screens alike — so scrolling
+content passes beneath it and the glass has geometry to bend. Floating must never trap
+content: every screen reserves the bar's height as bottom safe area, so a scroll view can
+always bring its last row above the bar, and a fixed layout (Coach's input) ends above
+it. With the keyboard up the bar rides on the keyboard and the focused field stays above
+the bar.
+
+Mechanism (`HomeView`): the shell owns the one `NavigationStack` (keyed on the selected
+tab, so a tab switch pops pushed screens as the old per-tab stacks did), draws the bar
+as an overlay, measures it, and publishes its height as the `tabBarClearance`
+environment value on the stack. `ThemedScreen` applies it (`.clearsTabBar()`), so every
+themed screen is covered by construction; `TodayView` and `WipeFlowView`, the two
+screens under the bar that aren't `ThemedScreen`s, apply it directly. Measured, not a
+constant, because the labels scale with Dynamic Type.
+
+Why not `.safeAreaInset`: an inset applied outside a `NavigationStack` never reaches the
+content inside it — measured with five per-tab stacks (WP-40's reverted attempt, where
+Coach's input sat under the capsule and taps hit the tab beneath) and again with one.
+Applied inside, on the root screen, it works but makes the bar part of that screen, so
+it disappears on every push. The environment value crosses the stack boundary where the
+inset cannot.
 
 ## 5. Data flow summaries
 

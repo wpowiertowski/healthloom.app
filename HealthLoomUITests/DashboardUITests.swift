@@ -129,4 +129,50 @@ final class DashboardUITests: XCTestCase {
         XCTAssertFalse(anyElement["dashboard.localRow.active_minutes.clinicalBadge"].exists)
     }
 
+
+    /// WP-45 / D16.7: the floating tab bar stays up over a pushed screen
+    /// without trapping its content, and switching tabs pops the push.
+    @MainActor
+    func testFloatingTabBarOverPushedScreen() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestSeedData"]
+        app.launch()
+        let anyElement = app.descendants(matching: .any)
+        let settingsLink = anyElement["dashboard.settings"]
+        XCTAssertTrue(settingsLink.waitForExistence(timeout: 10))
+        settingsLink.tap()
+
+        // Settings' last row: the one most likely to end up under the bar.
+        let lastRow = anyElement["settings.healthSharing.refresh"]
+        XCTAssertTrue(lastRow.waitForExistence(timeout: 10))
+        let dataTab = anyElement["tabbar.data"]
+        let window = app.windows.firstMatch
+        // Catches: the bar drawn as part of the root screen, which then
+        // leaves with the root on every push.
+        XCTAssertTrue(dataTab.exists)
+        XCTAssertTrue(window.frame.contains(dataTab.frame), "tab bar must float over pushed screens")
+
+        // Catches: a pushed screen that doesn't reserve the bar's height --
+        // at the end of its scroll the last row is still under the capsule.
+        // Swipes until the list stops moving rather than trusting
+        // `isHittable`, which reported this row hittable while off-screen.
+        var previousFrame = CGRect.null
+        var swipes = 0
+        while lastRow.frame != previousFrame && swipes < 12 {
+            previousFrame = lastRow.frame
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(window.frame.contains(lastRow.frame), "last row must be on screen at the end of the scroll")
+        XCTAssertLessThanOrEqual(lastRow.frame.maxY, dataTab.frame.minY, "last row must scroll above the floating bar")
+
+        // Catches: the shell's stack not keyed on the tab -- the pushed
+        // Settings would stay on top of Activities, and of Data after it.
+        anyElement["tabbar.activities"].tap()
+        XCTAssertTrue(anyElement["activities.row.seed-exercise-1.title"].waitForExistence(timeout: 10))
+        XCTAssertFalse(lastRow.exists)
+        dataTab.tap()
+        XCTAssertTrue(anyElement["dashboard.syncNow"].waitForExistence(timeout: 10))
+        XCTAssertFalse(lastRow.exists)
+    }
 }

@@ -90,6 +90,7 @@ struct ThemedScreen<Actions: View, Content: View>: View {
                 stack
             }
         }
+        .clearsTabBar()
         .background(Theme.canvas.ignoresSafeArea())
         .modifier(ThemedNavigationChrome(chrome: chrome))
     }
@@ -156,6 +157,38 @@ extension ThemedScreen where Actions == EmptyView {
             actions: { EmptyView() },
             content: content
         )
+    }
+}
+
+// MARK: - Floating tab bar clearance
+
+extension EnvironmentValues {
+    /// Height of the floating tab bar (`HomeView`) that the screen must keep
+    /// clear at its bottom edge. The shell sets it on its `NavigationStack`,
+    /// so every tab root and pushed screen inherits it; outside the shell
+    /// (previews, tests) it is 0.
+    ///
+    /// Sheets inherit it too. Today's sheets don't read it (none is a
+    /// `ThemedScreen`); one that becomes one should set it back to 0, since
+    /// a sheet covers the bar instead of sitting under it.
+    @Entry var tabBarClearance: CGFloat = 0
+}
+
+extension View {
+    /// Reserves the floating tab bar's height as bottom safe area: a scroll
+    /// view keeps scrolling beneath the bar but can bring its last row above
+    /// it, and a fixed layout ends above it. `ThemedScreen` applies it, so
+    /// only screens that don't use `ThemedScreen` call this directly.
+    func clearsTabBar() -> some View {
+        modifier(TabBarClearance())
+    }
+}
+
+private struct TabBarClearance: ViewModifier {
+    @Environment(\.tabBarClearance) private var clearance
+
+    func body(content: Content) -> some View {
+        content.safeAreaPadding(.bottom, clearance)
     }
 }
 
