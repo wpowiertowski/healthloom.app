@@ -5577,3 +5577,15 @@ label) predate WP-46 and are left for a follow-up.
 New Activities snapshot matrix (6). Today references re-recorded and inspected. The
 Dashboard and Welcome references were unchanged, legitimately: neither renders a panel
 or badge.
+
+**CI: the CodeQL "Bad CPU type" flake became deterministic.** On PR #53, `Analyze (swift,
+actions)` failed identically twice: SwiftPM's spawn of `/usr/bin/sandbox-exec` under the
+CodeQL tracer (`DYLD_INSERT_LIBRARIES=libtrace.dylib`) returns EBADARCH for all five
+local packages before anything compiles. It had been an occasional flake (PR #51, cleared
+on re-run). Between the last green run and these, the runner image moved (20260912 →
+20260921) and the CodeQL bundle went 2.27.0 → 2.27.1. Rather than pin either, the
+workflow resolves packages before tracing starts and replaces `autobuild` with an
+explicit `xcodebuild build`, both with `-IDEPackageSupportDisableManifestSandbox=YES`, so
+`sandbox-exec` is never spawned under the tracer. Verified locally that the flag is
+accepted and the build succeeds. That it clears the tracer failure is proven only by
+the CI run.
