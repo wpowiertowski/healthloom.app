@@ -5579,13 +5579,18 @@ Dashboard and Welcome references were unchanged, legitimately: neither renders a
 or badge.
 
 **CI: the CodeQL "Bad CPU type" flake became deterministic.** On PR #53, `Analyze (swift,
-actions)` failed identically twice: SwiftPM's spawn of `/usr/bin/sandbox-exec` under the
-CodeQL tracer (`DYLD_INSERT_LIBRARIES=libtrace.dylib`) returns EBADARCH for all five
-local packages before anything compiles. It had been an occasional flake (PR #51, cleared
-on re-run). Between the last green run and these, the runner image moved (20260912 →
-20260921) and the CodeQL bundle went 2.27.0 → 2.27.1. Rather than pin either, the
-workflow resolves packages before tracing starts and replaces `autobuild` with an
-explicit `xcodebuild build`, both with `-IDEPackageSupportDisableManifestSandbox=YES`, so
-`sandbox-exec` is never spawned under the tracer. Verified locally that the flag is
-accepted and the build succeeds. That it clears the tracer failure is proven only by
-the CI run.
+actions)` failed identically twice: under the CodeQL tracer
+(`DYLD_INSERT_LIBRARIES=libtrace.dylib`), SwiftPM's spawn of `/usr/bin/sandbox-exec`
+returns EBADARCH for all five local packages before anything compiles. It had been an
+occasional flake (PR #51, cleared on re-run).
+
+First attempt: resolve packages untraced, then build explicitly with SwiftPM's manifest
+sandbox off. That got past resolution, and the next spawned system binary,
+`swift-plugin-server` (needed for SwiftData's `@Model`), failed the same way. The tracer
+can't inject into these children at all, so the change was reverted.
+
+Between the last green run and the failures, the CodeQL bundle moved 2.27.0 → 2.27.1
+(released 09-22) and the runner image moved 20260912 → 20260921. 2.27.1's changelog
+names no tracer change. The workflow is now the exact last-green configuration with
+`tools:` pinned to the 2.27.0 bundle, which isolates the image as the only other
+variable. The pin carries its unpin condition inline.

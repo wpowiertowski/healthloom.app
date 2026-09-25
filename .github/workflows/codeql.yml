@@ -57,38 +57,22 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      # Resolve the local packages BEFORE CodeQL starts tracing, with the
-      # SwiftPM manifest sandbox off. Under the tracer (DYLD_INSERT_LIBRARIES
-      # = libtrace.dylib) SwiftPM's spawn of /usr/bin/sandbox-exec to
-      # evaluate each Package.swift fails with EBADARCH -- "posix_spawn
-      # error: Bad CPU type in executable (86)" for all five packages,
-      # before anything compiles. It was an occasional flake that cleared
-      # on re-run (PR #51), then failed twice in a row on PR #53 after the
-      # runner image moved 20260912 -> 20260921 and the CodeQL bundle
-      # 2.27.0 -> 2.27.1. Not spawning sandbox-exec under the tracer at all
-      # removes the dependency on either version.
-      - name: Resolve Swift packages (untraced)
-        run: |
-          xcodebuild -resolvePackageDependencies \
-            -project HealthLoom.xcodeproj -scheme HealthLoom \
-            -IDEPackageSupportDisableManifestSandbox=YES
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: swift, actions
+          # PINNED to the 2.27.0 bundle (PR #53). Under 2.27.1's tracer
+          # every system binary the Swift build spawns -- SwiftPM's
+          # /usr/bin/sandbox-exec, then swift-plugin-server for SwiftData's
+          # @Model -- fails with "Bad CPU type in executable (86)", on the
+          # same xcode-27-arm64 image where 2.27.0 built this code clean.
+          # 2.27.1's changelog names no tracer change, so this is empirical.
+          # UNPIN (delete `tools:`) once a newer bundle passes this job: try
+          # it on a branch first, since the failure is deterministic.
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.0/codeql-bundle-osx64.tar.zst
 
-      # Explicit build in place of `autobuild`, so the traced xcodebuild
-      # also runs with the manifest sandbox off. Commands between init and
-      # analyze are traced for Swift; Actions needs no build. Signing off:
-      # analysis needs compilation, not an installable app.
-      - name: Build for analysis
-        run: |
-          xcodebuild build \
-            -project HealthLoom.xcodeproj -scheme HealthLoom \
-            -destination 'generic/platform=iOS Simulator' \
-            -IDEPackageSupportDisableManifestSandbox=YES \
-            CODE_SIGNING_ALLOWED=NO
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
