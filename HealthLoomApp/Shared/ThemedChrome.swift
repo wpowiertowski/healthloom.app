@@ -18,8 +18,9 @@
 // (`Design/healthloom-final-yachtclub.html`, `Design/HealthLoomTodayView-
 // YachtClub.swift`) as already interpreted by `Today/TodayComponents.swift`:
 // 22 pt gutters and a 12 pt top inset, `Theme.gray` hairline under the
-// header, uppercase tracked section labels (`TODAY`/`COACH`), 4 pt-radius
-// `Theme.surface` panels stroked in `Theme.border` with hairline
+// header, uppercase tracked section labels (`TODAY`/`COACH`), square
+// `Theme.surface` panels (D16 -- WP-46 dropped the Yacht club 4 pt radius)
+// stroked in `Theme.border` with hairline
 // `Theme.border` row separators (`InstrumentPanel`), the 2 pt rust attention
 // bar for rows needing attention (`TodayMetricRowView`'s `isPriority`), the
 // rust-tint callout panel (`CoachPanel`), 6 pt status dots (`TodayHeader`).
@@ -228,7 +229,7 @@ struct ThemedSectionHeader: View {
     }
 }
 
-/// `InstrumentPanel`'s surface panel: 4 pt radius, `Theme.border` stroke,
+/// `InstrumentPanel`'s surface panel: square (D16's content layer), `Theme.border` stroke,
 /// hairline-separated rows. Callers lay rows out in a `VStack(spacing: 0)`
 /// and put `ThemedRowDivider()` between them.
 struct ThemedPanel<Content: View>: View {
@@ -236,8 +237,8 @@ struct ThemedPanel<Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) { content }
-            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+            .background(Rectangle().fill(Theme.surface))
+            .overlay(Rectangle().stroke(Theme.border))
     }
 }
 
@@ -267,8 +268,8 @@ struct ThemedCallout: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accentTint))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+        .background(Rectangle().fill(Theme.accentTint))
+        .overlay(Rectangle().stroke(Theme.border))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(accessibilityIdentifier ?? "")
     }
@@ -301,17 +302,40 @@ struct ThemedBadge: View {
     var accessibilityIdentifier: String?
 
     var body: some View {
-        Text(text)
-            .font(Theme.font(Theme.Step.caption, .medium, relativeTo: .caption2))
+        // WP-46: the locked mockup's `.badge` -- an instrument reading, so
+        // mono silkscreen (uppercase, tracked, micro step) in a square
+        // hairline box; D16's content layer has no rounded corners.
+        // `SilkscreenText` keeps the spoken label as written ("Not in Apple
+        // Health"), which `DashboardUITests` asserts.
+        SilkscreenText(text)
+            .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2))
+            .tracking(0.9)
             .foregroundStyle(style == .accent ? Theme.accentDeep : Theme.secondary)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(style == .accent ? Theme.accentTint : Color.clear)
-            )
-            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.border))
+            .background(Rectangle().fill(style == .accent ? Theme.accentTint : Color.clear))
+            .overlay(Rectangle().stroke(style == .accent ? Theme.accent : Theme.border))
             .accessibilityIdentifier(accessibilityIdentifier ?? "")
+    }
+}
+
+/// Mono silkscreen text (D16.3's instrument labels): shown uppercase,
+/// spoken as written. Not `.textCase(.uppercase)`, which also rewrites the
+/// accessibility label -- WP-46 shipped that way first, and VoiceOver and
+/// `DashboardUITests` got "NOT IN APPLE HEALTH" even with an explicit
+/// label beside it. Uppercasing the display string ourselves keeps the
+/// label untouched, and follows the view's locale (Turkish dotted i).
+struct SilkscreenText: View {
+    let text: String
+    @Environment(\.locale) private var locale
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text.uppercased(with: locale))
+            .accessibilityLabel(text)
     }
 }
 

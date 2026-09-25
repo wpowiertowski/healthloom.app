@@ -151,8 +151,8 @@ struct TodayView: View {
                             .accessibilityIdentifier("today.add.\(kind.rawValue)")
                         }
                     }
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.surface))
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+                    .background(Rectangle().fill(Theme.surface))
+                    .overlay(Rectangle().stroke(Theme.border))
                 }
 
                 if syncStatus.freshness == .never {

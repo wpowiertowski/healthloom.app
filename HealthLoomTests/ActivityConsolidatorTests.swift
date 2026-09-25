@@ -31,14 +31,14 @@ struct ActivityConsolidatorTests {
         end: Date = at(10.67)
     ) -> WorkoutSummary {
         WorkoutSummary(
-            uuid: uuid, activityName: "Run", start: start, end: end,
+            uuid: uuid, activityName: "Run", family: .onFoot, start: start, end: end,
             sourceName: "Workout", isHealthLoomImport: false, isAppleWatch: true
         )
     }
 
     static func fitbitImportedWorkout(start: Date = at(7), end: Date = at(7.75)) -> WorkoutSummary {
         WorkoutSummary(
-            uuid: UUID(), activityName: "Run", start: start, end: end,
+            uuid: UUID(), activityName: "Run", family: .onFoot, start: start, end: end,
             sourceName: "HealthLoom", isHealthLoomImport: true, isAppleWatch: false
         )
     }
@@ -191,5 +191,148 @@ struct ActivityConsolidatorTests {
         let entries = ActivityConsolidator.consolidate(workouts: [], supplements: [supplement])
         #expect(entries.count == 1)
         #expect(entries[0].title == "Activity") // fallback title
+    }
+}
+
+// MARK: - WP-46 / D16.8: activity detailing
+
+@Suite("Activity detailing")
+struct ActivityDetailingTests {
+    private typealias Fixture = ActivityConsolidatorTests
+
+    private static func entry(
+        duration minutes: Double,
+        distance: Double? = nil,
+        heartRate: Double? = nil,
+        swim: SwimLocation? = nil
+    ) -> ActivityEntry {
+        ActivityEntry(
+            id: UUID().uuidString, kind: .unlinkedFitbitSession, title: "Run",
+            start: Fixture.at(10), end: Fixture.at(10).addingTimeInterval(minutes * 60),
+            sourceLabel: "Apple Watch", supplement: nil, family: .onFoot,
+            distanceMeters: distance, averageHeartRate: heartRate, swimLocation: swim
+        )
+    }
+
+    // catches: a standalone Fitbit session dropping its own distance, so an
+    // 8 km run renders as "40 min" alone (the pre-WP-46 behaviour).
+    @Test func standaloneFitbitSessionKeepsItsDistance() {
+        let supplement = FitbitActivitySupplement(sample: Fixture.deferredSession(linkedTo: nil))
+        let entries = ActivityConsolidator.consolidate(workouts: [], supplements: [supplement])
+        guard let entry = entries.first else {
+            Issue.record("expected one standalone entry")
+            return
+        }
+        #expect(entry.distanceMeters == 8000)
+        #expect(entry.badges.contains("8.0 km"))
+        #expect(entry.family == .onFoot)
+    }
+
+    // catches: a linked supplement's distance copied onto the workout's own
+    // badges, rendering the same 8 km twice (D13.2: supplement, never
+    // duplicate).
+    @Test func linkedSupplementDistanceStaysOnTheSupplement() {
+        let workout = Fixture.watchWorkout()
+        let supplement = FitbitActivitySupplement(sample: Fixture.deferredSession(linkedTo: workout.uuid))
+        let entries = ActivityConsolidator.consolidate(workouts: [workout], supplements: [supplement])
+        guard let entry = entries.first else {
+            Issue.record("expected one consolidated entry")
+            return
+        }
+        #expect(entry.supplement?.distanceMeters == 8000)
+        #expect(entry.distanceMeters == nil)
+        #expect(entry.badges == ["40 min"])
+    }
+
+    // catches: badges for stats the workout never recorded ("0 bpm", "0 m"),
+    // or readings out of order.
+    @Test func badgesListOnlyRecordedReadingsInOrder() {
+        #expect(Self.entry(duration: 20).badges == ["20 min"])
+        #expect(Self.entry(duration: 20, distance: 0, heartRate: 0).badges == ["20 min"])
+        #expect(
+            Self.entry(duration: 37, distance: 6200, heartRate: 147.6, swim: .openWater).badges
+                == ["37 min", "6.2 km", "148 bpm", "Open water"]
+        )
+    }
+
+    // catches: a sub-minute session rendering as "0 min".
+    @Test func durationNeverRendersZeroMinutes() {
+        #expect(Self.entry(duration: 0.4).durationText == "1 min")
+    }
+
+    // catches: sub-kilometre distances shown as "0.9 km", and totals past an
+    // hour rendered in minutes.
+    @Test func formatsDistanceAndTotalDuration() {
+        #expect(ActivityFormat.distance(850) == "850 m")
+        #expect(ActivityFormat.distance(6200) == "6.2 km")
+        #expect(ActivityFormat.totalDuration(3 * 3600 + 49 * 60) == "3 h 49 m")
+        #expect(ActivityFormat.totalDuration(49 * 60) == "49 m")
+    }
+
+    // catches: an off-by-one in the day span -- the mockup's list (oldest
+    // session 12 Sep, viewed 21 Sep) reads "10 days".
+    @Test func summaryCountsDaysInclusiveOfToday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        func day(_ d: Int) throws -> Date {
+            try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: d, hour: 9)))
+        }
+        let oldest = ActivityEntry(
+            id: "a", kind: .unlinkedFitbitSession, title: "Rowing", start: try day(12),
+            end: try day(12).addingTimeInterval(20 * 60), sourceLabel: "Hydrow", supplement: nil, family: .endurance
+        )
+        let newest = ActivityEntry(
+            id: "b", kind: .unlinkedFitbitSession, title: "Swim", start: try day(20),
+            end: try day(20).addingTimeInterval(71 * 60), sourceLabel: "Apple Watch", supplement: nil, family: .water
+        )
+        let summary = ActivitySummary(entries: [oldest, newest], now: try day(21), calendar: calendar)
+        #expect(summary.parts == ["2 sessions", "1 h 31 m", "10 days"])
+        let single = ActivitySummary(entries: [newest], now: try day(20), calendar: calendar)
+        #expect(single.parts == ["1 session", "1 h 11 m", "1 day"])
+        #expect(ActivitySummary(entries: [], now: try day(21), calendar: calendar).sessions == 0)
+    }
+
+    // catches: bars not scaled to the longest session, and a divide-by-zero
+    // when every listed session is zero-length.
+    @Test func durationFractionIsRelativeToTheLongest() {
+        let long = Self.entry(duration: 71)
+        let short = Self.entry(duration: 20)
+        #expect(ActivitySummary.durationFraction(of: long, in: [long, short]) == 1)
+        #expect(abs(ActivitySummary.durationFraction(of: short, in: [long, short]) - 20.0 / 71.0) < 1e-9)
+        let empty = Self.entry(duration: 0)
+        #expect(ActivitySummary.durationFraction(of: empty, in: [empty]) == 0)
+    }
+
+    // catches: a Fitbit swim or ride drawn in another family's field. Each
+    // wire key goes through the real decode path (CoreModel title-cases it),
+    // so a change to either vocabulary shows up here.
+    @Test func fitbitNamesMapToTheirFamilies() {
+        let expected: [String: ActivityFamily] = [
+            "run": .onFoot, "walk": .onFoot, "hike": .onFoot,
+            "swim": .water,
+            "bike": .endurance, "rowing": .endurance, "elliptical": .endurance, "stair_climbing": .endurance,
+            "weights": .training, "yoga": .training, "hiit": .training, "core_training": .training,
+            "workout": .training,
+        ]
+        for (wireKey, family) in expected {
+            let session = Data(#"{"exercise.activity_type":"\#(wireKey)"}"#.utf8)
+            let sample = LocalSample(
+                externalID: "fitbit-\(wireKey)",
+                dataType: GoogleDataType.exercise.rawValue,
+                payloadJSON: Data(#"{"sessionPayload":"\#(session.base64EncodedString())"}"#.utf8),
+                start: Fixture.at(10), end: Fixture.at(11),
+                source: "Fitbit Air", linkedWatchWorkoutUUID: nil
+            )
+            let name = FitbitActivitySupplement(sample: sample).activityName
+            #expect(ActivityFamily(fitbitActivityName: name) == family, "\(wireKey) -> \(name ?? "nil")")
+        }
+        #expect(ActivityFamily(fitbitActivityName: nil) == .training)
+    }
+
+    // catches: two activity families sharing a field, so kinds can't be told
+    // apart down the list.
+    @Test func everyFamilyHasItsOwnField() {
+        let fields = ActivityFamily.allCases.map(ActivityRow.field)
+        #expect(Set(fields).count == ActivityFamily.allCases.count)
     }
 }

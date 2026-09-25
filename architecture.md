@@ -297,12 +297,11 @@ colour keeps its shipped value. Those carry a documented WCAG audit, and re-tint
 for a cosmetic warmth nudge would discard it for nothing; the design change comes from
 geometry, type and material, not from moving proven colours.
 
-No new colour ships either. The mockup's four-colour signal row needs to know *which*
-signals contributed, and `Readiness` publishes only `signalsUsed` — a count. Colouring
-four cells per signal would assert a mapping the data cannot back, so `SignalIndex`
-renders the count in one accent and the four concrete fields wait for the engine change
-that would make them true (WP-40's stated follow-up). Shipping their tokens now would be
-shipping dead colour.
+No new colour shipped with WP-40 either. The mockup's four-colour signal row needs to
+know *which* signals contributed, and `Readiness` then published only `signalsUsed` — a
+count. Colouring four cells per signal would have asserted a mapping the data could not
+back, so the four concrete fields waited for the engine change that would make them true.
+WP-43 made it (`signalScores(inputs:)`), and **D16.8** ships them.
 
 **D16.2 — No pictograms where a row names something.** A row identifies itself with the
 word, sets context in mono beneath it, and puts the value on the right rail. An abstract
@@ -409,6 +408,28 @@ Coach's input sat under the capsule and taps hit the tab beneath) and again with
 Applied inside, on the root screen, it works but makes the bar part of that screen, so
 it disappears on every push. The environment value crosses the stack boundary where the
 inset cannot.
+
+
+**D16.8 — The four concrete fields, once the data can back them.** Rust, ochre, slate
+and sky — the locked mockup's flat, unmixed Konkrete Kunst fields — only ever tell one
+thing from another, and always beside a label that names it, so colour is never the only
+carrier (WCAG 1.4.1). Two uses: each readiness signal's bar (Sleep slate, HRV rust,
+Resting HR ochre, Prior load sky — the mockup's assignment), and each activity family's
+duration field on Activities (on foot rust, water slate, endurance ochre, training sky).
+
+Values keep the mockup's hues but not all of its lightness: a filled bar's length is
+information, so each field clears 3:1 against the `border` track it fills (WCAG 1.4.11)
+in both modes. As drawn, light ochre (2.43) and sky (1.54 light / 1.92 dark) failed, and
+the mockup's dark sky was darker than its dark slate. Slate and sky share a hue, so they
+are also held ≥ 2.2:1 apart. The table lives on `Theme.Field`, the one definition.
+
+The same pass (WP-46) brings the rest of the mockup's detailing: uppercase, tracked
+metric-row captions at the micro step; a `border` track under the steps progress fill;
+square mono badges (`ThemedBadge`, also on Data); and on Activities a summary line
+(sessions, total time, days covered), date rules with a count, and badges for what each
+workout actually recorded — distance, average heart rate, pool or open water — read
+from the workout's own statistics and metadata, never shown as zero when absent. The
+mockup's Activities filter button is not built: there is no filter behind it.
 
 ## 5. Data flow summaries
 

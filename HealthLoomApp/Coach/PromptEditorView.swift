@@ -55,7 +55,7 @@ struct PromptEditorView: View {
                 TextEditor(text: $viewModel.baseText)
                     .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                     .frame(minHeight: 160)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+                    .overlay(Rectangle().stroke(Theme.border))
                     .accessibilityIdentifier("prompt.editor")
                 Text("Leading/trailing whitespace is trimmed on save.")
                     .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption2))
@@ -105,8 +105,8 @@ struct PromptEditorView: View {
                         .accessibilityIdentifier("prompt.suffix")
                 }
                 .padding(12)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accentTint))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+                .background(Rectangle().fill(Theme.accentTint))
+                .overlay(Rectangle().stroke(Theme.border))
                 // `.contain`: the section identifier must not override the
                 // suffix text's own identifier (same collapse as
                 // `chat.screen` without it).

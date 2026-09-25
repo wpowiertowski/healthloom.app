@@ -21,10 +21,54 @@
 import CoreModel
 import Foundation
 
+/// Which kind of activity an entry is, coarsely -- enough to give each kind
+/// its own concrete field on the duration bar (D16.8). The title always
+/// names the activity; the family only tells kinds apart at a glance.
+enum ActivityFamily: Hashable, CaseIterable {
+    /// Running, walking, hiking.
+    case onFoot
+    /// Swimming.
+    case water
+    /// Cycling, rowing, elliptical, stair climbing -- sustained cardio.
+    case endurance
+    /// Strength, yoga, core, HIIT, and anything unrecognized.
+    case training
+
+    /// Fitbit-only sessions carry only Google's activity string, title-cased
+    /// by CoreModel (`GoogleDataType.titleCased` over TypeMapper's
+    /// `googleExerciseActivityTypes` keys: "Run", "Bike", "Weights", ...).
+    /// HealthKit workouts don't come through here -- `ActivitiesProvider`
+    /// assigns their family from the real `HKWorkoutActivityType`, beside
+    /// the display name, because the two vocabularies differ ("Bike" vs
+    /// "Ride", "Weights" vs "Strength Training").
+    init(fitbitActivityName name: String?) {
+        switch name {
+        case "Run", "Walk", "Hike": self = .onFoot
+        case "Swim": self = .water
+        case "Bike", "Rowing", "Elliptical", "Stair Climbing": self = .endurance
+        default: self = .training
+        }
+    }
+}
+
+/// Where a swim happened, from the workout's own metadata.
+enum SwimLocation: Hashable {
+    case pool
+    case openWater
+
+    var label: String {
+        switch self {
+        case .pool: return "Pool"
+        case .openWater: return "Open water"
+        }
+    }
+}
+
 /// One HealthKit workout, reduced to what the Activities view renders.
 struct WorkoutSummary: Identifiable, Hashable {
     let uuid: UUID
     let activityName: String
+    let family: ActivityFamily
     let start: Date
     let end: Date
     /// `HKSource.name` -- e.g. "Workout" (Apple's watch app), "HealthLoom".
@@ -35,6 +79,11 @@ struct WorkoutSummary: Identifiable, Hashable {
     /// Source device is an Apple Watch (same classification rule as
     /// SyncKit's `ProductTypeWorkoutSourceClassifier`).
     let isAppleWatch: Bool
+    /// The workout's own statistics and metadata, when it recorded them --
+    /// nil means "not recorded", never zero.
+    var distanceMeters: Double? = nil
+    var averageHeartRate: Double? = nil
+    var swimLocation: SwimLocation? = nil
 
     var id: UUID { uuid }
 }
@@ -99,8 +148,92 @@ struct ActivityEntry: Identifiable, Hashable {
     /// workout ("+ 8.0 km · 520 kcal · Fitbit Air") -- D13.2's supplement,
     /// never a second entry.
     let supplement: FitbitActivitySupplement?
+    let family: ActivityFamily
+    /// The entry's OWN measurements: the workout's statistics, or -- for a
+    /// standalone Fitbit session -- that session's fields. A linked
+    /// supplement's figures stay on the supplement (D13.2), never here.
+    var distanceMeters: Double? = nil
+    var averageHeartRate: Double? = nil
+    var swimLocation: SwimLocation? = nil
 
     var duration: TimeInterval { end.timeIntervalSince(start) }
+
+    /// Whole minutes, never "0 min" for a real entry.
+    var durationText: String {
+        "\(max(1, Int(duration / 60))) min"
+    }
+
+    /// The row's badges, in reading order: duration always, then only what
+    /// was actually recorded (D16's rule: no field the data can't back).
+    var badges: [String] {
+        var badges = [durationText]
+        if let distanceMeters, distanceMeters > 0 {
+            badges.append(ActivityFormat.distance(distanceMeters))
+        }
+        if let averageHeartRate, averageHeartRate > 0 {
+            badges.append("\(Int(averageHeartRate.rounded())) bpm")
+        }
+        if let swimLocation {
+            badges.append(swimLocation.label)
+        }
+        return badges
+    }
+}
+
+enum ActivityFormat {
+    /// "6.2 km"; under a kilometre, whole metres ("850 m").
+    static func distance(_ meters: Double) -> String {
+        meters < 1000
+            ? "\(Int(meters.rounded())) m"
+            : String(format: "%.1f km", meters / 1000)
+    }
+
+    /// "3 h 49 m", or "49 m" under an hour -- the summary line's total.
+    static func totalDuration(_ interval: TimeInterval) -> String {
+        let minutes = Int(interval / 60)
+        let hours = minutes / 60
+        return hours > 0 ? "\(hours) h \(minutes % 60) m" : "\(minutes) m"
+    }
+}
+
+/// The Activities header line ("7 sessions · 3 h 49 m · 10 days").
+struct ActivitySummary: Equatable {
+    let sessions: Int
+    let totalDuration: TimeInterval
+    /// Days from the oldest listed session's day through today, inclusive:
+    /// the span the list actually covers, whatever the query window.
+    let days: Int
+
+    init(entries: [ActivityEntry], now: Date = Date(), calendar: Calendar = .current) {
+        sessions = entries.count
+        totalDuration = entries.reduce(0) { $0 + $1.duration }
+        if let oldest = entries.map(\.start).min() {
+            let span = calendar.dateComponents(
+                [.day],
+                from: calendar.startOfDay(for: oldest),
+                to: calendar.startOfDay(for: now)
+            ).day ?? 0
+            days = max(1, span + 1)
+        } else {
+            days = 0
+        }
+    }
+
+    var parts: [String] {
+        [
+            sessions == 1 ? "1 session" : "\(sessions) sessions",
+            ActivityFormat.totalDuration(totalDuration),
+            days == 1 ? "1 day" : "\(days) days",
+        ]
+    }
+
+    /// Each entry's duration as a fraction of the longest listed -- the
+    /// duration bar's length (the mockup's "duration as field").
+    static func durationFraction(of entry: ActivityEntry, in entries: [ActivityEntry]) -> Double {
+        let longest = entries.map(\.duration).max() ?? 0
+        guard longest > 0 else { return 0 }
+        return min(max(entry.duration / longest, 0), 1)
+    }
 }
 
 enum ActivityConsolidator {
@@ -146,7 +279,11 @@ enum ActivityConsolidator {
                 start: workout.start,
                 end: workout.end,
                 sourceLabel: sourceLabel,
-                supplement: supplement
+                supplement: supplement,
+                family: workout.family,
+                distanceMeters: workout.distanceMeters,
+                averageHeartRate: workout.averageHeartRate,
+                swimLocation: workout.swimLocation
             )
         }
 
@@ -155,6 +292,9 @@ enum ActivityConsolidator {
         // the dictionary; ones never consumed join the unlinked list.
         unlinked.append(contentsOf: supplementsByWorkoutUUID.values)
         entries.append(contentsOf: unlinked.map { supplement in
+            // Standalone: the session's own distance is the ENTRY's
+            // distance (it used to be dropped here, so an 8 km Fitbit run
+            // rendered as "40 min" alone).
             ActivityEntry(
                 id: supplement.externalID,
                 kind: .unlinkedFitbitSession,
@@ -162,7 +302,9 @@ enum ActivityConsolidator {
                 start: supplement.start,
                 end: supplement.end,
                 sourceLabel: supplement.source,
-                supplement: nil
+                supplement: nil,
+                family: ActivityFamily(fitbitActivityName: supplement.activityName),
+                distanceMeters: supplement.distanceMeters
             )
         })
 

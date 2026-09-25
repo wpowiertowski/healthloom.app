@@ -1059,6 +1059,37 @@ the bar rides on it with the focused field above.
 
 ---
 
+### WP-46 · Concrete fields and the mockup's detailing
+
+**Depends on:** WP-40, WP-43 · **Decision:** architecture.md **D16.8** (amends D16.1).
+
+WP-40 held back the mockup's four colour fields until the engine could say which signal
+each bar is; WP-43 made it able to. This lands them, plus the detailing the build had
+dropped against the locked mockup.
+
+**Steps:**
+1. `Theme.Field` — rust, ochre, slate, sky — at contrast-tuned values (each ≥ 3:1
+   against the `border` track in both modes; mockup hues kept, lightness adjusted).
+2. `SignalIndex` colours each signal's bar by its field (mockup assignment).
+3. Metric-row captions: uppercase, tracked, micro step; steps progress gains its track.
+4. Activities: summary line (sessions · total time · days covered), date rules with a
+   count, a duration field per row (length vs the longest listed session, colour by
+   `ActivityFamily`), and badges for recorded distance, average heart rate and swim
+   location — read from the `HKWorkout`'s own statistics and metadata. A standalone
+   Fitbit session now keeps its own distance.
+5. `ThemedBadge` becomes the mockup's square mono badge; content-layer panels, callouts
+   and tiles drop the Yacht club 4 pt radius (D16: square corners). Filled buttons and
+   chat bubbles are control-layer and unchanged. The mockup's filter button is not built.
+
+**Tests:** activity badges list only recorded readings, in order; a linked supplement's
+distance never becomes the workout's own badge; a standalone Fitbit session keeps its
+distance; distance and total-duration formatting; the summary's inclusive day span;
+duration fractions vs the longest; every Fitbit wire key maps to its family through the
+real decode path; families and signals each get a distinct field. New Activities snapshot
+matrix; Today and onboarding references re-recorded and inspected.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1076,6 +1107,7 @@ P5  WP-42      Name the readiness signals ............. count -> nouns
 P5  WP-43      Readiness bars show magnitude ........... presence -> subscore
 P5  WP-44      HRV on the Today panel .................. hidden when absent
 P5  WP-45      Floating tab bar ........................ content always clears it
+P5  WP-46      Concrete fields + mockup detailing ...... colour per signal and activity
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

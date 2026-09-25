@@ -253,38 +253,32 @@ struct HeroInstrument: View {
 /// empty track with a dimmed label.
 struct SignalIndex: View {
     let signalScores: [ReadinessSignal: Double]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: dynamicTypeSize.isAccessibilitySize ? 8 : 4) {
             ForEach(ReadinessSignal.allCases, id: \.self) { signal in
                 let subscore = signalScores[signal]
-                HStack(spacing: 8) {
-                    Text(Self.name(signal))
-                        .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
-                        .foregroundStyle(subscore == nil ? Theme.tertiary : Theme.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        // Sized for the longest label ("Resting HR") at XL,
-                        // not for the shortest: a fixed column is what keeps
-                        // the four bars on one axis, and 60pt clipped two of
-                        // the four names to "Resting…" / "Prior lo…".
-                        .frame(width: 80, alignment: .leading)
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(Theme.border)
-                            if let subscore {
-                                // A reporting signal always shows something:
-                                // a genuine near-zero subscore would
-                                // otherwise be indistinguishable from the
-                                // empty track of a signal that never
-                                // arrived, which are different facts.
-                                Rectangle()
-                                    .fill(Theme.accent)
-                                    .frame(width: max(2, proxy.size.width * min(max(subscore / 100, 0), 1)))
-                            }
-                        }
+                // At accessibility sizes no fixed label column can hold
+                // "Resting HR" without truncating it ("Rest…" at AXXXL), so
+                // each name sits above its bar instead of beside it.
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 3) {
+                        label(signal, reporting: subscore != nil)
+                        bar(signal, subscore: subscore)
                     }
-                    .frame(height: 6)
+                } else {
+                    HStack(spacing: 8) {
+                        label(signal, reporting: subscore != nil)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            // Sized for the longest label ("Resting HR") at
+                            // XL, not for the shortest: a fixed column keeps
+                            // the four bars on one axis, and 60pt clipped two
+                            // of the four names to "Resting…" / "Prior lo…".
+                            .frame(width: 80, alignment: .leading)
+                        bar(signal, subscore: subscore)
+                    }
                 }
             }
         }
@@ -293,6 +287,30 @@ struct SignalIndex: View {
         .accessibilityLabel("Readiness signals")
         .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier("today.readiness.signals")
+    }
+
+    private func label(_ signal: ReadinessSignal, reporting: Bool) -> some View {
+        Text(Self.name(signal))
+            .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
+            .foregroundStyle(reporting ? Theme.secondary : Theme.tertiary)
+    }
+
+    private func bar(_ signal: ReadinessSignal, subscore: Double?) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Theme.border)
+                if let subscore {
+                    // A reporting signal always shows something: a genuine
+                    // near-zero subscore would otherwise be
+                    // indistinguishable from the empty track of a signal
+                    // that never arrived, which are different facts.
+                    Rectangle()
+                        .fill(Self.field(signal).color)
+                        .frame(width: max(2, proxy.size.width * min(max(subscore / 100, 0), 1)))
+                }
+            }
+        }
+        .frame(height: 6)
     }
 
     /// UI copy lives here, not on the enum: `ReadinessSignal` is a CoachKit
@@ -305,6 +323,20 @@ struct SignalIndex: View {
         case .restingHR: return "Resting HR"
         case .sleep: return "Sleep"
         case .strain: return "Prior load"
+        }
+    }
+
+    /// D16.8: each signal's concrete field, as the locked mockup assigns
+    /// them. Per-signal colour is honest now that the engine publishes a
+    /// score per signal (WP-43); the name beside each bar still carries the
+    /// meaning, the colour only tells the rows apart. Exhaustive, no
+    /// `default`, like `name(_:)`.
+    static func field(_ signal: ReadinessSignal) -> Theme.Field {
+        switch signal {
+        case .sleep: return .slate
+        case .hrv: return .rust
+        case .restingHR: return .ochre
+        case .strain: return .sky
         }
     }
 
@@ -390,10 +422,16 @@ struct TodayMetricRowView: View {
                         .fixedSize(horizontal: true, vertical: false)
                     }
                     // Metadata, not prose ("Latest · 10:26", "33% of
-                    // 10,000 goal") — mono. Not uppercased: the content is
-                    // dynamic and some subs are long enough to shout.
-                    Text(metric.sub)
-                        .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
+                    // 10,000 goal") — mono silkscreen, as the locked mockup
+                    // sets it: uppercase, tracked, one step down (micro).
+                    // WP-40 kept these sentence case at the caption step for
+                    // fear long subs would shout; the smaller step is what
+                    // keeps them quiet, and the owner asked for the mockup's
+                    // detailing (WP-46). `SilkscreenText`, not `.textCase`,
+                    // so it is still spoken as written.
+                    SilkscreenText(metric.sub)
+                        .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
+                        .tracking(0.5)
                         .foregroundStyle(Theme.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -402,9 +440,15 @@ struct TodayMetricRowView: View {
         }
         .overlay(alignment: .bottom) {
             if let progress = metric.progress {
+                // Flat field on a full-bleed `border` track (the mockup's
+                // `.rowprog`): the track shows where the goal is, so the
+                // fill reads as a fraction rather than a stray rule.
                 GeometryReader { geometry in
-                    Rectangle().fill(Theme.accent)
-                        .frame(width: geometry.size.width * progress, height: 2)
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Theme.border)
+                        Rectangle().fill(Theme.accent)
+                            .frame(width: geometry.size.width * progress)
+                    }
                 }
                 .frame(height: 2)
                 .accessibilityHidden(true)
@@ -445,8 +489,8 @@ struct InstrumentPanel: View {
             }
             .reorderable()
         }
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(editing ? Theme.accent : Theme.border))
+        .background(Rectangle().fill(Theme.surface))
+        .overlay(Rectangle().stroke(editing ? Theme.accent : Theme.border))
         .reorderContainer(for: TodayMetricDisplay.self, isEnabled: editing) { difference in
             onMove?(difference)
         }
@@ -480,8 +524,8 @@ struct CoachPanel: View {
             }
         }
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accentTint))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+        .background(Rectangle().fill(Theme.accentTint))
+        .overlay(Rectangle().stroke(Theme.border))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("today.coachPanel")
     }
