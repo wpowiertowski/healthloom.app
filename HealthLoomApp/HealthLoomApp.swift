@@ -109,6 +109,12 @@ struct HealthLoomApp: App {
         // coverage (item 15's rationale stands). `initial: true`
         // covers attach; the guard covers everything else.
         .onChange(of: scenePhase, initial: true) { _, phase in
+            // WP-49: leaving the app with a change still waiting out its
+            // debounce syncs it now, under a background-task assertion.
+            if phase == .background, !appEnvironment.launchConfiguration.isUITest,
+               appEnvironment.cloudSync.hasPendingSync {
+                CloudSyncBackgroundFlush.run(appEnvironment.cloudSync)
+            }
             guard phase == .active else { return }
             Task {
                 await InsightRunnerHost.runIfDue()
@@ -116,12 +122,16 @@ struct HealthLoomApp: App {
             Task {
                 await appEnvironment.tipStore.begin()
             }
-            // Round-10 item 7: foreground min-interval gate (same
-            // 15-min semantics as the background planner) — rapid
-            // re-foregrounds skip the full reconcile.
-            if !appEnvironment.launchConfiguration.isUITest, appEnvironment.foregroundReconcileIfDue() {
-                Task {
-                    await appEnvironment.cloudSync.syncNow()
+            // Round-10 item 7: foreground min-interval gate — rapid
+            // re-foregrounds skip the full reconcile. WP-49: a minute
+            // (`CloudSyncEngine.foregroundMinInterval`), and local changes
+            // sync on their own via the change monitor.
+            if !appEnvironment.launchConfiguration.isUITest {
+                appEnvironment.cloudSyncMonitor.start()
+                if appEnvironment.foregroundReconcileIfDue() {
+                    Task {
+                        await appEnvironment.cloudSync.syncNow()
+                    }
                 }
             }
         }

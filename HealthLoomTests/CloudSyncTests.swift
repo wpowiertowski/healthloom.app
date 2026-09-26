@@ -212,9 +212,15 @@ struct CloudSyncHarness {
         return CloudSyncHarness(container: container, db: db, now: now, ephemeral: ephemeral)
     }
 
-    func engine(isQuiesced: @escaping () -> Bool = { false }) -> CloudSyncEngine {
+    func engine(
+        isQuiesced: @escaping () -> Bool = { false },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }
+    ) -> CloudSyncEngine {
         let now = self.now
-        return CloudSyncEngine(container: container, defaults: defaults, database: db, now: { now }, isQuiesced: isQuiesced)
+        return CloudSyncEngine(
+            container: container, defaults: defaults, database: db, now: { now },
+            isQuiesced: isQuiesced, sleep: sleep
+        )
     }
 
     func seedTurn(role: String = "user", content: String, at date: Date) throws {
@@ -1314,15 +1320,15 @@ struct WipeQuiesceTests {
 
 @Suite("Foreground reconcile gate")
 struct ForegroundReconcileGateTests {
+    // catches: rapid app-switching re-running the full sync (round-10
+    // item 7), and -- WP-49 -- another device's change staying invisible
+    // for the old 15 minutes: two minutes later a foreground syncs.
     @Test func rapidReforegroundSkipsReconcile() {
-        // Round-10 item 7: launch (no stamp) always reconciles; a
-        // flip seconds later skips; a flip past the background
-        // planner's interval reconciles again.
         let now = Date()
         #expect(AppEnvironment.foregroundReconcileDue(now: now, last: nil))
         #expect(!AppEnvironment.foregroundReconcileDue(now: now, last: now))
-        #expect(!AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-60)))
-        #expect(AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-16 * 60)))
+        #expect(!AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-30)))
+        #expect(AppEnvironment.foregroundReconcileDue(now: now, last: now.addingTimeInterval(-2 * 60)))
     }
 }
 
@@ -1453,5 +1459,160 @@ struct CloudSyncCopyTests {
         let message = CloudSyncCopy.surfaced(rejected)
         #expect(message.hasSuffix(CloudSyncCopy.dataSafe))
         #expect(CloudSyncCopy.retrying("CloudKit error 3").hasSuffix(CloudSyncCopy.dataSafe))
+    }
+}
+
+// MARK: - WP-49: change-triggered sync
+
+/// Parks every debounce sleep until the test releases it, so the debounce
+/// is deterministic. A cancelled sleeper wakes on release and throws, as
+/// `Task.sleep` does when cancelled.
+actor SleepGate {
+    private var parked: [CheckedContinuation<Void, Never>] = []
+    private(set) var sleeps = 0
+
+    func sleep() async throws {
+        sleeps += 1
+        await withCheckedContinuation { parked.append($0) }
+        try Task.checkCancellation()
+    }
+
+    func releaseAll() {
+        let waking = parked
+        parked.removeAll()
+        waking.forEach { $0.resume() }
+    }
+}
+
+@MainActor
+private func waitUntil(_ condition: () async -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !(await condition()) {
+        guard ContinuousClock.now < deadline else {
+            Issue.record("timed out waiting")
+            return
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+@Suite("Change-triggered sync", .serialized)
+@MainActor
+struct ChangeTriggeredSyncTests {
+    // catches: every toggle in a burst firing its own sync, or the debounce
+    // not restarting on each change.
+    @Test func burstOfRequestsCoalescesIntoOneSync() async throws {
+        let harness = try CloudSyncHarness.make()
+        let gate = SleepGate()
+        let engine = harness.engine(sleep: { _ in try await gate.sleep() })
+        engine.requestSync()
+        engine.requestSync()
+        engine.requestSync()
+        try await waitUntil { await gate.sleeps == 3 }
+        await gate.releaseAll()
+        try await waitUntil { await harness.db.accountStateCalls == 1 && engine.status != .syncing }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(await harness.db.accountStateCalls == 1)
+        #expect(!engine.hasPendingSync)
+    }
+
+    // catches: a change still waiting when the app backgrounds never
+    // syncing, or the flush syncing twice once the old timer fires.
+    @Test func flushRunsTheWaitingSyncNowAndOnlyOnce() async throws {
+        let harness = try CloudSyncHarness.make()
+        let gate = SleepGate()
+        let engine = harness.engine(sleep: { _ in try await gate.sleep() })
+        engine.requestSync()
+        try await waitUntil { await gate.sleeps == 1 }
+        await engine.flushPendingSync()
+        #expect(await harness.db.accountStateCalls == 1)
+        #expect(!engine.hasPendingSync)
+        await gate.releaseAll()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(await harness.db.accountStateCalls == 1)
+    }
+
+    // catches: the engine's own watermark writes (they land in UserDefaults
+    // too) triggering sync after sync, and a real toggle being missed.
+    @Test func onlySyncedPreferenceChangesRequestASync() async throws {
+        let harness = try CloudSyncHarness.make()
+        let gate = SleepGate()
+        let engine = harness.engine(sleep: { _ in try await gate.sleep() })
+        await engine.syncNow()
+        harness.defaults.set(42, forKey: "com.healthloom.test.unrelated")
+        engine.noteLocalPreferencesChange()
+        #expect(!engine.hasPendingSync)
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
+        engine.noteLocalPreferencesChange()
+        #expect(engine.hasPendingSync)
+    }
+
+    // catches: a save that added no turn requesting a sync, and a new coach
+    // turn not reaching iCloud until the next foreground.
+    @Test func onlyNewTurnsRequestASync() async throws {
+        let harness = try CloudSyncHarness.make()
+        let gate = SleepGate()
+        let engine = harness.engine(sleep: { _ in try await gate.sleep() })
+        await engine.syncNow()
+        engine.noteLocalTurnsChange()
+        #expect(!engine.hasPendingSync)
+        try harness.seedTurn(content: "new question", at: harness.now)
+        engine.noteLocalTurnsChange()
+        #expect(engine.hasPendingSync)
+    }
+
+    // catches: a change made while a sync is in flight being lost -- that
+    // sync may already have read the old state, so one more must follow.
+    @Test func changeDuringASyncRunsAnotherAfterIt() async throws {
+        let harness = try CloudSyncHarness.make()
+        let gate = SleepGate()
+        let engine = harness.engine(sleep: { _ in try await gate.sleep() })
+        await harness.db.setHoldAccountState(true)
+        let inFlight = Task { await engine.syncNow() }
+        try await waitUntil { await harness.db.accountStateCalls == 1 }
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
+        engine.noteLocalPreferencesChange()
+        #expect(!engine.hasPendingSync, "deferred while the sync runs")
+        await harness.db.releaseAccountState()
+        await inFlight.value
+        #expect(engine.hasPendingSync, "a follow-up sync is queued")
+    }
+
+    // catches: a change-triggered sync resurrecting data after a wipe
+    // latched (round-10 item 1: every trigger reads the latch).
+    @Test func quiescedEngineIgnoresChanges() async throws {
+        let harness = try CloudSyncHarness.make()
+        let engine = harness.engine(isQuiesced: { true })
+        engine.requestSync()
+        SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
+        engine.noteLocalPreferencesChange()
+        try harness.seedTurn(content: "after wipe", at: harness.now)
+        engine.noteLocalTurnsChange()
+        #expect(!engine.hasPendingSync)
+    }
+}
+
+@Suite("CloudSyncChangeMonitor")
+@MainActor
+struct CloudSyncChangeMonitorTests {
+    // catches: Google sync's sample and cursor saves waking the engine (a
+    // store count per save), or chat saves being ignored.
+    @Test func onlySavesTouchingChatTurnsCount() throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let context = ModelContext(container)
+        let turn = ChatTurn(role: "user", content: "hi", createdAt: Date())
+        let sample = LocalSample(
+            externalID: "s1", dataType: GoogleDataType.exercise.rawValue, payloadJSON: Data("{}".utf8),
+            start: Date(), end: Date(), source: "Fitbit Air", linkedWatchWorkoutUUID: nil
+        )
+        context.insert(turn)
+        context.insert(sample)
+        try context.save()
+        let inserted = ModelContext.NotificationKey.insertedIdentifiers.rawValue
+        let deleted = ModelContext.NotificationKey.deletedIdentifiers.rawValue
+        #expect(CloudSyncChangeMonitor.touchesTurns([inserted: [turn.persistentModelID]]))
+        #expect(CloudSyncChangeMonitor.touchesTurns([deleted: [sample.persistentModelID, turn.persistentModelID]]))
+        #expect(!CloudSyncChangeMonitor.touchesTurns([inserted: [sample.persistentModelID]]))
+        #expect(!CloudSyncChangeMonitor.touchesTurns(nil))
     }
 }

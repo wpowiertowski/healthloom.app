@@ -1132,6 +1132,30 @@ tree and against three planted violations, one per form, each caught.
 
 ---
 
+### WP-49 · iCloud sync timing
+
+**Depends on:** WP-47 · **Decision:** architecture.md **D17** ("When it syncs").
+
+A change reached iCloud only at the next foreground activation 15+ minutes after the last
+sync, or on Sync Now, so an edit made on one phone didn't show on another.
+
+**Steps:**
+1. `CloudSyncEngine.requestSync()`: debounced (5 s, injected sleeper), coalescing; a
+   request during a sync queues one more; `flushPendingSync()` runs a waiting sync now.
+2. `CloudSyncChangeMonitor`: observes `UserDefaults.didChangeNotification` and
+   `ModelContext.didSave` (filtered to `ChatTurn` first); the engine requests a sync only
+   when a fingerprint of the synced fields differs from what the last sync saw.
+3. The app flushes on entering the background under a background-task assertion, and the
+   foreground gate drops from 15 minutes to 1 (it guards only the iCloud sync).
+4. Not under `-UITest*`, same as launch sync.
+
+**Tests:** a burst of requests syncs once; a flush syncs now and only once; unrelated
+defaults writes don't request, a real toggle does; a save without a new turn doesn't,
+a new turn does; a change during a sync queues a follow-up; a quiesced engine ignores
+changes; only `ChatTurn` saves wake the engine; the foreground gate is a minute.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1152,6 +1176,7 @@ P5  WP-45      Floating tab bar ........................ content always clears i
 P5  WP-46      Concrete fields + mockup detailing ...... colour per signal and activity
 P5  WP-47      CloudKit schema as code ................. Production schema deployed
 P5  WP-48      Silkscreen labels spoken as written ..... CI-guarded
+P5  WP-49      iCloud sync timing ...................... changes sync in seconds
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

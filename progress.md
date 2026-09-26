@@ -5653,3 +5653,47 @@ comment lines. It asserts its scope dir exists and fails on grep errors, the sam
 non-vacuous pattern as the other guards. The step's script was extracted from the YAML
 and run locally: clean tree passes, and each of the three forms, planted in turn, is
 caught and named. D16.3 records the rule.
+
+## WP-49 · iCloud sync timing (branch `cloud-sync-timing` from main 2793fdc)
+
+**Problem.** A change reached iCloud only at the next foreground activation 15+ minutes
+after the last sync, or on Sync Now. An edit made on one phone didn't show on the other.
+
+**Design.** `CloudSyncEngine.requestSync()` is debounced (5 s via an injected sleeper, the
+AGENTS.md §2 seam) and coalesces bursts. A request that fires during a sync queues exactly
+one more, because that sync may have read the old state. `flushPendingSync()` runs a
+waiting sync immediately.
+
+`CloudSyncChangeMonitor` is structural, not per-caller. It watches where synced data
+lives:
+- `UserDefaults.didChangeNotification`, for settings and insight preferences;
+- `ModelContext.didSave`, filtered to `ChatTurn` identifiers first (the cheap check)
+  before anything counts.
+
+The engine requests a sync only when a fingerprint of the synced fields, without the
+read-time `updatedAt` stamps, differs from what the last sync saw. The fingerprint is
+split so a defaults change never costs a store fetch. The engine's own watermark writes
+change nothing, so they don't loop. A sync's own pull writes the baseline in a `defer`
+covering every exit, and at worst causes one redundant, no-op sync. Other rules:
+- Entering the background with a sync waiting flushes it under a background-task
+  assertion.
+- The foreground gate is now 1 minute (`CloudSyncEngine.foregroundMinInterval`, one
+  definition). It guards only the iCloud sync; it had borrowed the 15-minute
+  background-planner interval.
+- The monitor isn't started under `-UITest*`.
+- Push subscriptions (real-time delivery to an already-open device) stay out of scope:
+  they need a custom zone (`CKSyncEngine`).
+
+**Tests.** 7 new plus the foreground-gate test updated to the 1-minute semantics
+(315 total). Catches:
+- a burst syncing more than once;
+- a flush not syncing now, or syncing twice when the old timer fires;
+- the engine's watermark writes requesting syncs, or a real toggle being missed;
+- a save without a new turn requesting, or a new turn being missed;
+- a change during a sync being lost;
+- a quiesced engine syncing after a wipe;
+- non-`ChatTurn` saves waking the engine.
+
+**Mutation-checked.** Four mutants (debounce not cancelling, fingerprint check removed,
+no follow-up after a mid-sync change, flush not cancelling the timer) each fail exactly
+their test and no other.

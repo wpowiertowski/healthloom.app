@@ -163,6 +163,7 @@
 		E0C105F4899C2A3C9602D85B /* ScrollUntilExists.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1D02BC2579827262BEC1FCC /* ScrollUntilExists.swift */; };
 		E1D3068908C1839151F64348 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 352DEBD107C79BE367ADD1D8 /* SettingsView.swift */; };
 		E23C03AD088C288485C90DCA /* syncRow-neverSynced-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = F7AEAEDB546DBA1E5F66E370 /* syncRow-neverSynced-light-XS.png */; };
+		E288A32A2DDDE772F60A1C0E /* CloudSyncChangeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50A4CFE54F909A83ADD49EF7 /* CloudSyncChangeMonitor.swift */; };
 		E474E7D473F0A60ED8F5440A /* SyncKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7FC443E094B0B544DFCE2D9F /* SyncKit */; };
 		E5660E22E6F4F7B03E7170CF /* GoogleConnectionSetting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23510BBAB3D1FEF1A1074200 /* GoogleConnectionSetting.swift */; };
 		E56EEF99FC702EDCDB7C4285 /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B12E87F8DFBDC86C99C0E60C /* IBMPlexMono-Regular.ttf */; };
@@ -257,6 +258,7 @@
 		4CA392AAA7D1F600063563B4 /* coachPlaceholder-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachPlaceholder-light-XL.png"; sourceTree = "<group>"; };
 		4DC22CFE060BA63386BB8546 /* OnboardingSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSnapshotTests.swift; sourceTree = "<group>"; };
 		509E3E08BFA749BE0BDEADD6 /* StubGoogleReconcileClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubGoogleReconcileClient.swift; sourceTree = "<group>"; };
+		50A4CFE54F909A83ADD49EF7 /* CloudSyncChangeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncChangeMonitor.swift; sourceTree = "<group>"; };
 		512DEA311614493254B22A85 /* ActivitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitiesView.swift; sourceTree = "<group>"; };
 		51ED544BBB6FE7133E24FCC9 /* MorningInsightTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MorningInsightTests.swift; sourceTree = "<group>"; };
 		527F7F561453C920E502613D /* partialHero-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "partialHero-light-XL.png"; sourceTree = "<group>"; };
@@ -676,6 +678,7 @@
 		96F81E0C34DAC98B70AE6D69 /* iCloud */ = {
 			isa = PBXGroup;
 			children = (
+				50A4CFE54F909A83ADD49EF7 /* CloudSyncChangeMonitor.swift */,
 				6721EEA16D9146CE4948718E /* CloudSyncEngine.swift */,
 				0F8170A32123C527BD10AD7C /* CloudSyncPayload.swift */,
 			);
@@ -1075,6 +1078,7 @@
 				A209AA18044B5129C1B9BF0D /* CloudGateCache.swift in Sources */,
 				50CEEFDECB7A217C879361BE /* CloudKeyStoring.swift in Sources */,
 				A2BA6F04B8B481B8ABD14DE3 /* CloudKeyValidator.swift in Sources */,
+				E288A32A2DDDE772F60A1C0E /* CloudSyncChangeMonitor.swift in Sources */,
 				FDED5422AE892E2E92915FB6 /* CloudSyncEngine.swift in Sources */,
 				6209F8D27A1AC85D7F577EED /* CloudSyncPayload.swift in Sources */,
 				192061569F62E91F6900FA58 /* CoachAvailabilityChecker.swift in Sources */,
