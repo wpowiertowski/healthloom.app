@@ -295,7 +295,7 @@ struct OnboardingErrorPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("COULDN'T CONTINUE")
+            SilkscreenText("Couldn't continue")
                 .font(Theme.mono(Theme.Step.micro, .semibold, relativeTo: .caption2)).tracking(0.6)
                 .foregroundStyle(Theme.accentDeep)
             Text(message)

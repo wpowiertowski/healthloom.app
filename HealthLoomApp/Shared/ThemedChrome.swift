@@ -214,13 +214,14 @@ private struct ThemedNavigationChrome: ViewModifier {
 
 // MARK: - Structure
 
-/// `TodayView`'s uppercase tracked section label (its `TODAY` header).
+/// `TodayView`'s uppercase tracked section label (its "Today" header),
+/// shown uppercase and spoken as written (`SilkscreenText`).
 struct ThemedSectionHeader: View {
     let title: String
     var topPadding: CGFloat = 22
 
     var body: some View {
-        Text(title.uppercased())
+        SilkscreenText(title)
             .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
             .foregroundStyle(Theme.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -257,7 +258,7 @@ struct ThemedCallout: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
+            SilkscreenText(title)
                 .font(Theme.mono(Theme.Step.micro, .semibold, relativeTo: .caption2)).tracking(0.6)
                 .foregroundStyle(Theme.accentDeep)
             Text(message)

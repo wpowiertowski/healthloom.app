@@ -104,6 +104,33 @@ jobs:
           fi
           echo "no Claude server-tools references"
 
+      - name: Uppercase display text goes through SilkscreenText
+        # WP-46 / WP-48: `.textCase(.uppercase)` also rewrites the
+        # accessibility label (VoiceOver and DashboardUITests read "NOT IN
+        # APPLE HEALTH"), and `Text(x.uppercased())` or an all-caps literal
+        # is spoken shouted too, with short tokens at risk of being spelled
+        # out. `SilkscreenText` (Shared/ThemedChrome.swift) shows uppercase
+        # and keeps the label as written; its own `uppercased(with:)` does
+        # not match. App UI only. Comment lines are excluded because the
+        # rationale quotes the forbidden spellings. Non-vacuous: scope dir
+        # asserted, grep errors (rc >= 2) fail the step.
+        run: |
+          set -euo pipefail
+          test -d HealthLoomApp || { echo "guard scope dir missing: HealthLoomApp" >&2; exit 1; }
+          rc=0
+          hits=$(grep -rn -E "\\.textCase\\(\\.uppercase\\)|Text\\([^)]*\\.uppercased\\(\\)|Text\\(\"[A-Z][A-Z0-9 '-]{3,}\"\\)" --include='*.swift' HealthLoomApp) || rc=$?
+          if [ "$rc" -ge 2 ]; then
+            echo "grep failed: rc=$rc" >&2
+            exit 1
+          fi
+          code=$(printf '%s\n' "$hits" | grep -v -E '^[^:]+:[0-9]+:[[:space:]]*//' | grep -v '^$' || true)
+          if [ -n "$code" ]; then
+            printf '%s\n' "$code" >&2
+            echo "uppercase display text must use SilkscreenText (Shared/ThemedChrome.swift)" >&2
+            exit 1
+          fi
+          echo "uppercase display text all via SilkscreenText"
+
       - name: Display name is HealthLoom (bundle + HealthKit attribution)
         # The HealthKit source attribution derives from the bundle display
         # name; a rename here silently rebrands every sample the app wrote.
