@@ -1075,7 +1075,7 @@ struct CloudSyncTests {
         let engine = harness.engine()
         await engine.syncNow()
         if case .failed(let message) = engine.status {
-            #expect(message.contains("will retry"))
+            #expect(message == CloudSyncCopy.retrying("offline"))
         } else {
             Issue.record("expected failed status, got \(engine.status)")
         }
@@ -1097,7 +1097,8 @@ struct CloudSyncTests {
         await harness.db.setFetchError(for: CloudRecordType.settingsRecordName, error: .failed("quota"))
         let engine = harness.engine()
         await engine.syncNow()
-        if case .failed = engine.status {
+        if case .failed(let message) = engine.status {
+            #expect(message == CloudSyncCopy.surfaced("quota"))
         } else {
             Issue.record("expected failed status, got \(engine.status)")
         }
@@ -1325,3 +1326,132 @@ struct ForegroundReconcileGateTests {
     }
 }
 
+// MARK: - WP-47: CloudKit schema parity + error copy
+
+@Suite("CloudKit schema")
+struct CloudKitSchemaTests {
+    /// `CloudKit/schema.ckdb`, located from this file so the simulator test
+    /// reads the committed copy.
+    private static func schemaText() throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("CloudKit/schema.ckdb")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// Record type → (field → declaration), system `___` fields included.
+    private static func parse(_ text: String) throws -> [String: [String: String]] {
+        let block = try Regex(#"RECORD TYPE (\w+) \((.*?)\);"#).dotMatchesNewlines()
+        var types: [String: [String: String]] = [:]
+        for match in text.matches(of: block) {
+            guard let name = match.output[1].substring, let body = match.output[2].substring else { continue }
+            var fields: [String: String] = [:]
+            for line in body.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: ","))
+                guard !trimmed.isEmpty, !trimmed.hasPrefix("GRANT") else { continue }
+                let parts = trimmed.split(separator: " ", maxSplits: 1)
+                guard parts.count == 2 else { continue }
+                let field = parts[0].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                fields[field] = parts[1].trimmingCharacters(in: .whitespaces)
+            }
+            types[String(name)] = fields
+        }
+        return types
+    }
+
+    /// The CloudKit schema type a builder's value will be stored as.
+    private static func schemaType(of value: CKRecordValue) -> String {
+        switch value {
+        case is Date: return "TIMESTAMP"
+        case is String: return "STRING"
+        case is [String]: return "LIST<STRING>"
+        case let number as NSNumber: return CFNumberIsFloatType(number) ? "DOUBLE" : "INT64"
+        default: return "UNKNOWN(\(type(of: value)))"
+        }
+    }
+
+    /// The app's fields of one built record, as the schema would declare them.
+    private static func declared(_ record: CKRecord) -> [String: String] {
+        var fields: [String: String] = [:]
+        for key in record.allKeys() {
+            if let value = record[key] { fields[key] = schemaType(of: value) }
+        }
+        return fields
+    }
+
+    /// The schema's app fields for a type, with index qualifiers dropped.
+    private static func appFields(_ schema: [String: [String: String]], _ type: String) -> [String: String] {
+        (schema[type] ?? [:])
+            .filter { !$0.key.hasPrefix("___") }
+            .mapValues { String($0.split(separator: " ")[0]) }
+    }
+
+    // catches: a builder gaining, renaming or retyping a field without the
+    // schema following -- Production refuses unknown fields and types
+    // ("Cannot create new type … in production schema" was TestFlight's
+    // symptom), so every save would fail. Records are built by the real
+    // builders with every optional populated.
+    @Test func everyBuiltFieldMatchesTheSchema() throws {
+        let schema = try Self.parse(Self.schemaText())
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let records: [CKRecord] = [
+            try CloudRecordBuilder.record(for: SyncSettingsSnapshot(
+                disabledTypeRawValues: ["steps"], preferAppleWatch: true, updatedAt: now
+            )),
+            try CloudRecordBuilder.record(for: InsightPrefsSnapshot(
+                morningInsightsEnabled: true, lockScreenDetails: false, insightsViaCloud: true,
+                lastRun: now, updatedAt: now
+            )),
+            try CloudRecordBuilder.record(for: CoachTurnSnapshot(
+                turnID: "t1", role: "user", content: "hello", createdAt: now
+            )),
+        ]
+        for record in records {
+            #expect(
+                Self.declared(record) == Self.appFields(schema, record.recordType),
+                "\(record.recordType): builder vs CloudKit/schema.ckdb"
+            )
+        }
+    }
+
+    // catches: the schema and the privacy allowlist disagreeing, so a field
+    // the decoder rejects could be deployed (or an allowed one missing).
+    @Test func schemaFieldsAreExactlyTheAllowlists() throws {
+        let schema = try Self.parse(Self.schemaText())
+        for type in [CloudRecordType.settings, CloudRecordType.insightPrefs, CloudRecordType.coachTurn] {
+            #expect(Set(Self.appFields(schema, type).keys) == CloudRecordFields.allowlist(for: type), "\(type)")
+        }
+    }
+
+    // catches: the coach-history pull failing in Production. It queries
+    // every CoachTurn (TRUEPREDICATE), which CloudKit refuses unless
+    // recordName is Queryable.
+    @Test func coachTurnRecordNameIsQueryable() throws {
+        let schema = try Self.parse(Self.schemaText())
+        let recordID = schema[CloudRecordType.coachTurn]?["___recordID"] ?? ""
+        #expect(recordID.contains("QUERYABLE"))
+    }
+}
+
+@Suite("CloudSyncCopy")
+struct CloudSyncCopyTests {
+    // catches: account problems reported as generic rejections (or retried
+    // forever), and transient network failures surfaced as permanent.
+    @Test func classifiesCloudKitCodes() {
+        #expect(CloudSyncCopy.error(for: .notAuthenticated) == .failed(CloudSyncCopy.unavailable(code: CKError.Code.notAuthenticated.rawValue)))
+        #expect(CloudSyncCopy.error(for: .networkUnavailable) == .retryable("CloudKit error \(CKError.Code.networkUnavailable.rawValue)"))
+        #expect(CloudSyncCopy.error(for: .serverRejectedRequest) == .failed(CloudSyncCopy.rejected(code: CKError.Code.serverRejectedRequest.rawValue)))
+    }
+
+    // catches: CloudKit internals reaching the status line -- every surfaced
+    // message is our copy plus the data-safe line, whatever CloudKit said.
+    @Test func surfacedFailuresSayDataIsSafe() {
+        guard case .failed(let rejected) = CloudSyncCopy.error(for: .serverRejectedRequest) else {
+            Issue.record("expected a failure")
+            return
+        }
+        let message = CloudSyncCopy.surfaced(rejected)
+        #expect(message.hasSuffix(CloudSyncCopy.dataSafe))
+        #expect(CloudSyncCopy.retrying("CloudKit error 3").hasSuffix(CloudSyncCopy.dataSafe))
+    }
+}

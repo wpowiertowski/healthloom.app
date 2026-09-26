@@ -1090,6 +1090,30 @@ matrix; Today and onboarding references re-recorded and inspected.
 
 ---
 
+### WP-47 · CloudKit schema as code
+
+**Depends on:** the iCloud sync feature (PR #33) · **Decision:** architecture.md **D17**.
+
+TestFlight's iCloud sync failed on every save — `Cannot create new type SyncSettings in
+production schema` — because no schema had ever been deployed to the container's
+Production environment.
+
+**Steps:**
+1. `CloudKit/schema.ckdb`: the three record types (plus CloudKit's built-in `Users`),
+   field types taken from the builders, `CoachTurn.recordName` Queryable.
+2. `CloudKit/README.md`: management token, validate / import into Development, export and
+   diff, deploy to Production in Console (a person's click), drift check.
+3. `CloudSyncCopy`: the one definition of user-facing sync errors; CloudKit's raw
+   descriptions go to the unified log instead of the status line.
+4. **Human steps:** create the management token; after the import, deploy the schema to
+   Production; confirm "Synced" on a TestFlight build.
+
+**Tests:** built records match the schema field-for-field and type-for-type; the schema
+matches the privacy allowlists; `CoachTurn.recordName` is Queryable; CloudKit codes
+classify into account / retry / rejected; surfaced failures end with the data-safe line.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1108,6 +1132,7 @@ P5  WP-43      Readiness bars show magnitude ........... presence -> subscore
 P5  WP-44      HRV on the Today panel .................. hidden when absent
 P5  WP-45      Floating tab bar ........................ content always clears it
 P5  WP-46      Concrete fields + mockup detailing ...... colour per signal and activity
+P5  WP-47      CloudKit schema as code ................. Production schema deployed
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement
