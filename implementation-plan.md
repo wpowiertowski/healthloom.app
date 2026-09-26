@@ -1156,6 +1156,31 @@ changes; only `ChatTurn` saves wake the engine; the foreground gate is a minute.
 
 ---
 
+### WP-50 · Onboarding runs once
+
+**Depends on:** WP-10 (root router), the wipe flow (WP-35).
+
+Every cold launch went back through onboarding. `RootView` decided from the launch route
+alone (`.default` always started at Welcome), and finishing only flipped in-memory
+`@State`. `WipeCoordinator` already expected an "onboarding flag" to reset; none existed.
+
+**Steps:**
+1. `OnboardingCompletion`: one `UserDefaults` key in the app's standard domain, which
+   "Disconnect & wipe" removes whole, so a wipe (and only a wipe) brings onboarding back.
+2. `OnboardingCompletion.startsInApp(route:completion:)`: pure launch decision. Tab routes
+   start in the app; a `nil` completion (every `-UITest*` launch) leaves the route alone
+   to decide, so a flag from one UI test run can't skip another's onboarding; only the
+   `.default` route honours the flag.
+3. `RootView` marks completion in the flow's single exit, before showing the app.
+
+**Tests:** the launch-decision table (normal route before/after completion, persistence
+off, explicit onboarding route, tab routes) and a domain removal clearing the flag.
+End-to-end on the simulator with persistence forced on: finish onboarding, cold-launch
+with no arguments, land on Today; with the save line removed, the same launch shows
+Welcome.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1177,6 +1202,7 @@ P5  WP-46      Concrete fields + mockup detailing ...... colour per signal and a
 P5  WP-47      CloudKit schema as code ................. Production schema deployed
 P5  WP-48      Silkscreen labels spoken as written ..... CI-guarded
 P5  WP-49      iCloud sync timing ...................... changes sync in seconds
+P5  WP-50      Onboarding runs once .................... until a wipe
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement
