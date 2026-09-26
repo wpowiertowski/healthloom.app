@@ -5628,6 +5628,9 @@ Mutation-checked: retyping one field and dropping `QUERYABLE` each turn their te
 one issue apiece, while the untouched allowlist test stays green, so the parser reads
 every type.
 
-**Human steps remaining:** create the management token and save it with `cktool
-save-token`; import into Development (runbook step 2); deploy to Production in Console;
-confirm "Synced" on TestFlight.
+**Deployed 2026-09-26.** The owner saved the management token, imported the schema into
+Development and deployed it to Production in Console. Sync on the TestFlight build now
+succeeds. Verified with `cktool export-schema`: Production is byte-identical to
+`CloudKit/schema.ckdb`, Development equals Production (nothing undeployed), and
+`CoachTurn.___recordID` is `QUERYABLE` in Production. The runbook's drift check is a
+plain `diff` against an export.
