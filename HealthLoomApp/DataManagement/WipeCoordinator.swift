@@ -12,7 +12,8 @@
 // fourth (server records before local watermarks — round-6 item 1),
 // store files fifth (the open container is invalid afterwards — the UI
 // gates on completion and asks for relaunch), UserDefaults last (kills
-// the onboarding flag, so relaunch starts clean).
+// the onboarding flag -- `OnboardingCompletion`, WP-50 -- so relaunch
+// starts clean).
 //
 // `@Observable` drives the progress UI; every I/O boundary is an
 // injected closure (AGENTS.md §2), so the full wipe runs in tests against
@@ -206,7 +207,8 @@ final class WipeCoordinator {
             return "\(removed.count) file(s) removed"
         }
 
-        // 6. Defaults last (kills onboarding + toggles for the relaunch).
+        // 6. Defaults last (kills `OnboardingCompletion` + toggles for the
+        // relaunch).
         await perform(.defaults) {
             self.deps.resetDefaults()
             return "settings reset"

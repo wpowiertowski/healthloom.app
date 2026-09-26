@@ -11,33 +11,51 @@
 // initial tab, so `DashboardUITests`' seeded launches still find
 // `dashboard.syncNow` immediately, no test churn. A normal launch lands
 // on Today.
+//
+// WP-50: onboarding runs once. A normal launch starts in the app once
+// onboarding has finished on this install (`OnboardingCompletion`); a
+// wipe clears that and brings it back.
 
 import SwiftUI
 
 struct RootView: View {
     @State private var isOnboarded: Bool
     private let initialRoute: InitialRoute
+    /// `nil` when completion isn't persisted -- every `-UITest*` launch.
+    private let completion: OnboardingCompletion?
 
-    /// - Parameter initialRoute: `.default` runs onboarding-then-Today;
+    /// - Parameter initialRoute: `.default` runs onboarding-then-Today, or
+    ///   straight to Today once onboarding has finished (`completion`);
     ///   `.data`/`.coach`/… skip onboarding and land on the named tab
     ///   (UI-test launches only); `.onboardingGoogle` runs onboarding starting
     ///   at the Google consent step (skip-path UI test only).
-    init(initialRoute: InitialRoute = .default) {
-        _isOnboarded = State(initialValue: initialRoute.onboardingStep == nil)
+    /// - Parameter completion: the persisted "onboarding finished" flag, or
+    ///   `nil` to ignore it (see `OnboardingCompletion.startsInApp`).
+    init(initialRoute: InitialRoute = .default, completion: OnboardingCompletion? = nil) {
+        _isOnboarded = State(initialValue: OnboardingCompletion.startsInApp(route: initialRoute, completion: completion))
         self.initialRoute = initialRoute
+        self.completion = completion
     }
 
     var body: some View {
         if isOnboarded {
             HomeView(initialTab: initialRoute.homeTab)
         } else if let startStep = initialRoute.onboardingStep {
-            OnboardingFlowView(initialStep: startStep, onFinished: { isOnboarded = true })
+            OnboardingFlowView(initialStep: startStep, onFinished: finishOnboarding)
         } else {
-            // Unreachable: `isOnboarded` is true exactly when `onboardingStep` is
-            // nil (see `init`). Kept as the honest fallback rather than force-
-            // unwrapping — a future route mismatch onboards from Welcome.
-            OnboardingFlowView(onFinished: { isOnboarded = true })
+            // Unreachable: a route without an onboarding step always starts in
+            // the app (`OnboardingCompletion.startsInApp`). Kept as the honest
+            // fallback rather than force-unwrapping — a future route mismatch
+            // onboards from Welcome.
+            OnboardingFlowView(onFinished: finishOnboarding)
         }
+    }
+
+    /// The flow's single exit. Persist first, so a crash right after
+    /// finishing can't send the user back through onboarding.
+    private func finishOnboarding() {
+        completion?.markCompleted()
+        isOnboarded = true
     }
 }
 

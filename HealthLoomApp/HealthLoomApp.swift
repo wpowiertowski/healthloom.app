@@ -82,7 +82,12 @@ struct HealthLoomApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(initialRoute: appEnvironment.launchConfiguration.initialRoute)
+            // WP-50: onboarding runs once per install (until a wipe);
+            // UI-test launches neither read nor write the flag.
+            RootView(
+                initialRoute: appEnvironment.launchConfiguration.initialRoute,
+                completion: appEnvironment.launchConfiguration.isUITest ? nil : OnboardingCompletion()
+            )
                 .environment(appEnvironment)
                 .modelContainer(appEnvironment.modelContainer)
         }

@@ -5697,3 +5697,43 @@ covering every exit, and at worst causes one redundant, no-op sync. Other rules:
 **Mutation-checked.** Four mutants (debounce not cancelling, fingerprint check removed,
 no follow-up after a mid-sync change, flush not cancelling the timer) each fail exactly
 their test and no other.
+
+## WP-50 · Onboarding runs once (branch `onboarding-once`, stacked on WP-49's `cloud-sync-timing`)
+
+**Bug (owner report).** Every cold launch went back through onboarding. `RootView`
+decided from the launch route alone (`.default` always mapped to `.welcome`), and
+finishing only flipped in-memory `@State`. `WipeCoordinator` already said its defaults
+reset "kills the onboarding flag", but no flag existed. Stacked on WP-49 at the owner's
+request, to keep the merge simple.
+
+**Fix.**
+- **The flag:** `OnboardingCompletion`, one key in the app's standard `UserDefaults`
+  domain. "Disconnect & wipe" removes that whole domain, so a wipe (and only a wipe)
+  brings onboarding back.
+- **The decision:** `OnboardingCompletion.startsInApp(route:completion:)` is pure. Tab
+  routes start in the app. Completion is an *optional* store, and `nil` for every
+  `-UITest*` launch, so a flag left in the simulator by one UI test run can't skip
+  another's onboarding; the route alone decides. Only the `.default` route honours the
+  flag.
+- **Saving it:** `RootView` marks completion in the flow's single exit, before showing
+  the app.
+- **Side effect:** installs that onboarded before this build see onboarding once more,
+  because no flag exists yet to read. No inference from other state.
+
+**Tests.** 5 new (320 total). Catches:
+- the flag not honoured on a normal launch;
+- a leftover flag leaking into UI test runs;
+- an explicit onboarding route being bypassed;
+- tab routes requiring onboarding;
+- the flag moving somewhere a wipe doesn't reach (domain removal must clear it).
+
+Resolver mutants (flag ignored; explicit route honouring the flag) each fail their test.
+The first attempt of the flag-ignored mutant didn't compile (unused binding under
+warnings-as-errors), so it was re-run as a compiling mutant.
+
+**End-to-end probe** (temporary, reverted), on the simulator with persistence forced on:
+finish onboarding via the skip-Google route, then cold-launch with no arguments. The
+real code lands on Today; with the save line removed, the same launch shows Welcome.
+The first run of the negative control passed wrongly: `simctl spawn … defaults delete`
+edits the simulator's global defaults, not the app container's, so the first run's flag
+survived. Uninstalling the app between runs is the real reset.
