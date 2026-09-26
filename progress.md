@@ -5578,19 +5578,17 @@ New Activities snapshot matrix (6). Today references re-recorded and inspected. 
 Dashboard and Welcome references were unchanged, legitimately: neither renders a panel
 or badge.
 
-**CI: the CodeQL "Bad CPU type" flake became deterministic.** On PR #53, `Analyze (swift,
-actions)` failed identically twice: under the CodeQL tracer
-(`DYLD_INSERT_LIBRARIES=libtrace.dylib`), SwiftPM's spawn of `/usr/bin/sandbox-exec`
-returns EBADARCH for all five local packages before anything compiles. It had been an
-occasional flake (PR #51, cleared on re-run).
+**CI: CodeQL suspended (owner decision).** On PR #53, `Analyze (swift, actions)` failed
+on every run. Under the CodeQL tracer (`DYLD_INSERT_LIBRARIES=libtrace.dylib`), macOS
+refuses to launch the system binaries the Swift build spawns, with "posix_spawn error:
+Bad CPU type in executable (86)": `/usr/bin/sandbox-exec` (SwiftPM manifests, all five
+local packages), and with the manifest sandbox off, `swift-plugin-server`
+(SwiftData's `@Model`). It had been an occasional flake on PR #51. What was ruled out:
+- **CodeQL version:** 2.27.0, green on image 20260912, fails identically on 20260921.
+- **Our code:** probe PR #54 (main plus a comment) fails identically.
 
-First attempt: resolve packages untraced, then build explicitly with SwiftPM's manifest
-sandbox off. That got past resolution, and the next spawned system binary,
-`swift-plugin-server` (needed for SwiftData's `@Model`), failed the same way. The tracer
-can't inject into these children at all, so the change was reverted.
-
-Between the last green run and the failures, the CodeQL bundle moved 2.27.0 → 2.27.1
-(released 09-22) and the runner image moved 20260912 → 20260921. 2.27.1's changelog
-names no tracer change. The workflow is now the exact last-green configuration with
-`tools:` pinned to the 2.27.0 bundle, which isolates the image as the only other
-variable. The pin carries its unpin condition inline.
+The runner image update (`xcode-27-arm64` 20260912 → 20260921.0210.1) is the remaining
+variable, inferred by elimination, and an image version can't be pinned. The workflow is
+restored to its original form with automatic triggers suspended (`workflow_dispatch`
+only). The header records how to re-test and restore. The CI app job builds and tests the
+same code on the same image, without the tracer, and passes.
