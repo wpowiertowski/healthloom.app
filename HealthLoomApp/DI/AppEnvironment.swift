@@ -82,6 +82,9 @@ final class AppEnvironment {
     /// reporting success while discarding the session.
     let isStoreEphemeral: Bool
     let cloudSync: CloudSyncEngine
+    /// WP-49: requests a sync when app-owned data changes. Started by the
+    /// app on activation, never under `-UITest*`.
+    let cloudSyncMonitor: CloudSyncChangeMonitor
 
     /// Last foreground reconcile (round-10 item 7): mirrors
     /// `BackgroundSyncConfiguration.minInterval` — every foreground
@@ -94,10 +97,14 @@ final class AppEnvironment {
 
     /// Pure gate for the foreground trigger (unit-pinned; the call
     /// site stamps via `noteForegroundReconcile`).
+    /// WP-49: the interval is `CloudSyncEngine.foregroundMinInterval`
+    /// (a minute). This gate guards only the iCloud sync; it used to borrow
+    /// the 15-minute background-planner interval, which hid another
+    /// device's changes for up to 15 minutes.
     nonisolated static func foregroundReconcileDue(
         now: Date,
         last: Date?,
-        minInterval: TimeInterval = BackgroundSyncConfiguration().minInterval
+        minInterval: TimeInterval = CloudSyncEngine.foregroundMinInterval
     ) -> Bool {
         guard let last else { return true }
         return now.timeIntervalSince(last) >= minInterval
@@ -291,6 +298,7 @@ final class AppEnvironment {
             database: LiveCloudDatabase(),
             isQuiesced: { WipeQuiesce.isLatched }
         )
+        self.cloudSyncMonitor = CloudSyncChangeMonitor(engine: cloudSync)
         InsightRunnerHost.quiesceCheck = { WipeQuiesce.isLatched }
         self.healthKitAuth = HealthKitAuth()
 

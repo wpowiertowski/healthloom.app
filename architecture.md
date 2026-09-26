@@ -446,8 +446,18 @@ Records live in the default zone: `SyncSettings` and `InsightPrefs` are singleto
 last-sync-wins resolution against a seen-watermark (server `modificationDate` ordering);
 `CoachTurn` is append-only and saved if absent, so it needs no resolution. No account →
 silent local-only; transient failures set a retry flag; local state is always the source
-of truth, so a failed sync loses nothing. Sync runs on foreground (15-minute gate) and on
-Settings → Sync Now; there are no push subscriptions yet.
+of truth, so a failed sync loses nothing.
+
+**When it syncs (WP-49).** A local change syncs about 5 seconds after the last edit:
+`CloudSyncChangeMonitor` watches where the synced data lives (`UserDefaults` for settings
+and insight preferences, SwiftData saves touching `ChatTurn`), the engine compares a
+fingerprint of the synced fields with what the last sync saw, and only a real change
+requests a debounced sync. A change during a sync queues one more; a change still waiting
+when the app backgrounds syncs at once under a background-task assertion. Foreground
+activation syncs at most once a minute (`CloudSyncEngine.foregroundMinInterval`), plus
+Settings → Sync Now. There are no push subscriptions, so an app already open on another
+device sees the change at its next foreground; real-time delivery needs a custom zone
+(`CKSyncEngine`) and is a separate decision. None of this runs under `-UITest*`.
 
 **The server schema is code** (WP-47): `CloudKit/schema.ckdb` is its one definition,
 imported into Development with `cktool` and deployed to Production by a person in

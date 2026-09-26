@@ -255,6 +255,21 @@ nonisolated enum CloudSyncCopy {
     }
 }
 
+/// The synced local state, minus the `updatedAt` stamps a snapshot takes
+/// at read time: two reads of unchanged state compare equal. Split so a
+/// defaults change never costs a store fetch and a chat save never
+/// re-reads preferences.
+nonisolated enum CloudSyncFingerprint {
+    struct Preferences: Equatable, Sendable {
+        var disabledTypeRawValues: [String]
+        var preferAppleWatch: Bool
+        var morningInsightsEnabled: Bool
+        var lockScreenDetails: Bool
+        var insightsViaCloud: Bool
+        var lastRun: Date?
+    }
+}
+
 /// What Settings shows. `pending` is 0 or 1 (a retry is owed, not
 /// an op count — see the retry-flag note above); `failed` carries the
 /// surfaced message. Local data is never at risk in any of these states
@@ -309,12 +324,40 @@ final class CloudSyncEngine {
     /// script it without touching the process-wide latch.
     private let isQuiesced: () -> Bool
 
+    // MARK: WP-49: sync soon after a local change
+
+    /// How long a local change waits before it syncs. Rapid edits (a run
+    /// of toggles) coalesce into one sync; each new change restarts it.
+    nonisolated static let changeDebounce: Duration = .seconds(5)
+
+    /// Minimum gap between foreground-activation syncs. Only the iCloud
+    /// sync sits behind this gate, and a sync with nothing to push is two
+    /// record fetches plus the turn query, so a minute is cheap. It used
+    /// to share the 15-minute background-planner interval, which left a
+    /// change made on another device invisible here for up to 15 minutes.
+    nonisolated static let foregroundMinInterval: TimeInterval = 60
+
+    /// The sleeper seam (AGENTS.md §2: clock and sleeper are I/O
+    /// boundaries), so tests drive the debounce without waiting.
+    private let sleep: @Sendable (Duration) async throws -> Void
+    private let debounce: Duration
+    private var debounceTask: Task<Void, Never>?
+    /// A change arrived while a sync was running. That sync may already
+    /// have read the old state, so one more runs after it.
+    private var resyncRequested = false
+    /// What the last completed sync saw locally, per part. A change is
+    /// only real when the current fingerprint differs from this.
+    private var syncedPrefsFingerprint: CloudSyncFingerprint.Preferences?
+    private var syncedTurnCount: Int?
+
     init(
         container: ModelContainer,
         defaults: UserDefaults = .standard,
         database: any CloudDatabase,
         now: @escaping () -> Date = Date.init,
-        isQuiesced: @escaping () -> Bool = { false }
+        isQuiesced: @escaping () -> Bool = { false },
+        debounce: Duration = CloudSyncEngine.changeDebounce,
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.container = container
         self.defaults = defaults
@@ -323,6 +366,8 @@ final class CloudSyncEngine {
         self.syncPreferences = SyncPreferences(defaults: defaults)
         self.insightPrefs = InsightPreferences(defaults: defaults)
         self.isQuiesced = isQuiesced
+        self.debounce = debounce
+        self.sleep = sleep
         let pending = retryPending ? 1 : 0
         if pending > 0 {
             self.status = .synced(at: lastSync, pending: pending)
@@ -347,6 +392,10 @@ final class CloudSyncEngine {
         // named TOCTOU shape).
         guard status != .syncing else { return }
         status = .syncing
+        // WP-49: every path out of a sync this call claimed — success,
+        // failure, no account, undetermined — records the baseline and
+        // honours a change that arrived meanwhile.
+        defer { finishSync() }
         switch await database.accountState() {
         case .noAccount:
             status = .localOnly
@@ -379,6 +428,106 @@ final class CloudSyncEngine {
             // one — no cast (the compiler proves it).
             handle(error)
         }
+    }
+
+    /// The baseline is what this sync left behind locally — including
+    /// anything it just pulled — so the pull's own writes don't read as a
+    /// new local change afterwards.
+    private func finishSync() {
+        syncedPrefsFingerprint = preferencesFingerprint()
+        syncedTurnCount = turnCount()
+        if resyncRequested {
+            resyncRequested = false
+            requestSync()
+        }
+    }
+
+    // MARK: - WP-49: change-triggered sync
+
+    /// Asks for a sync soon: after `debounce` with no further request.
+    /// Called by `CloudSyncChangeMonitor` when app-owned data changed.
+    /// Safe to call at any rate; each call restarts the wait.
+    func requestSync() {
+        guard !isQuiesced() else { return }
+        debounceTask?.cancel()
+        debounceTask = Task { [weak self, sleep, debounce] in
+            do {
+                try await sleep(debounce)
+            } catch {
+                return // cancelled by a newer request or a flush
+            }
+            await self?.runRequestedSync()
+        }
+    }
+
+    /// True while a change is waiting out its debounce.
+    var hasPendingSync: Bool { debounceTask != nil }
+
+    /// Runs a waiting sync now instead of after the debounce. The app
+    /// calls this on entering the background, where a pending timer might
+    /// never fire.
+    func flushPendingSync() async {
+        guard let task = debounceTask else { return }
+        task.cancel()
+        debounceTask = nil
+        await syncNow()
+    }
+
+    private func runRequestedSync() async {
+        debounceTask = nil
+        guard status != .syncing else {
+            resyncRequested = true
+            return
+        }
+        await syncNow()
+    }
+
+    /// Preferences changed in `UserDefaults`. Cheap first: only the
+    /// defaults-backed fields are read (no store fetch), and nothing is
+    /// requested unless they differ from what the last sync saw — the
+    /// engine's own watermark writes land in `UserDefaults` too.
+    func noteLocalPreferencesChange() {
+        guard !isQuiesced() else { return }
+        let current = preferencesFingerprint()
+        guard current != syncedPrefsFingerprint else { return }
+        if status == .syncing {
+            resyncRequested = true
+            return
+        }
+        syncedPrefsFingerprint = current
+        requestSync()
+    }
+
+    /// A save touched `ChatTurn` (the monitor filters by entity first).
+    func noteLocalTurnsChange() {
+        guard !isQuiesced() else { return }
+        let current = turnCount()
+        guard current != syncedTurnCount else { return }
+        if status == .syncing {
+            resyncRequested = true
+            return
+        }
+        syncedTurnCount = current
+        requestSync()
+    }
+
+    private func preferencesFingerprint() -> CloudSyncFingerprint.Preferences {
+        syncPreferences.reload()
+        insightPrefs.reload()
+        let settings = readSettings()
+        let prefs = readPrefs()
+        return CloudSyncFingerprint.Preferences(
+            disabledTypeRawValues: settings.disabledTypeRawValues,
+            preferAppleWatch: settings.preferAppleWatch,
+            morningInsightsEnabled: prefs.morningInsightsEnabled,
+            lockScreenDetails: prefs.lockScreenDetails,
+            insightsViaCloud: prefs.insightsViaCloud,
+            lastRun: prefs.lastRun
+        )
+    }
+
+    private func turnCount() -> Int? {
+        try? ModelContext(container).fetchCount(FetchDescriptor<ChatTurn>())
     }
 
     // MARK: - Push
