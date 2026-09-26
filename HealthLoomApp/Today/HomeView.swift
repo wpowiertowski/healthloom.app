@@ -1,5 +1,7 @@
 // HomeView.swift
 //
+// (CI probe: comment-only change, not for merge.)
+//
 // WP-33 (implementation-plan.md) / architecture.md D12: the app shell --
 // the Yacht club tab bar from the mockup
 // (`Design/HealthLoomTodayView-YachtClub.swift`'s `TabBar`), hosting the
