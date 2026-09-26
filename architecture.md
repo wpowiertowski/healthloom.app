@@ -319,7 +319,10 @@ not silkscreen. Sizes follow one geometric ladder, ratio 1.25 anchored at 9.5 pt
 half point; 46 is rung 7 (45.3) rounded up, as the locked mockup sets it, and rung 6 (≈36)
 is unused. The Yacht club build had drifted to 17 ad-hoc sizes against no stated system.
 D12's two production deviations still bind: Dynamic Type scaling via `relativeTo:`, and a
-dark-palette variant.
+dark-palette variant. Uppercase silkscreen is display-only: it goes through
+`SilkscreenText`, which shows the string uppercase and keeps the accessibility label as
+written, because `.textCase(.uppercase)` rewrites the label too and VoiceOver would read
+it shouted (WP-46, WP-48). A CI source guard rejects the other spellings.
 
 **D16.4 — A control label repeated on every row is noise, not a label.** When the same
 control appears once per item, its visible label says nothing about *that* item while

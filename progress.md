@@ -5634,3 +5634,22 @@ succeeds. Verified with `cktool export-schema`: Production is byte-identical to
 `CloudKit/schema.ckdb`, Development equals Production (nothing undeployed), and
 `CoachTurn.___recordID` is `QUERYABLE` in Production. The runbook's drift check is a
 plain `diff` against an export.
+
+## WP-48 · Silkscreen labels spoken as written (branch `voiceover-silkscreen` from main 2793fdc)
+
+WP-46 found that `.textCase(.uppercase)` rewrites accessibility labels and added
+`SilkscreenText`, but left the older uppercase labels as they were. All seven now use it:
+- the "Readiness" kicker (`.textCase`);
+- `ThemedSectionHeader` and `ThemedCallout` titles (`title.uppercased()` as display *and*
+  label);
+- the hard-coded "TODAY", "MORE METRICS", "COACH" and "COULDN'T CONTINUE" labels.
+
+They look the same and are spoken in sentence case, so short all-caps tokens are no
+longer at risk of being spelled out. No UI test read any of these labels.
+
+**Kept fixed structurally.** A new CI launch-guard step rejects `.textCase(.uppercase)`,
+`Text(….uppercased())` and all-caps `Text("…")` literals in `HealthLoomApp`, excluding
+comment lines. It asserts its scope dir exists and fails on grep errors, the same
+non-vacuous pattern as the other guards. The step's script was extracted from the YAML
+and run locally: clean tree passes, and each of the three forms, planted in turn, is
+caught and named. D16.3 records the rule.

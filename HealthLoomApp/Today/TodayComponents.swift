@@ -89,10 +89,9 @@ struct HeroInstrument: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Readiness")
+            SilkscreenText("Readiness")
                 .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2))
                 .tracking(1.4)
-                .textCase(.uppercase)
                 .foregroundStyle(Theme.secondary)
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 14) {
@@ -533,7 +532,7 @@ struct CoachPanel: View {
     private var panelContent: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("COACH")
+                SilkscreenText("Coach")
                     .font(Theme.mono(Theme.Step.micro, .semibold, relativeTo: .caption2)).tracking(0.6)
                     .foregroundStyle(Theme.accentDeep)
                 Text(insightText ?? "Your daily insight will appear here once the on-device coach arrives.")

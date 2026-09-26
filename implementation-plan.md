@@ -1114,6 +1114,24 @@ classify into account / retry / rejected; surfaced failures end with the data-sa
 
 ---
 
+### WP-48 · Silkscreen labels spoken as written
+
+**Depends on:** WP-46 · **Decision:** architecture.md **D16.3**.
+
+WP-46 introduced `SilkscreenText` but left the older uppercase labels as they were.
+
+**Steps:**
+1. The "Readiness" kicker, `ThemedSectionHeader`, `ThemedCallout` titles, and the
+   hard-coded "TODAY", "MORE METRICS", "COACH" and "COULDN'T CONTINUE" labels move to
+   `SilkscreenText`. They look the same and are now spoken in sentence case.
+2. A CI launch-guard step rejects `.textCase(.uppercase)`, `Text(….uppercased())` and
+   all-caps `Text("…")` literals in app sources.
+
+**Tests:** snapshots unchanged (identical glyphs). The guard was run locally on the clean
+tree and against three planted violations, one per form, each caught.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1133,6 +1151,7 @@ P5  WP-44      HRV on the Today panel .................. hidden when absent
 P5  WP-45      Floating tab bar ........................ content always clears it
 P5  WP-46      Concrete fields + mockup detailing ...... colour per signal and activity
 P5  WP-47      CloudKit schema as code ................. Production schema deployed
+P5  WP-48      Silkscreen labels spoken as written ..... CI-guarded
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

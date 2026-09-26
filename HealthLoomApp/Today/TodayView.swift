@@ -92,7 +92,7 @@ struct TodayView: View {
                 Rectangle().fill(Theme.border).frame(height: 1).padding(.top, 22)
 
                 HStack(alignment: .firstTextBaseline) {
-                    Text("TODAY")
+                    SilkscreenText("Today")
                         .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
                         .foregroundStyle(Theme.secondary)
                     Spacer()
@@ -126,7 +126,7 @@ struct TodayView: View {
                 )
 
                 if isEditing, !preferences.hiddenKinds.isEmpty {
-                    Text("MORE METRICS")
+                    SilkscreenText("More metrics")
                         .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
                         .foregroundStyle(Theme.secondary)
                         .padding(.top, 16).padding(.bottom, 8)
