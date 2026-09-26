@@ -39,6 +39,7 @@ import CoreModel
 import SyncKit
 import Foundation
 import Observation
+import OSLog
 import SwiftData
 
 /// Container this feature uses. Must ALSO be ticked on the App ID in the
@@ -186,20 +187,70 @@ nonisolated struct LiveCloudDatabase: CloudDatabase {
         }
     }
 
+    /// CloudKit's own descriptions never reach the screen: they name record
+    /// IDs and zone owners ("Error saving record <CKRecordID: 0x7a3…>;
+    /// recordName=app-settings, zoneID=_defaultZone:__defaultOwner__>" --
+    /// what TestFlight showed before WP-47). They go to the unified log;
+    /// the user gets `CloudSyncCopy`, which keeps the code for diagnosis.
     private func mapError(_ error: Error) -> CloudSyncError {
         guard let ck = error as? CKError else {
-            return .failed(error.localizedDescription)
+            CloudSyncLog.logger.error("iCloud sync failed: \(error.localizedDescription, privacy: .private)")
+            return .failed(CloudSyncCopy.unexpected)
         }
-        switch ck.code {
+        CloudSyncLog.logger.error(
+            "CloudKit error \(ck.code.rawValue, privacy: .public): \(ck.localizedDescription, privacy: .private)"
+        )
+        return CloudSyncCopy.error(for: ck.code)
+    }
+}
+
+/// Where the live adapter's raw CloudKit errors go. The description is
+/// `.private` (visible to a developer attached to the device, redacted in
+/// shared logs) because it can carry record names; the code is public.
+nonisolated enum CloudSyncLog {
+    static let logger = Logger(subsystem: "app.healthloom", category: "cloudsync")
+}
+
+/// iCloud sync copy, one definition each (tests assert which one, never
+/// the text). Every failure the user sees says their data is safe, because
+/// it is: the local store is the source of truth.
+nonisolated enum CloudSyncCopy {
+    static let dataSafe = "Your data is safe on this device."
+    static let unexpected = "iCloud sync failed unexpectedly."
+
+    static func unavailable(code: Int) -> String {
+        "iCloud account or container unavailable (CloudKit error \(code))."
+    }
+
+    /// Everything CloudKit refuses that isn't account or network -- among
+    /// them "Cannot create new type … in production schema" before the
+    /// schema is deployed (CloudKit/README.md).
+    static func rejected(code: Int) -> String {
+        "iCloud didn't accept the sync (CloudKit error \(code))."
+    }
+
+    static func retrying(_ detail: String) -> String {
+        "iCloud unreachable — will retry (\(detail)). \(dataSafe)"
+    }
+
+    static func surfaced(_ message: String) -> String {
+        "\(message) \(dataSafe)"
+    }
+
+    /// Pure classification of a CloudKit code, so it's testable without
+    /// CloudKit. Account and permission problems name the cause; transient
+    /// ones retry; the rest are surfaced with their code.
+    static func error(for code: CKError.Code) -> CloudSyncError {
+        switch code {
         case .notAuthenticated, .permissionFailure:
             // Includes the portal-tick-missing case (container unknown to
-            // the account): local-only, with a message naming the cause.
-            return .failed("iCloud account or container unavailable (\(ck.code.rawValue)).")
+            // the account).
+            return .failed(unavailable(code: code.rawValue))
         case .networkFailure, .networkUnavailable, .serviceUnavailable,
              .requestRateLimited, .zoneBusy, .operationCancelled:
-            return .retryable(ck.localizedDescription)
+            return .retryable("CloudKit error \(code.rawValue)")
         default:
-            return .failed(ck.localizedDescription)
+            return .failed(rejected(code: code.rawValue))
         }
     }
 }
@@ -951,9 +1002,9 @@ final class CloudSyncEngine {
             status = .localOnly
         case .retryable(let message):
             retryPending = true
-            status = .failed(message: "iCloud unreachable — will retry. \(message)")
+            status = .failed(message: CloudSyncCopy.retrying(message))
         case .failed(let message):
-            status = .failed(message: message)
+            status = .failed(message: CloudSyncCopy.surfaced(message))
         case .rejectedFields, .unknownRecordType, .newerSchema, .missingField:
             // Structural: retrying cannot help, and the local store is
             // untouched — surface, don't queue.

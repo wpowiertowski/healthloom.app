@@ -431,6 +431,35 @@ workout actually recorded — distance, average heart rate, pool or open water �
 from the workout's own statistics and metadata, never shown as zero when absent. The
 mockup's Activities filter button is not built: there is no filter behind it.
 
+**D17 — iCloud sync: private database, app-owned data only, schema as code.** Settings,
+insight preferences and coach history sync through CloudKit's **private** database in
+container `iCloud.app.healthloom` — the user's own iCloud, no app server. HealthKit-sourced
+values never cross: builders accept app-owned snapshots only, and every record type has a
+field allowlist the encoder and decoder both enforce (`CloudRecordFields`). Both SwiftData
+stores set `cloudKitDatabase: .none`, so all CloudKit traffic goes through
+`CloudSyncEngine`.
+
+Records live in the default zone: `SyncSettings` and `InsightPrefs` are singletons with
+last-sync-wins resolution against a seen-watermark (server `modificationDate` ordering);
+`CoachTurn` is append-only and saved if absent, so it needs no resolution. No account →
+silent local-only; transient failures set a retry flag; local state is always the source
+of truth, so a failed sync loses nothing. Sync runs on foreground (15-minute gate) and on
+Settings → Sync Now; there are no push subscriptions yet.
+
+**The server schema is code** (WP-47): `CloudKit/schema.ckdb` is its one definition,
+imported into Development with `cktool` and deployed to Production by a person in
+CloudKit Console (runbook: `CloudKit/README.md`). Production never creates types on its
+own — before the first deploy every TestFlight save failed — and a deployed schema is
+additive-only, so the file changes like a one-way door. `CloudKitSchemaTests` builds real
+records with the app's builders and requires every field's name and type to match the
+file, the file to match the allowlists, and `CoachTurn.recordName` to be Queryable (the
+history pull queries every turn).
+
+**User-facing errors never carry CloudKit's own text**, which names record IDs and zones.
+`CloudSyncCopy` is the one definition of what Settings says — cause, CloudKit error code,
+and that local data is safe — and the raw description goes to the unified log
+(`app.healthloom` / `cloudsync`, description `.private`).
+
 ## 5. Data flow summaries
 
 **Sync (incremental):** trigger (foreground / BGAppRefresh / manual) → `SyncEngine.sync(type)`

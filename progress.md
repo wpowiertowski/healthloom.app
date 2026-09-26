@@ -5592,3 +5592,45 @@ variable, inferred by elimination, and an image version can't be pinned. The wor
 restored to its original form with automatic triggers suspended (`workflow_dispatch`
 only). The header records how to re-test and restore. The CI app job builds and tests the
 same code on the same image, without the tracer, and passes.
+
+## WP-47 · CloudKit schema as code (branch `cloudkit-schema` from main ee32f4d)
+
+TestFlight's Settings → iCloud Sync showed "Sync needs attention" with CloudKit's raw text:
+`Error saving record <CKRecordID: 0x7a3bdbc4c0; recordName=app-settings,
+zoneID=_defaultZone:__defaultOwner__> to server: Cannot create new type SyncSettings in
+production schema`. The container, entitlement and account all worked — the app reached
+Production and tried to save — but no schema had ever been deployed there, and Production
+never creates types on its own. D17 now documents the sync design, which had no
+architecture decision.
+
+**Schema as code.** `CloudKit/schema.ckdb` defines the three record types (plus CloudKit's
+built-in `Users`), with types read from the builders (dates → TIMESTAMP, 0/1 flags → INT64,
+the disabled-types list → LIST<STRING>) and `CoachTurn.recordName` Queryable for the
+history pull. `CloudKit/README.md` is the runbook: management token, validate and import
+into Development, export and diff, then deploy to Production in Console, left as a
+person's click because a deployed schema is additive-only. `cktool`'s flags were checked
+against its `--help`.
+
+**Error copy.** `CloudSyncCopy` is the one definition of what Settings shows: cause,
+CloudKit error code, and "Your data is safe on this device." CloudKit's descriptions go to
+the unified log (`app.healthloom` / `cloudsync`, description `.private`). Classification
+is a pure function over `CKError.Code`, so it's tested without CloudKit.
+
+**Tests.** 5 new unit tests (308 total), plus two existing status tests tightened to assert
+which copy. Catches:
+- a builder field or type the schema lacks;
+- the schema disagreeing with the privacy allowlists;
+- `CoachTurn.recordName` not Queryable;
+- CloudKit codes misclassified;
+- a surfaced failure without the data-safe line.
+
+Mutation-checked: retyping one field and dropping `QUERYABLE` each turn their test red,
+one issue apiece, while the untouched allowlist test stays green, so the parser reads
+every type.
+
+**Deployed 2026-09-26.** The owner saved the management token, imported the schema into
+Development and deployed it to Production in Console. Sync on the TestFlight build now
+succeeds. Verified with `cktool export-schema`: Production is byte-identical to
+`CloudKit/schema.ckdb`, Development equals Production (nothing undeployed), and
+`CoachTurn.___recordID` is `QUERYABLE` in Production. The runbook's drift check is a
+plain `diff` against an export.
