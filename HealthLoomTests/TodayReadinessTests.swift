@@ -247,3 +247,19 @@ struct CurrentMorningInsightTests {
         #expect(!TodayView.isCurrentMorningInsight(foreign, now: now, calendar: calendar))
     }
 }
+
+// MARK: - WP-46 / D16.8: signal fields
+
+@Suite("SignalIndex fields")
+struct SignalIndexFieldTests {
+    // catches: two signals sharing a concrete field, so their bars can't be
+    // told apart, or a remap away from the locked mockup's assignment.
+    @Test func eachSignalHasTheMockupsField() {
+        #expect(SignalIndex.field(.sleep) == .slate)
+        #expect(SignalIndex.field(.hrv) == .rust)
+        #expect(SignalIndex.field(.restingHR) == .ochre)
+        #expect(SignalIndex.field(.strain) == .sky)
+        let fields = ReadinessSignal.allCases.map(SignalIndex.field)
+        #expect(Set(fields).count == ReadinessSignal.allCases.count)
+    }
+}

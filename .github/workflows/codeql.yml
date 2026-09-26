@@ -21,18 +21,28 @@
 
 name: CodeQL
 
+# SUSPENDED 2026-09-26 (owner decision, PR #53): manual runs only.
+#
+# On the xcode-27-arm64 image 20260921.0210.1, the Swift autobuild fails
+# before compiling anything: under CodeQL's tracer
+# (DYLD_INSERT_LIBRARIES=libtrace.dylib) macOS refuses to launch the
+# system binaries the build spawns -- /usr/bin/sandbox-exec for SwiftPM
+# manifests, swift-plugin-server for macros -- with "posix_spawn error:
+# Bad CPU type in executable (86)". Ruled out: our code (PR #54, main plus
+# a comment, fails identically) and the CodeQL version (2.27.0, green on
+# image 20260912, fails identically on 20260921). The image update is the
+# remaining variable, and a runner image version can't be pinned.
+#
+# To RESTORE: run this workflow by hand (Actions -> CodeQL -> Run
+# workflow). Once Analyze passes, put back the triggers below and delete
+# this note.
+#
+#   push:         branches [main], paths-ignore '**/*.md'
+#   pull_request: branches [main], paths-ignore '**/*.md'
+#   schedule:     cron '0 6 * * 1'  (weekly, the default-setup cadence)
+
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-  schedule:
-    # Weekly, matching the default-setup cadence this replaces.
-    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read

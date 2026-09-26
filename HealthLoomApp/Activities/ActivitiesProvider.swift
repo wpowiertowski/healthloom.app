@@ -60,36 +60,70 @@ final class ActivitiesProvider {
             // resolver's copy is the load-bearing one.
             let isAppleWatch = (workout.sourceRevision.productType?.hasPrefix("Watch") ?? false)
                 || (workout.device?.model.map { $0.contains("Watch") } ?? false)
+            let kind = Self.kind(workout.workoutActivityType)
             return WorkoutSummary(
                 uuid: workout.uuid,
-                activityName: Self.activityName(workout.workoutActivityType),
+                activityName: kind.name,
+                family: kind.family,
                 start: workout.startDate,
                 end: workout.endDate,
                 sourceName: workout.sourceRevision.source.name,
                 isHealthLoomImport: isHealthLoomImport,
-                isAppleWatch: isAppleWatch
+                isAppleWatch: isAppleWatch,
+                distanceMeters: Self.distanceMeters(workout),
+                averageHeartRate: workout.statistics(for: HKQuantityType(.heartRate))?
+                    .averageQuantity()?
+                    .doubleValue(for: .count().unitDivided(by: .minute())),
+                swimLocation: Self.swimLocation(workout)
             )
         }
     }
 
-    /// Display names for the activity types this app itself maps
+    /// Display name and family for the activity types this app itself maps
     /// (TypeMapper's WP-12 table) plus a generic default -- deliberately not
-    /// an exhaustive ~80-case `HKWorkoutActivityType` catalog.
-    private static func activityName(_ type: HKWorkoutActivityType) -> String {
+    /// an exhaustive ~80-case `HKWorkoutActivityType` catalog. Name and
+    /// family come from ONE switch so they can't disagree.
+    private static func kind(_ type: HKWorkoutActivityType) -> (name: String, family: ActivityFamily) {
         switch type {
-        case .running: return "Run"
-        case .walking: return "Walk"
-        case .cycling: return "Ride"
-        case .swimming: return "Swim"
-        case .hiking: return "Hike"
-        case .traditionalStrengthTraining: return "Strength Training"
-        case .yoga: return "Yoga"
-        case .elliptical: return "Elliptical"
-        case .rowing: return "Rowing"
-        case .highIntensityIntervalTraining: return "HIIT"
-        case .stairClimbing: return "Stair Climbing"
-        case .coreTraining: return "Core Training"
-        default: return "Workout"
+        case .running: return ("Run", .onFoot)
+        case .walking: return ("Walk", .onFoot)
+        case .hiking: return ("Hike", .onFoot)
+        case .swimming: return ("Swim", .water)
+        case .cycling: return ("Ride", .endurance)
+        case .rowing: return ("Rowing", .endurance)
+        case .elliptical: return ("Elliptical", .endurance)
+        case .stairClimbing: return ("Stair Climbing", .endurance)
+        case .traditionalStrengthTraining: return ("Strength Training", .training)
+        case .yoga: return ("Yoga", .training)
+        case .highIntensityIntervalTraining: return ("HIIT", .training)
+        case .coreTraining: return ("Core Training", .training)
+        default: return ("Workout", .training)
+        }
+    }
+
+    /// The workout's own recorded distance, whichever distance type it
+    /// logged (a run logs walking+running, a swim swimming, ...). Nil when
+    /// it recorded none -- the badge is omitted, never shown as 0.
+    private static func distanceMeters(_ workout: HKWorkout) -> Double? {
+        let types: [HKQuantityTypeIdentifier] = [
+            .distanceWalkingRunning, .distanceSwimming, .distanceCycling, .distanceRowing,
+        ]
+        for identifier in types {
+            if let sum = workout.statistics(for: HKQuantityType(identifier))?.sumQuantity() {
+                return sum.doubleValue(for: .meter())
+            }
+        }
+        return nil
+    }
+
+    private static func swimLocation(_ workout: HKWorkout) -> SwimLocation? {
+        guard let raw = workout.metadata?[HKMetadataKeySwimmingLocationType] as? NSNumber,
+              let location = HKWorkoutSwimmingLocationType(rawValue: raw.intValue) else { return nil }
+        switch location {
+        case .pool: return .pool
+        case .openWater: return .openWater
+        case .unknown: return nil
+        @unknown default: return nil
         }
     }
 }

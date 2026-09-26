@@ -55,15 +55,15 @@ struct FirstSyncView: View {
                 .accessibilityIdentifier("onboarding.firstSync.progress")
             } else {
                 // `InstrumentPanel`'s form (TodayComponents.swift): hairline-
-                // separated rows on a 4 pt-radius surface, stroked in border.
+                // separated rows on a square surface, stroked in border.
                 VStack(spacing: 0) {
                     ForEach(Array(outcomes.enumerated()), id: \.element.dataType) { index, outcome in
                         if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
                         FirstSyncOutcomeRow(outcome: outcome)
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+                .background(Rectangle().fill(Theme.surface))
+                .overlay(Rectangle().stroke(Theme.border))
                 .padding(.top, 20)
                 .accessibilityIdentifier("onboarding.firstSync.summary")
             }

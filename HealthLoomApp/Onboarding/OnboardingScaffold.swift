@@ -21,8 +21,9 @@
 // `Today/TodayComponents.swift`: 22 pt horizontal gutters and a 12 pt top
 // inset (`TodayView`), the rust-square + "healthloom" brand mark
 // (`TodayHeader`), `Theme.gray` hairline rules under the header, uppercase
-// 11 pt tracked section labels (`TODAY`/`COACH`), 4 pt-radius `Theme.surface`
-// panels stroked in `Theme.border` (`InstrumentPanel`/`CoachPanel`), the
+// 11 pt tracked section labels (`TODAY`/`COACH`), square `Theme.surface`
+// panels (D16; WP-46 dropped the 4 pt radius) stroked in `Theme.border`
+// (`InstrumentPanel`/`CoachPanel`), the
 // 2 pt rust attention bar (`TodayMetricRowView`'s `isPriority`), and
 // Helvetica via `Theme.font(_:_:relativeTo:)` so Dynamic Type still scales
 // (D12 deviation (a)). Left alignment throughout matches the mockup, which
@@ -270,8 +271,8 @@ struct OnboardingSecondaryButton: View {
                 .foregroundStyle(Theme.ink)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+                .background(Rectangle().fill(Theme.surface))
+                .overlay(Rectangle().stroke(Theme.border))
         }
         .buttonStyle(.plain)
         // Same explicit traits as `OnboardingPrimaryButton` -- see its note.
@@ -305,8 +306,8 @@ struct OnboardingErrorPanel: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accentTint))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.border))
+        .background(Rectangle().fill(Theme.accentTint))
+        .overlay(Rectangle().stroke(Theme.border))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(accessibilityIdentifier)
     }

@@ -10,10 +10,10 @@
 // shipped: those values carry a documented WCAG audit, and re-tinting
 // them for a cosmetic warmth nudge would discard that for nothing. The
 // design change comes from geometry, type and material -- not from
-// moving proven colours and no new colour is added: the four-colour
-// signal row the mockup shows needs per-signal data the engine does not
-// publish, so shipping its palette now would be shipping dead tokens
-// (see `SignalIndex`). What D16 *adds* is two typefaces and one type ladder.
+// moving proven colours. What D16 adds is two typefaces, one type ladder,
+// and (D16.8) the mockup's four concrete fields -- held back by WP-40
+// until the engine published per-signal scores (WP-43) and so could back
+// a colour per signal. See `Theme.Field`.
 //
 // Inherited from D12, unchanged:
 //
@@ -57,6 +57,50 @@ enum Theme {
     static let accentTint = dynamic(light: 0xEDE1DA, dark: 0x3B2B21)
     /// Icons/labels on tint.
     static let accentDeep = dynamic(light: 0x5A2F1B, dark: 0xE3B999)
+
+    // MARK: - D16.8: the concrete fields
+
+    /// The four flat, unmixed colour fields of the locked mockup (Max
+    /// Bill's Konkrete Kunst fields). They only ever tell one thing from
+    /// another -- one readiness signal from the next, one kind of activity
+    /// from the next -- and always sit beside a label that names it, so
+    /// colour is never the only carrier (WCAG 1.4.1).
+    ///
+    /// Rust is the accent itself. Ochre, slate and sky keep the mockup's
+    /// hues but not all of its values: as drawn, ochre (light) and sky
+    /// (both modes) fall below the 3:1 non-text floor against the
+    /// `border` track they fill (WCAG 1.4.11 -- a bar's length is
+    /// information), and the mockup's dark sky was darker than its dark
+    /// slate. Lightness only was adjusted; figures are against `border`:
+    ///
+    ///             light               dark
+    ///   rust    #733E24  6.53       #C98A63  4.10   (= `accent`)
+    ///   ochre   #9D7432  3.21       #D4A860  5.38   (mockup light #B8873A, 2.43)
+    ///   slate   #30464F  7.55       #6E939F  3.56   (mockup light #43626E)
+    ///   sky     #56828F  3.20       #C6D5DA  7.83   (mockup #9DBBC4 1.54 / #4A6670 1.92)
+    ///
+    /// Slate and sky share a hue, so they are held ≥ 2.2:1 apart from each
+    /// other in both modes (2.36 light, 2.20 dark) to read as two fields.
+    enum Field: CaseIterable {
+        case rust
+        case ochre
+        case slate
+        case sky
+
+        var color: Color {
+            switch self {
+            case .rust: return Theme.accent
+            case .ochre: return Self.ochreColor
+            case .slate: return Self.slateColor
+            case .sky: return Self.skyColor
+            }
+        }
+
+        // Built once, not per render: bars redraw on every readiness update.
+        private static let ochreColor = Theme.dynamic(light: 0x9D7432, dark: 0xD4A860)
+        private static let slateColor = Theme.dynamic(light: 0x30464F, dark: 0x6E939F)
+        private static let skyColor = Theme.dynamic(light: 0x56828F, dark: 0xC6D5DA)
+    }
 
     // MARK: - D16: the type scale
     //

@@ -5504,3 +5504,91 @@ bytes Xcode Cloud archives, and project-drift (pinned, checksummed) proves those
 `project.yml`. The job's stale comment claiming the project isn't committed is gone.
 README's Testing and Requirements sections now say the project is committed, regenerated
 with `make xcode`, and drift-checked.
+
+## WP-46 · Concrete fields and the mockup's detailing (branch `concrete-fields` from main 350e6d3)
+
+Owner asked to align the UI with the locked mockup's detailing: the four-colour signal
+row on Today, and the Activities screen's summary, date rules and duration fields.
+D16.8, amending D16.1.
+
+**Why now.** WP-40 tuned four signal colours and cut them before commit, because
+`Readiness` then published only a count, so colouring bars per signal would assert a
+mapping the data couldn't back. WP-43 made the engine publish a score per signal, which
+was D16.1's own stated condition. The tuned values were never committed, so they were
+re-derived: as drawn, light ochre (2.43) and sky (1.54 light / 1.92 dark) fail 3:1
+against the `border` track, and the mockup's dark sky is darker than its dark slate.
+Hues kept, lightness adjusted; slate and sky held ≥ 2.2:1 apart. The table is on
+`Theme.Field`.
+
+**What changed.**
+- Today: bars coloured per signal (Sleep slate, HRV rust, Resting HR ochre, Prior load
+  sky). Metric captions uppercase, tracked, micro step. WP-40 had kept them sentence case
+  so they wouldn't "shout"; the smaller step does that job. The steps progress fill
+  gains its `border` track.
+- Activities:
+  - summary line (sessions · total · days from the oldest listed session through today,
+    which is the mockup's "10 days" for 12–21 Sep);
+  - date rules with a count;
+  - a duration field per row, sized against the longest session and coloured by
+    `ActivityFamily`;
+  - badges for distance, average heart rate and swim location, read from the
+    `HKWorkout`'s own statistics and metadata, and omitted when absent.
+- HealthKit workouts get their family in the same `switch` as their name. Fitbit-only
+  sessions map CoreModel's title-cased names, because the two vocabularies differ
+  ("Bike" vs "Ride").
+- A standalone Fitbit session now keeps its own distance. It was dropped before, so the
+  seeded 8 km run showed only "40 min".
+- `ThemedBadge` is the mockup's square mono badge, with its accessibility label pinned
+  to the source text. Content-layer panels, callouts and tiles lose the Yacht club 4 pt
+  radius (D16: square corners); filled buttons and chat bubbles are control layer and
+  keep theirs. No filter button: nothing is behind it.
+
+**Found by looking at the renders, not by the suite.**
+- Day rules labelled a Sunday swim "Sat, Sep 19". `Date.formatted` uses the process
+  locale and time zone, not the view's, so the label could disagree with the calendar
+  that grouped it. It now formats through the environment.
+- At AXXXL the summary broke "SESSIO / NS" and a title broke "Strengt / h Training".
+  Both now fall back to a stacked layout with `ViewThatFits`.
+- `SignalIndex` truncated "Rest…" / "Prio…" at AXXXL, which was already on main. At
+  accessibility sizes the names now sit above their bars.
+- A 4 pt corner change moves fewer pixels than the snapshot tolerance (256), so squaring
+  corners can't fail a comparison. It is visible only by re-recording and looking.
+
+**Found by the pre-commit hook.** `.textCase(.uppercase)` rewrites the accessibility
+label as well as the glyphs, even with an explicit `.accessibilityLabel` beside it.
+`DashboardUITests` read "NOT IN APPLE HEALTH", and VoiceOver would have too. The hook
+blocked the commit. A new `SilkscreenText` uppercases the display string itself (in the
+view's locale) and keeps the label as written. Every WP-46 uppercase site uses it, and
+the snapshots are unchanged because the glyphs are identical. The pre-existing
+"Readiness" kicker (`.textCase`) and `ThemedSectionHeader` (`title.uppercased()` as the
+label) predate WP-46 and are left for a follow-up.
+
+**Tests.** 11 new unit tests (303 total in the unit bundle). Catches:
+- badges for unrecorded stats, or out of order;
+- a linked supplement's distance duplicated as the workout's badge;
+- a standalone session losing its distance;
+- "0 min";
+- distance and total-duration formatting;
+- an off-by-one in the day span;
+- duration fraction divide-by-zero;
+- a Fitbit wire key in the wrong family (through the real decode path);
+- two signals or two families sharing a field.
+
+New Activities snapshot matrix (6). Today references re-recorded and inspected. The
+Dashboard and Welcome references were unchanged, legitimately: neither renders a panel
+or badge.
+
+**CI: CodeQL suspended (owner decision).** On PR #53, `Analyze (swift, actions)` failed
+on every run. Under the CodeQL tracer (`DYLD_INSERT_LIBRARIES=libtrace.dylib`), macOS
+refuses to launch the system binaries the Swift build spawns, with "posix_spawn error:
+Bad CPU type in executable (86)": `/usr/bin/sandbox-exec` (SwiftPM manifests, all five
+local packages), and with the manifest sandbox off, `swift-plugin-server`
+(SwiftData's `@Model`). It had been an occasional flake on PR #51. What was ruled out:
+- **CodeQL version:** 2.27.0, green on image 20260912, fails identically on 20260921.
+- **Our code:** probe PR #54 (main plus a comment) fails identically.
+
+The runner image update (`xcode-27-arm64` 20260912 → 20260921.0210.1) is the remaining
+variable, inferred by elimination, and an image version can't be pinned. The workflow is
+restored to its original form with automatic triggers suspended (`workflow_dispatch`
+only). The header records how to re-test and restore. The CI app job builds and tests the
+same code on the same image, without the tracer, and passes.
