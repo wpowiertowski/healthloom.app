@@ -449,6 +449,16 @@ import Testing
         #expect(HealthKitWriterError(wrapping: otherDomain) != .protectedDataUnavailable)
     }
 
+    // catches: a HealthKit error reaching the Data tab as "[REDACTED](Error
+    // Domain=...)" -- the redactor took the 31-character type-name prefix
+    // for a token (WP-53).
+    @Test func healthKitErrorsSurviveRedactionReadably() {
+        let denied = NSError(domain: HKErrorDomain, code: HKError.Code.errorAuthorizationDenied.rawValue)
+        let shown = SyncLogRedactor.redact(String(describing: HealthKitWriterError(wrapping: denied)))
+        #expect(!shown.contains(SyncLogRedactor.redactedMarker), "\(shown)")
+        #expect(shown.hasPrefix("HealthKit: "))
+    }
+
     // MARK: - Day-by-day spans (WP-52)
 
     // catches: spans that overlap, leave a gap, run newest-first (the cursor

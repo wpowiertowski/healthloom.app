@@ -5897,3 +5897,37 @@ each fail their test: quiesce not re-checked per span, cursor committed only at 
 window end, span count not committed, spans newest-first, index released on link drain
 (24 watch-conflict failures), no 403 case, widened ECG bound, locked device not treated
 as a stop, classifier on the wrong code.
+
+## WP-53 · Sync Now stays visible (branch `wp-53-sync-visible` from main 5ad201c)
+
+**Evidence.** The first TestFlight run of WP-52 worked where it could be checked. The
+owner ran **Update Google Access**: Google asked for exactly the three missing scopes,
+and ECG logged `ok` instead of 403. But the Sync Log (exported 17 s after `food`) again
+showed nothing past `food`, and the Data tab's Sync button was idle one minute into the
+run.
+
+**Bugs.**
+1. **The spinner lied.** `DashboardView` kept `isSyncing` in `@State`, and `HomeView`
+   rebuilds a tab's stack on every tab switch. Going to Settings to export the log
+   reset the button to idle while the engine kept going (heart rate's first sync runs
+   for minutes). A second tap would have started a parallel pass.
+2. **No progress at all.** A type logs only when it finishes, so a long heart-rate
+   sync looked like a stopped one.
+3. **Unreadable HealthKit errors.** The redactor's 24+ character opaque-run rule ate the
+   31-character `HealthKitWriterError.underlying` prefix, so rows read "[REDACTED](Error
+   Domain=...)". The Code 6 rows still on the Data tab are stale, from the 03:39 run
+   before WP-52. They clear when those types commit their first day.
+
+**Fix.**
+- `ForegroundSync` (DI/) is `@Observable` and owned by `AppEnvironment`. It runs
+  Sync Now's sequential per-type walk, exposes `isRunning` and `current`, and refuses a
+  second start while running. The Data tab binds its button to it and shows
+  "Syncing ‹type›…" (`dashboard.syncProgress`) using CoreModel's
+  `GoogleDataType.displayName`.
+- `HealthKitWriterError.description` is now `HealthKit: ‹message›` /
+  `HealthKit: device locked`.
+
+**Tests.** SyncKit 324 (1 new: HealthKit errors survive redaction readably), plus 2 new
+app tests: the run names the type in flight and ends idle, and a second start while
+running does nothing. Three mutants each fail their test: the old description prefix,
+`current` never set, and no running guard.

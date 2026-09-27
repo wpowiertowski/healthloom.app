@@ -10,9 +10,10 @@
 // whichever `ModelContainer` `HealthLoomApp` put in the environment via
 // `.modelContainer(_:)` -- production, or an in-memory one seeded by
 // `AppEnvironment.seedDashboardFixtures` under `-UITestSeedData`. "Sync now"
-// calls the exact same `SyncEngine.syncAll(types:)` onboarding's
-// `FirstSyncView` calls; `@Query` picks up whatever that run persists to
-// `SyncState` without this view re-fetching manually.
+// starts `AppEnvironment.foregroundSync` (WP-53), the same sequential
+// per-type walk over `SyncEngine` onboarding's `FirstSyncView` runs, owned
+// outside this view so it survives tab switches; `@Query` picks up whatever
+// that run persists to `SyncState` without this view re-fetching manually.
 //
 // WP-14 (implementation-plan.md): a second `@Query`, over CoreModel's
 // `LocalSample`, drives a second section for the four `.localOnly`-writability
@@ -33,13 +34,16 @@ struct DashboardView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
     @Query(sort: \SyncState.dataType) private var syncStates: [SyncState]
     @Query(sort: \LocalSample.dataType) private var localSamples: [LocalSample]
-    @State private var isSyncing = false
     @State private var isConnectingGoogle = false
     @State private var connectError: String?
 
     /// Onboarding-skip-Google: read live from defaults every render (no cached copy
     /// to go stale across the Settings connect flow).
     private var googleSkipped: Bool { GoogleConnectionSetting().isSkipped }
+
+    /// WP-53: the run lives in `AppEnvironment`, not this view's `@State`,
+    /// so leaving the tab mid-sync doesn't reset the spinner.
+    private var isSyncing: Bool { appEnvironment.foregroundSync.isRunning }
 
     private var orderedRows: [(GoogleDataType, SyncState?)] {
         AppEnvironment.p0Types.map { type in
@@ -89,6 +93,7 @@ struct DashboardView: View {
             googleConnectPanel
             freshnessHeader
                 .padding(.top, 18)
+            syncProgress
 
             ThemedSectionHeader(title: "Your Data")
             ThemedPanel {
@@ -124,6 +129,21 @@ struct DashboardView: View {
                     ActivitiesView(chrome: .pushed)
                 }
             }
+        }
+    }
+
+    /// Names the type in flight during Sync Now (WP-53): a first heart-rate
+    /// sync runs for minutes and logs nothing until it finishes, so without
+    /// this the tab looks done while it's still working.
+    @ViewBuilder
+    private var syncProgress: some View {
+        if let type = appEnvironment.foregroundSync.current {
+            Text("Syncing \(type.displayName)…")
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
+                .foregroundStyle(Theme.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 12)
+                .accessibilityIdentifier("dashboard.syncProgress")
         }
     }
 
@@ -225,16 +245,11 @@ struct DashboardView: View {
         // this state. (`SyncEngine` has no credentials notion; the gate lives with
         // the skip flag that caused it.)
         guard !googleSkipped else { return }
-        isSyncing = true
         // Round-6 item 9: every syncable type (not just P0) minus
         // disabled — an enabled non-P0 row updates on demand, not only
         // on background wake. (Disabling stops future syncing but does
         // not delete anything already written — WP-35's wipe flow.)
-        let typesToSync = SyncPreferences.manualSyncTypes()
-        Task {
-            _ = await appEnvironment.syncEngine.syncAll(types: typesToSync)
-            isSyncing = false
-        }
+        appEnvironment.foregroundSync.start(types: SyncPreferences.manualSyncTypes())
     }
 }
 

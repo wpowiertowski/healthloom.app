@@ -155,6 +155,9 @@ final class AppEnvironment {
     let healthKitAuth: HealthKitAuth
     let googleAuthManager: GoogleAuthManager
     let syncEngine: SyncEngine
+    /// WP-53: the manual Sync Now run over `syncEngine`, owned here so it
+    /// outlives the Data tab's view rebuilds (see ForegroundSync.swift).
+    let foregroundSync: ForegroundSync
     let consentCoordinator: any GoogleConsentCoordinating
     let launchConfiguration: LaunchConfiguration
     /// WP-15: chunked, resumable historical backfill (architecture.md D5).
@@ -370,6 +373,7 @@ final class AppEnvironment {
             isQuiesced: { WipeQuiesce.isLatched }
         )
         self.syncEngine = syncEngine
+        self.foregroundSync = ForegroundSync(engine: syncEngine)
 
         // WP-15: same reconcile client + a fresh HealthKitWriter (its own
         // `HKHealthStore` wrapper, but the same underlying store -- HK
