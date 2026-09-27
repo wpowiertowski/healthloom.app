@@ -55,3 +55,17 @@ public final class LocalSample {
         self.linkedWatchWorkoutUUID = linkedWatchWorkoutUUID
     }
 }
+
+extension LocalSample {
+    /// The numeric `values` the point carried (the payload's top-level
+    /// `values` dictionary, written by SyncKit's `SharedLocalPayload`) --
+    /// `minutes` for Active Zone Minutes and Active Minutes. Empty when the
+    /// payload has none or can't be read. The one decode of that field,
+    /// shared by the Data tab's trends and CoachKit's knowledge derivation.
+    public var payloadValues: [String: Double] {
+        guard let envelope = try? JSONSerialization.jsonObject(with: payloadJSON) as? [String: Any],
+              let values = envelope["values"] as? [String: Any]
+        else { return [:] }
+        return values.compactMapValues { ($0 as? NSNumber)?.doubleValue }
+    }
+}

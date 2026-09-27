@@ -26,6 +26,7 @@
 // types, ECG/IRN included (WP-52; asking only for P0's scopes left them
 // 403ing against a real account).
 
+import CoachKit
 import CoreModel
 import SwiftData
 import SwiftUI
@@ -35,6 +36,9 @@ struct DashboardView: View {
     @Query(sort: \SyncState.dataType) private var syncStates: [SyncState]
     @Query(sort: \LocalSample.dataType) private var localSamples: [LocalSample]
     @State private var isConnectingGoogle = false
+    /// WP-56: 7-day vs 30-day trends from Apple Health, per P0 row.
+    @State private var trends: [GoogleDataType: RollingTrend] = [:]
+    @Environment(\.locale) private var locale
     @State private var connectError: String?
 
     /// Onboarding-skip-Google: read live from defaults every render (no cached copy
@@ -99,7 +103,7 @@ struct DashboardView: View {
             ThemedPanel {
                 ForEach(Array(orderedRows.enumerated()), id: \.element.0) { index, row in
                     if index > 0 { ThemedRowDivider() }
-                    SyncTypeRow(type: row.0, state: row.1)
+                    SyncTypeRow(type: row.0, state: row.1, trend: trendText(for: row.0))
                 }
             }
 
@@ -130,6 +134,11 @@ struct DashboardView: View {
                 }
             }
         }
+        // WP-56: trends load on appear and again whenever a Sync Now starts
+        // or finishes (the run's end brings new days into Apple Health).
+        .task(id: appEnvironment.foregroundSync.isRunning) {
+            trends = await DataTrendProvider().trends(for: AppEnvironment.p0Types)
+        }
     }
 
     /// Names the type in flight during Sync Now (WP-53): a first heart-rate
@@ -145,6 +154,16 @@ struct DashboardView: View {
                 .padding(.top, 12)
                 .accessibilityIdentifier("dashboard.syncProgress")
         }
+    }
+
+    private func trendText(for type: GoogleDataType) -> DataTrendText {
+        guard let metric = DataTrendMetric(type) else { return .empty }
+        return DataTrendText.make(
+            trends[type],
+            metric: metric,
+            locale: locale,
+            unitSystem: ContextAssembler.defaultUnitSystem(for: locale)
+        )
     }
 
     private var freshnessHeader: some View {

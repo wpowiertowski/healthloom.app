@@ -5984,3 +5984,47 @@ cursor. Duplicate rows imported before that stay until a wider sweep runs.
 it still imports; an already-imported duplicate is cleaned up and re-linked. Mutants
 that each fail them: stream spans built from all windows, and other-app windows
 excluded from the session rule.
+
+## WP-56 · Data rows show a 7-day trend, and a quieter clinical badge (branch `wp-56-data-rows-legible` from main 664f432)
+
+**Ask.** The owner flagged two things on the Data tab. First, the rust-filled
+"CLINICAL · EXCLUDED FROM AI" badge outweighed its row. Second, the numbers were
+unreadable: Heart Rate showed 373,285, the running total of readings ever synced, and
+AZM and Active Minutes showed stored-record counts. They asked for a rolling average
+instead: the last week's average plus its change from the 30-day average.
+
+**What rows show now.**
+- The right-hand column is the **7-day average** over **"7d avg · ±Δ vs 30d"**
+  (`DataTrendText`). Steps are averaged as daily totals, heart rate and weight as daily
+  averages, sleep as nightly asleep time, and AZM and Active Minutes as daily minutes.
+  ECG and irregular-rhythm notifications show a 30-day event count, since an average
+  of events means nothing.
+- `RollingTrend` is pure: completed days only (a half-finished today would drag daily
+  totals down), days without data are absent rather than zero, and nights are keyed by
+  the evening they began. A change that rounds to zero reads "same as 30d".
+- Values come from Apple Health (`DataTrendProvider`, a thin HKStatisticsCollection
+  adapter), which merges watch and Fitbit honestly. They're formatted by the Today
+  panel's own `TodayMetricFormatter` (units, metric/imperial), so the two tabs can't
+  disagree. Trends reload on appear and when a Sync Now starts or ends.
+  AZM and Active Minutes read `LocalSample.payloadValues["minutes"]`. That new CoreModel
+  accessor is the one decode of the payload's `values`; CoachKit's `sumPayloadValues`
+  now uses it.
+- Layout: `DataRowTitleLine` uses `ViewThatFits`, so when title and trend can't share a
+  line (accessibility sizes), the trend moves under the title instead of wrapping word
+  by word.
+- Sleep: new `AsleepTime` merges overlapping asleep intervals. Today's last-night total
+  now uses it too; it used to sum raw samples, counting a night twice when the watch
+  and the Fitbit both recorded it.
+
+**Badges.** "Not in Apple Health" is said once, by the section heading, and rows no
+longer repeat it (WP-14's deliverable is met by the heading). The clinical note is a
+neutral hairline badge; `ThemedBadge.accent` stays for YouView.
+
+**Tests.** App: 7 new `DataTrendTests` covering completed days and skipped gaps, no
+trend without a week of data, night keying with overlaps counted once, the asleep-total
+merge, signed and united strings, local minutes per day, and the 30-day event count. Two
+new trend snapshots (XS / AXXXL × light / dark). The never-synced snapshots are
+re-recorded, and I inspected every image. `DashboardUITests` asserts the trend labels,
+the removed per-row badge, and the clinical badges. Three mutants each fail the trend
+tests: today counted in the week, overlaps summed, and record count instead of minutes.
+CoachKit is unchanged at 198.

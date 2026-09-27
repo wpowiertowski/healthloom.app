@@ -95,13 +95,7 @@ public struct ExerciseSupplement {
 /// adds unrelated numeric fields, which would only overcount, never throw.
 /// Flagged in progress.md for correction once a real payload is observed.
 func sumPayloadValues(_ sample: LocalSample) -> Double {
-    guard let envelope = try? JSONSerialization.jsonObject(with: sample.payloadJSON) as? [String: Any],
-          let values = envelope["values"] as? [String: Any] else {
-        return 0
-    }
-    return values.values.reduce(into: 0.0) { total, value in
-        if let number = value as? NSNumber {
-            total += number.doubleValue
-        }
-    }
+    // WP-56: the decode is CoreModel's `LocalSample.payloadValues`, shared
+    // with the app's Data-tab trends.
+    sample.payloadValues.values.reduce(0, +)
 }
