@@ -332,7 +332,7 @@ public final class HealthKitWriter: Sendable {
             try await builder.endCollection(at: workout.end)
             return try await builder.finishWorkout()
         } catch {
-            throw .underlying(String(describing: error))
+            throw HealthKitWriterError(wrapping: error)
         }
     }
 }

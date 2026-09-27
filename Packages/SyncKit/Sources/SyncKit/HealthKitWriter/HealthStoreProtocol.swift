@@ -129,7 +129,7 @@ public final class HealthKitStore: HealthStoreProtocol, Sendable {
         do {
             try await healthStore.save(objects)
         } catch {
-            throw .underlying(String(describing: error))
+            throw HealthKitWriterError(wrapping: error)
         }
     }
 
@@ -213,7 +213,7 @@ public final class HealthKitStore: HealthStoreProtocol, Sendable {
         do {
             return try await healthStore.deleteObjects(of: objectType, predicate: predicate)
         } catch {
-            throw .underlying(String(describing: error))
+            throw HealthKitWriterError(wrapping: error)
         }
     }
 
@@ -225,7 +225,7 @@ public final class HealthKitStore: HealthStoreProtocol, Sendable {
         do {
             return try await healthStore.deleteObjects(of: objectType, predicate: predicate)
         } catch {
-            throw .underlying(String(describing: error))
+            throw HealthKitWriterError(wrapping: error)
         }
     }
 
@@ -259,8 +259,23 @@ public final class HealthKitStore: HealthStoreProtocol, Sendable {
                 healthStore.execute(query)
             }
         } catch {
-            throw .underlying(String(describing: error))
+            throw HealthKitWriterError(wrapping: error)
         }
     }
 }
+extension HealthKitWriterError {
+    /// Wraps a HealthKit failure, classifying the locked-device refusal
+    /// (`HKError.errorDatabaseInaccessible`) as `.protectedDataUnavailable`
+    /// so it can't reach the Sync Log as an opaque error string. Every
+    /// HealthKit call site in the writer wraps through here.
+    init(wrapping error: any Error) {
+        let nsError = error as NSError
+        if nsError.domain == HKErrorDomain, nsError.code == HKError.Code.errorDatabaseInaccessible.rawValue {
+            self = .protectedDataUnavailable
+        } else {
+            self = .underlying(String(describing: error))
+        }
+    }
+}
+
 #endif

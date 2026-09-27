@@ -106,7 +106,8 @@ struct BackgroundSyncQuiescenceTests {
             hasGoogleCredentials: { true }
         )
         let outcomes = await HealthLoomBackgroundSync.run(context: context)
-        #expect(client.calls == [.electrocardiogram])
+        // One request per day of the window (WP-52), every one for ECG.
+        #expect(Set(client.calls) == [.electrocardiogram])
         #expect(outcomes.map(\.dataType) == [.electrocardiogram])
     }
 }

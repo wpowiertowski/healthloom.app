@@ -13,6 +13,14 @@ import SwiftData
 import Testing
 @testable import SyncKit
 
+/// A wipe latch the test flips from inside the mock client's first call.
+private final class WipeLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private nonisolated(unsafe) var latched = false
+    nonisolated var isLatched: Bool { lock.withLock { latched } }
+    nonisolated func latch() { lock.withLock { latched = true } }
+}
+
 @Suite struct SyncEngineQuiesceTests {
     @Test func quiescedSyncReturnsCancelledWithoutTouchingClientOrStore() async throws {
         // Catches: a latched wipe followed by Sync Now must not run the pipeline.
@@ -36,6 +44,25 @@ import Testing
         #expect(rows.isEmpty)
     }
 
+    // catches: a wipe latched while a day-by-day run is under way letting
+    // the remaining days write behind it (WP-52 made runs long enough for
+    // this to matter; the check used to sit only at `sync(type:)`'s door).
+    @Test func aWipeLatchedMidRunStopsBeforeTheNextSpan() async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        let latch = WipeLatch()
+        let engine = SyncEngine(
+            client: mock,
+            writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container,
+            isQuiesced: { latch.isLatched }
+        )
+        mock.onReconcile = { latch.latch() } // the wipe lands during the first span
+        let outcome = await engine.sync(type: .steps)
+        #expect(outcome.status == .cancelled)
+        #expect(mock.calls.count == 1)
+    }
+
     @Test func unquiescedSyncRunsNormally() async throws {
         // Pin: the default (unlatched) path is unaffected — an empty window still
         // succeeds and mints its cursor row.
@@ -46,6 +73,7 @@ import Testing
             client: mock,
             writer: HealthKitWriter(store: MockHealthStore()),
             modelContainer: container,
+            configuration: .wholeWindow,
             isQuiesced: { false }
         )
         let outcome = await engine.sync(type: .steps)

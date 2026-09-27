@@ -67,7 +67,7 @@ struct GoogleHealthRequestTests {
         #expect(request.url?.path == "/v4/users/me/dataTypes/heart-rate/dataPoints:reconcile")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer data-access-token")
         #expect(TestClientFactory.query("filter", in: request)?.hasPrefix("heart_rate.sample_time.physical_time") == true)
-        #expect(TestClientFactory.query("pageSize", in: request) == "1000")
+        #expect(TestClientFactory.query("pageSize", in: request) == "10000")
     }
 
     // catches: ECG sent to `:reconcile`, which doesn't serve it, and sessions
@@ -77,6 +77,45 @@ struct GoogleHealthRequestTests {
         #expect(ecg.url?.path == "/v4/users/me/dataTypes/electrocardiogram/dataPoints")
         let sleep = try await Self.recordedRequest(for: .sleep)
         #expect(TestClientFactory.query("pageSize", in: sleep) == "25")
+    }
+
+    // catches: a 403 (scope never granted) logged as a bare status code
+    // and retried like a server fault -- the Sync Log said "server(status:
+    // 403)" for ECG, pointing nowhere near the missing permission.
+    @Test func forbiddenIsAPermissionErrorAndIsNotRetried() async throws {
+        let http = RecordingHTTPSession { request, _ in
+            if TestClientFactory.isTokenRequest(request) {
+                return (TestClientFactory.tokenJSON(), httpResponse(statusCode: 200))
+            }
+            return (Data(#"{"error":{"code":403,"status":"PERMISSION_DENIED"}}"#.utf8), httpResponse(statusCode: 403))
+        }
+        await #expect(throws: GoogleHealthClientError.permissionDenied) {
+            _ = try await TestClientFactory.client(http: http).reconcile(type: .electrocardiogram, since: Self.since, until: Self.until)
+        }
+        let dataRequests = await http.requests.filter { !TestClientFactory.isTokenRequest($0) }
+        #expect(dataRequests.count == 1)
+    }
+
+    // catches: ECG (whose filter has no upper bound) returning recordings
+    // past the requested window, so a day-by-day walk would process each
+    // recording once per remaining day.
+    @Test func ecgIsHeldToTheRequestedWindow() async throws {
+        let inside = Self.since.addingTimeInterval(60)
+        let after = Self.until.addingTimeInterval(60)
+        func ecg(_ id: Int, _ start: Date) -> String {
+            let from = ISO8601Formatting.string(from: start)
+            let to = ISO8601Formatting.string(from: start.addingTimeInterval(30))
+            return #"{"name":"users/me/dataTypes/electrocardiogram/dataPoints/\#(id)","electrocardiogram":{"interval":{"startTime":"\#(from)","endTime":"\#(to)"},"beatsPerMinuteAvg":"64"}}"#
+        }
+        let body = Data(#"{"dataPoints":[\#(ecg(1, inside)),\#(ecg(2, after))]}"#.utf8)
+        let http = RecordingHTTPSession { request, _ in
+            if TestClientFactory.isTokenRequest(request) {
+                return (TestClientFactory.tokenJSON(), httpResponse(statusCode: 200))
+            }
+            return (body, httpResponse(statusCode: 200))
+        }
+        let page = try await TestClientFactory.client(http: http).reconcile(type: .electrocardiogram, since: Self.since, until: Self.until)
+        #expect(page.points.map(\.id) == ["users/me/dataTypes/electrocardiogram/dataPoints/1"])
     }
 
     // catches: a type Google only offers through roll-ups (or that isn't a

@@ -197,7 +197,8 @@ import Testing
             client: mock,
             writer: HealthKitWriter(store: store),
             modelContainer: container,
-            clock: TestSyncClock(Self.fixedNow)
+            clock: TestSyncClock(Self.fixedNow),
+            configuration: .wholeWindow
         )
         let outcome = await engine.sync(type: .steps)
         #expect(outcome.status == .ok)
@@ -254,7 +255,7 @@ import Testing
                 type: .steps,
                 pageToken: token,
                 page: Page(
-                    points: [BackfillTestFixtures.stepsPoint(id: "cap-\(i)", start: Self.fixedNow, end: Self.fixedNow.addingTimeInterval(60))],
+                    points: [BackfillTestFixtures.stepsPoint(id: "cap-\(i)", start: Self.fixedNow.addingTimeInterval(-60), end: Self.fixedNow)],
                     nextPageToken: "t\(i + 1)"
                 )
             )
@@ -263,7 +264,8 @@ import Testing
             client: mock,
             writer: HealthKitWriter(store: MockHealthStore()),
             modelContainer: container,
-            clock: TestSyncClock(Self.fixedNow)
+            clock: TestSyncClock(Self.fixedNow),
+            configuration: .wholeWindow
         )
         let outcome = await engine.sync(type: .steps)
         #expect(outcome.status == .ok)
@@ -610,7 +612,9 @@ import Testing
         let state = try #require(try context.fetch(
             FetchDescriptor<SyncState>(predicate: #Predicate { $0.dataType == key })
         ).first)
-        #expect(state.lastSyncedAt == nil) // cursor unmoved
+        // WP-52: the cursor stops at the start of the failed span -- the
+        // earlier, empty days committed; never past the bad point.
+        #expect(state.lastSyncedAt == Self.fixedNow.addingTimeInterval(-24 * 3600))
     }
 
     // MARK: - Fix round-9, unstamped members throw (items 4+6+9+11)

@@ -19,17 +19,11 @@
 // types (architecture.md D2) -- these don't have a `SyncState` row of their
 // own to key off of (they never touch HealthKit), so they're grouped
 // client-side by `LocalSample.dataType` instead and rendered via
-// `LocalOnlyTypeRow`, not `SyncTypeRow`. Deliberately **not** wired into
-// `syncNow()`'s `syncAll(types:)` call below: `GoogleConsentView`'s OAuth
-// scope request (`AppEnvironment.p0Types.map(\.scope)`) only covers P0's
-// scopes, and ECG/IRN sit behind their own separate `.ecg`/`.irn` Google
-// scopes (`GoogleDataType.scope`) -- syncing them without first requesting
-// those scopes would 403 against a real (non-stubbed) Google account. Widening
-// onboarding consent to request those scopes is out of this WP's stated file
-// scope (`GoogleConsentView.swift` isn't listed); flagged in progress.md as
-// follow-up for whichever WP does that. Until then, these rows populate from
-// `-UITestSeedData`'s seeded fixtures (tests) or from a future WP's backfill/
-// broader-sync wiring (production) -- never from this screen's own button.
+// `LocalOnlyTypeRow`, not `SyncTypeRow`. `syncNow()` walks every syncable
+// type (round-6 item 9), local-only ones included, and every connect path
+// asks for `SyncPreferences.consentScopes()` -- the scopes of exactly those
+// types, ECG/IRN included (WP-52; asking only for P0's scopes left them
+// 403ing against a real account).
 
 import CoreModel
 import SwiftData
@@ -203,7 +197,7 @@ struct DashboardView: View {
     private func connectGoogle() {
         isConnectingGoogle = true
         connectError = nil
-        let scopes = Array(Set(AppEnvironment.p0Types.map(\.scope)))
+        let scopes = SyncPreferences.consentScopes()
         Task {
             let result = await appEnvironment.consentCoordinator.beginConsent(scopes: scopes)
             isConnectingGoogle = false

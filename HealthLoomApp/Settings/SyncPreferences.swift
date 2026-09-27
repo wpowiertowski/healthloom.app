@@ -214,6 +214,22 @@ final class SyncPreferences {
         return prefs.filteredForSync(syncableTypes)
     }
 
+    /// The Google scopes to ask for when connecting (WP-52): every scope
+    /// family among `types`, in `GoogleDataType.Scope.allCases` order so
+    /// the consent URL is stable. Onboarding used to ask only for the four
+    /// P0 types' scopes while Sync Now walked every syncable type, so ECG,
+    /// irregular-rhythm notifications, and nutrition came back 403.
+    static func consentScopes(for types: [GoogleDataType]) -> [GoogleDataType.Scope] {
+        let needed = requiredScopes(for: Set(types))
+        return GoogleDataType.Scope.allCases.filter(needed.contains)
+    }
+
+    /// `consentScopes(for:)` over the types Sync Now will walk: THE scope
+    /// list every connect path requests (onboarding, Dashboard, Settings).
+    static func consentScopes() -> [GoogleDataType.Scope] {
+        consentScopes(for: manualSyncTypes())
+    }
+
     // MARK: - Persistence
 
     private func persist() {

@@ -13,8 +13,15 @@ nonisolated public enum GoogleHealthClientError: Error, Sendable, Equatable {
     /// 429 persisted through `BackoffPolicy.maxAttempts` attempts.
     case rateLimited
 
+    /// 403 (Google's `PERMISSION_DENIED`): the account hasn't granted the
+    /// scope this type is read under (WP-52: onboarding asked only for the
+    /// core types' scopes, and ECG came back as a bare 403). Named so the
+    /// Sync Log points at the permission instead of a status code. Not
+    /// retried: asking again can't grant it.
+    case permissionDenied
+
     /// 5xx persisted through `BackoffPolicy.maxAttempts` attempts, or any
-    /// other non-2xx/401/429/5xx status.
+    /// other non-2xx/401/403/429/5xx status.
     case server(status: Int)
 
     /// The response body wasn't valid/expected JSON. Carries a short, fixed

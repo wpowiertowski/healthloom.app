@@ -52,7 +52,8 @@ nonisolated public struct GoogleHealthClient: Sendable {
     @concurrent
     public func reconcile(type: GoogleDataType, since: Date, until: Date, pageToken: String? = nil) async throws(GoogleHealthClientError) -> Page {
         guard let schema = GoogleDataTypeSchema.schema(for: type) else { throw .notAvailableFromGoogle }
-        return try await fetchPage(schema: schema, since: since, until: until, pageToken: pageToken)
+        let page = try await fetchPage(schema: schema, since: since, until: until, pageToken: pageToken)
+        return schema.holdingToWindow(page, until: until)
     }
 
     // MARK: - Fetch + resilience (WP-05 step 5)
@@ -107,6 +108,9 @@ nonisolated public struct GoogleHealthClient: Sendable {
             switch response.statusCode {
             case 200..<300:
                 return try decodePage(data, schema: schema)
+
+            case 403:
+                throw .permissionDenied
 
             case 401:
                 guard !retriedAfter401 else { throw .unauthorized }

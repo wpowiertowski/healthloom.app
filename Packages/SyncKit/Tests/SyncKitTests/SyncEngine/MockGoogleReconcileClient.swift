@@ -18,6 +18,12 @@
 // exhausted, so a test that only cares about "always returns this one page"
 // can supply a single-element list.
 //
+// Window-aware (WP-52): a scripted page returns only its points whose start
+// falls inside the requested `since ..< until`, the way the real API's
+// filter does. The engine walks a window one day at a time, so a canned page
+// returned verbatim for every span would replay the same points once per
+// day -- semantics the real server never has.
+//
 // Not an `actor`: this test target shares SyncKit's package-wide
 // `.defaultIsolation(MainActor.self)` (Package.swift), same as
 // `MockHealthStore`'s `@unchecked Sendable` class -- mirrored here for
@@ -55,6 +61,10 @@ final class MockGoogleReconcileClient: GoogleReconcileClient, @unchecked Sendabl
     /// additional concurrent `SyncEngine.sync(type:)` calls and proves they
     /// coalesce onto the same in-flight run rather than issuing their own.
     nonisolated(unsafe) var gate: AsyncGate?
+
+    /// Runs on every `reconcile` call, after it's recorded -- lets a test
+    /// change the world mid-run (e.g. latch a wipe during the first span).
+    nonisolated(unsafe) var onReconcile: (@Sendable () -> Void)?
 
     init() {}
 
@@ -105,13 +115,15 @@ final class MockGoogleReconcileClient: GoogleReconcileClient, @unchecked Sendabl
             return results[Swift.min(count, results.count - 1)]
         }
 
+        onReconcile?()
         if let gate {
             await gate.enter()
         }
 
         switch result {
         case .success(let page):
-            return page
+            let inWindow = page.points.filter { $0.start >= since && $0.start < until }
+            return Page(points: inWindow, nextPageToken: page.nextPageToken)
         case .failure(let error):
             throw error
         }

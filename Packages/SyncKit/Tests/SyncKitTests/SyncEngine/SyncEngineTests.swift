@@ -96,7 +96,10 @@ import Testing
         let call = try #require(mock.calls.first { $0.type == .steps })
         let expectedStart = Self.fixedNow.addingTimeInterval(-(Self.initialWindow + Self.defaultLookback))
         #expect(call.since == expectedStart)
-        #expect(call.until == Self.fixedNow)
+        // WP-52: walked one day at a time -- the first span starts the
+        // window, the last one ends it.
+        let last = try #require(mock.calls.last { $0.type == .steps })
+        #expect(last.until == Self.fixedNow)
     }
 
     @Test func lookbackWindowIsSevenDaysForSleep() async throws {
@@ -116,7 +119,10 @@ import Testing
         let call = try #require(mock.calls.first { $0.type == .sleep })
         let expectedStart = Self.fixedNow.addingTimeInterval(-(Self.initialWindow + Self.sleepLookback))
         #expect(call.since == expectedStart)
-        #expect(call.until == Self.fixedNow)
+        // WP-52: walked one day at a time -- the first span starts the
+        // window, the last one ends it.
+        let last = try #require(mock.calls.last { $0.type == .sleep })
+        #expect(last.until == Self.fixedNow)
     }
 
     @Test func secondSyncWindowIsAnchoredOnLastSyncedAtNotInitialWindow() async throws {
@@ -128,15 +134,19 @@ import Testing
         let engine = SyncEngine(client: mock, writer: HealthKitWriter(store: store), modelContainer: container, clock: clock)
 
         _ = await engine.sync(type: .steps) // establishes lastSyncedAt == fixedNow
+        let firstRunCalls = mock.calls.count
 
         let secondNow = Self.fixedNow.addingTimeInterval(3600) // one hour later
         clock.set(secondNow)
         _ = await engine.sync(type: .steps)
 
-        let secondCall = try #require(mock.calls.last { $0.type == .steps })
+        // The second run's first span starts its window; its last span ends it.
+        let secondRun = mock.calls.dropFirst(firstRunCalls)
+        let firstSpan = try #require(secondRun.first)
+        let lastSpan = try #require(secondRun.last)
         let expectedStart = Self.fixedNow.addingTimeInterval(-Self.defaultLookback) // anchored on lastSyncedAt, not (secondNow - initialWindow)
-        #expect(secondCall.since == expectedStart)
-        #expect(secondCall.until == secondNow)
+        #expect(firstSpan.since == expectedStart)
+        #expect(lastSpan.until == secondNow)
     }
 
     // MARK: - Idempotency (second identical run writes 0 new HK objects)
@@ -297,7 +307,8 @@ import Testing
             client: mock,
             writer: HealthKitWriter(store: MockHealthStore()),
             modelContainer: container,
-            clock: clock
+            clock: clock,
+            configuration: .wholeWindow
         )
 
         let first = await engine.sync(type: .steps)
@@ -404,6 +415,102 @@ import Testing
         #expect(state.lastSyncedAt == nil)
     }
 
+    // catches: a sync on a locked phone painting every type red. HealthKit
+    // refuses protected data until unlock; the run must stop like a
+    // cancellation -- no error row, cursor held -- and retry next time.
+    @Test func lockedDeviceStopsWithoutAnErrorRow() async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let store = MockHealthStore()
+        store.existingExternalIDsError = .protectedDataUnavailable
+        let engine = SyncEngine(
+            client: MockGoogleReconcileClient(),
+            writer: HealthKitWriter(store: store),
+            modelContainer: container,
+            clock: TestSyncClock(Self.fixedNow)
+        )
+        let outcome = await engine.sync(type: .steps)
+        #expect(outcome.status == .cancelled)
+        #expect(outcome.errorMessage == nil)
+        let state = try #require(try Self.syncState(container, type: .steps))
+        #expect(state.lastStatus == SyncStatus.cancelled.rawValue)
+        #expect(state.lastError == nil)
+        #expect(state.lastSyncedAt == nil)
+    }
+
+    // catches: the locked-device refusal wrapped as an opaque `underlying`
+    // string (the engine could never tell it apart), and every other
+    // HealthKit error misread as a lock.
+    @Test func healthKitLockRefusalIsClassifiedWhereItIsWrapped() {
+        let locked = NSError(domain: HKErrorDomain, code: HKError.Code.errorDatabaseInaccessible.rawValue)
+        #expect(HealthKitWriterError(wrapping: locked) == .protectedDataUnavailable)
+        let denied = NSError(domain: HKErrorDomain, code: HKError.Code.errorAuthorizationDenied.rawValue)
+        #expect(HealthKitWriterError(wrapping: denied) == .underlying(String(describing: denied)))
+        let otherDomain = NSError(domain: "elsewhere", code: HKError.Code.errorDatabaseInaccessible.rawValue)
+        #expect(HealthKitWriterError(wrapping: otherDomain) != .protectedDataUnavailable)
+    }
+
+    // MARK: - Day-by-day spans (WP-52)
+
+    // catches: spans that overlap, leave a gap, run newest-first (the cursor
+    // would jump to the end on the first commit), or overshoot the window
+    // end -- and a zero span looping forever instead of yielding one piece.
+    @Test func chunksTileTheWindowOldestFirst() throws {
+        let start = Self.fixedNow
+        let config = SyncConfiguration(chunkSpan: 24 * 3600)
+        let pieces = config.chunks(from: start, to: start.addingTimeInterval(2.5 * 24 * 3600))
+        #expect(pieces.map(\.start) == [0, 1, 2].map { start.addingTimeInterval(Double($0) * 24 * 3600) })
+        #expect(pieces.map(\.end) == [1, 2, 2.5].map { start.addingTimeInterval($0 * 24 * 3600) })
+        #expect(config.chunks(from: start, to: start).isEmpty)
+        let whole = SyncConfiguration(chunkSpan: 0).chunks(from: start, to: start.addingTimeInterval(3600))
+        #expect(whole == [DateInterval(start: start, end: start.addingTimeInterval(3600))])
+    }
+
+    // catches: an interrupted run throwing away the days it finished -- the
+    // pre-WP-52 walk committed only at the window's end, so a first
+    // heart-rate sync that never outlived the app restarted from zero every
+    // run. A failure or a stop in day 3 keeps days 1-2 (their rows, their
+    // count, the cursor), and the next run resumes one lookback before them.
+    @Test(arguments: [
+        (GoogleHealthClientError.server(status: 500), SyncStatus.error),
+        (.cancelled, .cancelled),
+    ])
+    func anInterruptedRunKeepsTheDaysItFinished(failure: GoogleHealthClientError, status: SyncStatus) async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        let windowStart = Self.fixedNow.addingTimeInterval(-(Self.initialWindow + Self.defaultLookback))
+        let dayOne = Self.ecgPoint(
+            id: "ecg-day-1", start: windowStart.addingTimeInterval(3600), end: windowStart.addingTimeInterval(3630)
+        )
+        // One result per span, in order: day 1 carries the point (the
+        // window-aware mock drops it from every other span), day 2 is
+        // empty, day 3 fails.
+        mock.setScript(type: .electrocardiogram, pageToken: nil, results: [
+            .success(Page(points: [dayOne], nextPageToken: nil)),
+            .success(Page(points: [], nextPageToken: nil)),
+            .failure(failure),
+        ])
+        let engine = SyncEngine(
+            client: mock, writer: HealthKitWriter(store: MockHealthStore()), modelContainer: container, clock: clock
+        )
+
+        let outcome = await engine.sync(type: .electrocardiogram)
+
+        #expect(outcome.status == status)
+        #expect(outcome.itemCount == 1)
+        let committed = windowStart.addingTimeInterval(2 * 24 * 3600)
+        let state = try #require(try Self.syncState(container, type: .electrocardiogram))
+        #expect(state.lastSyncedAt == committed)
+        #expect(state.itemCount == 1)
+        #expect(try Self.allLocalSamples(container).map(\.externalID) == ["ecg-day-1"])
+
+        let firstRunCalls = mock.calls.count
+        mock.setPage(type: .electrocardiogram, pageToken: nil, page: Page(points: [], nextPageToken: nil))
+        _ = await engine.sync(type: .electrocardiogram)
+        let resumed = try #require(mock.calls.dropFirst(firstRunCalls).first)
+        #expect(resumed.since == committed.addingTimeInterval(-Self.defaultLookback))
+    }
+
     // MARK: - All pages of a paginated response are consumed
 
     @Test func allPagesOfAPaginatedResponseAreConsumed() async throws {
@@ -424,7 +531,7 @@ import Testing
             page: Page(points: [TypeMapperFixtures.stepsPoint(id: "page2-a")], nextPageToken: nil)
         )
         let store = MockHealthStore()
-        let engine = SyncEngine(client: mock, writer: HealthKitWriter(store: store), modelContainer: container, clock: clock)
+        let engine = SyncEngine(client: mock, writer: HealthKitWriter(store: store), modelContainer: container, clock: clock, configuration: .wholeWindow)
 
         let outcome = await engine.sync(type: .steps)
 
@@ -462,7 +569,7 @@ import Testing
             ]
         )
         let store = MockHealthStore()
-        let engine = SyncEngine(client: mock, writer: HealthKitWriter(store: store), modelContainer: container, clock: clock)
+        let engine = SyncEngine(client: mock, writer: HealthKitWriter(store: store), modelContainer: container, clock: clock, configuration: .wholeWindow)
 
         // Run 1: page 1 succeeds and is written; page 2 fails -> whole run errors.
         let first = await engine.sync(type: .steps)
@@ -502,7 +609,7 @@ import Testing
             ]
         )
         let store = MockHealthStore()
-        let engine = SyncEngine(client: mock, writer: HealthKitWriter(store: store), modelContainer: container, clock: clock)
+        let engine = SyncEngine(client: mock, writer: HealthKitWriter(store: store), modelContainer: container, clock: clock, configuration: .wholeWindow)
 
         _ = await engine.sync(type: .steps) // lastSyncedAt becomes fixedNow
 
@@ -566,7 +673,8 @@ import Testing
             client: mock,
             writer: HealthKitWriter(store: MockHealthStore()),
             modelContainer: container,
-            clock: clock
+            clock: clock,
+            configuration: .wholeWindow
         )
 
         let t1 = Task { await engine.sync(type: .steps) }
@@ -610,7 +718,8 @@ import Testing
             client: mock,
             writer: HealthKitWriter(store: MockHealthStore()),
             modelContainer: container,
-            clock: clock
+            clock: clock,
+            configuration: .wholeWindow
         )
 
         let results = await engine.syncAll(types: [.steps, .heartRate, .weight])
