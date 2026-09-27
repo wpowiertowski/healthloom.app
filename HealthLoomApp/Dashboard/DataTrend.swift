@@ -13,7 +13,12 @@ import CoreModel
 import Foundation
 
 /// The last 7 days' average against the last 30 days'.
-struct RollingTrend: Equatable {
+///
+/// `nonisolated` (WP-57): pure math that HealthKit's result handlers call on
+/// HealthKit's own queues. Under the target's default MainActor isolation
+/// its closures carried a main-actor check, and build 21 crashed at launch
+/// the first time a real night of sleep reached one.
+nonisolated struct RollingTrend: Equatable {
     static let weekDays = 7
     static let monthDays = 30
 
@@ -62,8 +67,9 @@ struct RollingTrend: Equatable {
 }
 
 /// Asleep time from HealthKit sleep samples, shared by the Today panel's
-/// last night and the Data tab's nightly average.
-enum AsleepTime {
+/// last night and the Data tab's nightly average. `nonisolated` for the
+/// same reason as `RollingTrend`: it runs inside HealthKit's callbacks.
+nonisolated enum AsleepTime {
     /// Asleep-stage raw values (HKCategoryValueSleepAnalysis):
     /// asleepUnspecified = 1, asleepCore = 3, asleepDeep = 4, asleepREM = 5
     /// -- inBed (0) and awake (2) never count. Same literal set SyncKit's
