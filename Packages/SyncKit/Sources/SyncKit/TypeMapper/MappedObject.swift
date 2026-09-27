@@ -123,10 +123,10 @@ extension MappedMetadata {
     nonisolated func makeHKMetadataDictionary() -> [String: Any] {
         var result: [String: Any] = [
             HKMetadataKeyExternalUUID: externalUUID,
-            "healthloom.externalID": externalID,
+            Self.externalIDKey: externalID,
         ]
         if let sourceDevice {
-            result["healthloom.sourceDevice"] = sourceDevice
+            result[Self.sourceDeviceKey] = sourceDevice
         }
         return result
     }

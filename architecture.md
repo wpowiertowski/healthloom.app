@@ -126,12 +126,18 @@ plus `healthloom.sourceDevice`. Re-sync skips existing IDs; "update" = delete-by
 re-insert (HK samples are immutable); "disconnect & wipe" = delete-by-source.
 Existence checks are **batched**: one HK query per (type, time window) collects present
 external IDs into a `Set`, then the page is diffed in memory — never one query per sample.
+The set grows with every write and carries across the run's day spans (WP-58): day-keyed
+summaries come back to two consecutive spans, and a per-span snapshot wrote them twice.
 
 **D5 — Historical backfill is a separate, chunked flow.**
 First connect offers a backfill range (90 days default; 30 d / 90 d / 1 y / all).
 `BackfillCoordinator` walks backward in ~30-day chunks per type, checkpointing progress in
 `SyncState.backfillCursor`, resumable across app kills, throttled to respect API quotas.
 Regular incremental sync (D3) starts immediately and is independent of backfill progress.
+The two never write one type at once (WP-58): a chunk claims its type on `SyncEngine` for
+its whole run, a claim is refused while an incremental run of the type is in flight, and
+an incremental run waits out a held claim. Their windows overlap by the lookback, and
+each diffs against its own existence snapshot, so concurrent runs would both write it.
 
 **D6 — Readiness is computed deterministically, never by the LLM.**
 The Today hero ("82/100") comes from `ReadinessEngine`: a documented, unit-testable

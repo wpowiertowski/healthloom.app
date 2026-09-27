@@ -126,6 +126,9 @@ private final class RecordingWipeStore: HealthStoreProtocol, @unchecked Sendable
     func deleteObjects(ofType objectType: HKObjectType, externalIDs: Set<String>) async throws(HealthKitWriterError) -> Int {
         0
     }
+    func deleteDuplicateAppWrites(ofType sampleType: HKSampleType) async throws(HealthKitWriterError) -> Int {
+        0
+    }
     func deleteAllAppData(ofType objectType: HKObjectType) async throws(HealthKitWriterError) -> Int {
         lock.withLock { deleteAllAppDataCalls.append(objectType) }
         if let error = deleteError[objectType.identifier] { throw error }

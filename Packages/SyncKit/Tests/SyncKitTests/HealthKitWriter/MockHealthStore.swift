@@ -155,6 +155,17 @@ final class MockHealthStore: HealthStoreProtocol, @unchecked Sendable {
         return before - entries.count
     }
 
+    /// Same keep-the-first rule as the real adapter
+    /// (`HealthKitStore.duplicateCopies`), over app-written entries.
+    @discardableResult
+    func deleteDuplicateAppWrites(ofType sampleType: HKSampleType) async throws(HealthKitWriterError) -> Int {
+        let candidates = entries.filter { $0.isAppWritten && $0.sample.sampleType == sampleType }.map(\.sample)
+        let extras = Set(HealthKitStore.duplicateCopies(in: candidates).map(ObjectIdentifier.init))
+        let before = entries.count
+        entries.removeAll { extras.contains(ObjectIdentifier($0.sample)) }
+        return before - entries.count
+    }
+
     @discardableResult
     func deleteAllAppData(ofType objectType: HKObjectType) async throws(HealthKitWriterError) -> Int {
         deleteAllAppDataCalls.append(objectType)

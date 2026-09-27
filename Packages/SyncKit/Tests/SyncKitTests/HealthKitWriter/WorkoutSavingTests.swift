@@ -66,8 +66,8 @@ import Testing
             // `bucketlessDistanceIsPreservedInMetadata`.
             .addMetadata([
                 HKMetadataKeyExternalUUID: "exercise-0001",
-                "healthloom.externalID": "exercise-0001",
-                "healthloom.sourceDevice": "Fitbit Air",
+                MappedMetadata.externalIDKey: "exercise-0001",
+                MappedMetadata.sourceDeviceKey: "Fitbit Air",
             ]),
             .endCollection(Self.date("2026-07-01T17:45:00Z")),
             .finishWorkout,
@@ -172,8 +172,8 @@ import Testing
         _ = try await writer.saveWorkout(Self.workout(externalID: "exercise-metadata-test", sourceDevice: "Fitbit Air"))
 
         #expect(mockBuilder.lastMetadata[HKMetadataKeyExternalUUID] as? String == "exercise-metadata-test")
-        #expect(mockBuilder.lastMetadata["healthloom.externalID"] as? String == "exercise-metadata-test")
-        #expect(mockBuilder.lastMetadata["healthloom.sourceDevice"] as? String == "Fitbit Air")
+        #expect(mockBuilder.lastMetadata[MappedMetadata.externalIDKey] as? String == "exercise-metadata-test")
+        #expect(mockBuilder.lastMetadata[MappedMetadata.sourceDeviceKey] as? String == "Fitbit Air")
     }
 
     /// A `nil`, non-throwing `finishWorkout()` result is a documented
@@ -230,7 +230,7 @@ import Testing
             activityType: .running,
             start: start,
             end: end,
-            metadata: [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
+            metadata: [HKMetadataKeyExternalUUID: externalID, MappedMetadata.externalIDKey: externalID]
         )
         let factory = MockWorkoutBuilderFactory(builder: mockBuilder)
         let writer = HealthKitWriter(store: store, workoutBuilderFactory: factory)
@@ -266,7 +266,7 @@ import Testing
         firstBuilder.storeToSeedOnFinish = store
         firstBuilder.finishResult = makeFakeHKWorkoutForTesting(
             activityType: .running, start: start, end: end,
-            metadata: [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
+            metadata: [HKMetadataKeyExternalUUID: externalID, MappedMetadata.externalIDKey: externalID]
         )
         let writer = HealthKitWriter(store: store, workoutBuilderFactory: MockWorkoutBuilderFactory(builder: firstBuilder))
         _ = try await writer.saveWorkout(Self.workout(start: start, end: end, externalID: externalID))

@@ -157,24 +157,27 @@ nonisolated public final class UserDefaultsBackfillHorizonRecordStore: BackfillH
     }
 }
 
-// MARK: - Foreground-sync busy probe (WP-15 step 2)
+// MARK: - Foreground-sync claim (WP-15 step 2, WP-58)
 
 /// WP-15 step 2: "suspends when a foreground incremental sync is active for
-/// a type". A narrow protocol over `SyncEngine.isBusy(for:)`
-/// (SyncEngine.swift's new, additive method -- see that file's doc comment
-/// for the coordination note) -- mirrors `GoogleReconcileClient`'s own
-/// "narrow protocol over the real thing so tests can stub it" pattern
-/// (SyncEngineTypes.swift).
+/// a type". WP-58 turned the read-only probe into a claim held for the
+/// whole chunk (`SyncEngine.claimForBackfill(_:)` documents why). A narrow
+/// protocol over `SyncEngine` so tests can stub it, mirroring
+/// `GoogleReconcileClient` (SyncEngineTypes.swift).
 nonisolated public protocol BackfillBusyProbe: Sendable {
-    nonisolated func isBusy(for type: GoogleDataType) async -> Bool
+    /// Claims `type` for one chunk; `false` means an incremental sync holds
+    /// it and the chunk is skipped this round.
+    nonisolated func claimForBackfill(_ type: GoogleDataType) async -> Bool
+    nonisolated func releaseBackfillClaim(_ type: GoogleDataType) async
 }
 
 /// Default when no real `SyncEngine` is wired in (e.g. previews, or a
 /// deployment that runs backfill before any incremental sync exists):
-/// nothing is ever busy, so backfill never suspends for this reason.
+/// every claim succeeds, so backfill never suspends for this reason.
 nonisolated public struct AlwaysAvailableBusyProbe: BackfillBusyProbe {
     public init() {}
-    public func isBusy(for type: GoogleDataType) async -> Bool { false }
+    public func claimForBackfill(_ type: GoogleDataType) async -> Bool { true }
+    public func releaseBackfillClaim(_ type: GoogleDataType) async {}
 }
 
 // MARK: - Per-chunk / per-round outcomes (WP-15 "Tests" line support)

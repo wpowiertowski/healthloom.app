@@ -152,6 +152,13 @@ nonisolated public struct MappedMetadata: Sendable, Hashable {
     /// progress.md's WP-07 entry).
     public var sourceDevice: String?
 
+    /// The metadata key `externalID` is written under. Its presence marks
+    /// an object this app imported: the conflict resolver's coverage query
+    /// and the Activities tab both read it, so a second spelling anywhere
+    /// would make imported workouts count as another app's (WP-58).
+    public static let externalIDKey = "healthloom.externalID"
+    static let sourceDeviceKey = "healthloom.sourceDevice"
+
     public init(externalUUID: String, externalID: String, sourceDevice: String?) {
         self.externalUUID = externalUUID
         self.externalID = externalID
