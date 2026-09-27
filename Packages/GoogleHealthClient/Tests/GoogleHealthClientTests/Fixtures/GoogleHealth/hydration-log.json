@@ -1,19 +1,17 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). base-knowledge.md §3 records Hydration Log as a Session (Se) record type, but WP-11 only asks for a simple dietaryWater quantity mapping (not a session/correlation structure like Exercise or Food) -- this fixture is therefore shaped like the other Sample-type scalar-field fixtures (weight.json, height.json) rather than sleep.json's nested sessionPayload shape. Value key `hydration_log.liters` (field name assumed; liters chosen to match HealthKit's own dietaryWater base unit). Mirrored in SyncKit's TypeMapperFixtures.hydrationPoint().",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "hydration-0001",
-      "startTime": "2026-07-01T12:30:00Z",
-      "endTime": "2026-07-01T12:30:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "MANUAL_ENTRY"
-      },
-      "value": {
-        "hydration_log.liters": 0.5
+      "dataPointName": "",
+      "hydrationLog": {
+        "interval": {
+          "startTime": "2026-07-01T12:30:00Z",
+          "endTime": "2026-07-01T12:30:00Z"
+        },
+        "amountConsumed": {
+          "milliliters": 500
+        }
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

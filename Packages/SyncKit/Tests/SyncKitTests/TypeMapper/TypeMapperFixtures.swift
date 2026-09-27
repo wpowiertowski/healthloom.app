@@ -109,7 +109,7 @@ enum TypeMapperFixtures {
     /// Mirrors `distance.json`'s `distance-0001` point (15000mm on the wire,
     /// already normalized to `15.0` meters by the time it reaches
     /// `GoogleDataPoint.values["distance"]` -- see that fixture's own
-    /// `_comment` and GoogleHealthClient's `UnitNormalizer`).
+    /// `_comment` and GoogleHealthClient's `GoogleDataTypeSchema` unit scaling).
     static func distancePoint(
         id: String = "distance-0001",
         start: Date = date("2026-07-01T07:00:00Z"),
@@ -499,9 +499,9 @@ enum TypeMapperFixtures {
     // scope-driven deviation from the WP-07/11 fixture convention.
 
     /// Builds a synthetic Exercise `GoogleDataPoint` whose `sessionPayload`
-    /// matches `ExerciseSessionDecoding.swift`'s assumed wire shape
-    /// (`"exercise.activity_type"` / `"exercise.distance"` (meters) /
-    /// `"exercise.energy"` (kcal)). `values` is always empty -- exactly like
+    /// is the API's typed `exercise` object (WP-51, published v4 shape):
+    /// `exerciseType` plus `metricsSummary.distanceMillimeters` /
+    /// `.caloriesKcal`. `values` is always empty -- exactly like
     /// `sleepPoint()` above, every field this session reports lives in
     /// `sessionPayload`, not `GoogleDataPoint.values` (see that decoding
     /// file's header for why).
@@ -509,14 +509,15 @@ enum TypeMapperFixtures {
         id: String = "exercise-0001",
         start: Date = date("2026-07-01T17:00:00Z"),
         end: Date = date("2026-07-01T17:45:00Z"),
-        wireActivityType: String = "run",
+        wireActivityType: String = "RUNNING",
         distanceMeters: Double? = 8000.0,
         energyKilocalories: Double? = 520.0,
         deviceDisplayName: String? = "Fitbit Air"
     ) -> GoogleDataPoint {
-        var payloadObject: [String: Any] = ["exercise.activity_type": wireActivityType]
-        if let distanceMeters { payloadObject["exercise.distance"] = distanceMeters }
-        if let energyKilocalories { payloadObject["exercise.energy"] = energyKilocalories }
+        var metrics: [String: Any] = [:]
+        if let distanceMeters { metrics["distanceMillimeters"] = distanceMeters * 1000 }
+        if let energyKilocalories { metrics["caloriesKcal"] = energyKilocalories }
+        let payloadObject: [String: Any] = ["exerciseType": wireActivityType, "metricsSummary": metrics]
         guard
             let payload = try? JSONSerialization.data(withJSONObject: payloadObject, options: [.sortedKeys])
         else {
@@ -557,18 +558,18 @@ enum TypeMapperFixtures {
         start: Date = date("2026-07-08T23:15:00Z"),
         end: Date = date("2026-07-09T06:45:00Z"),
         segments: [SleepSegmentFixture] = [
-            .init("2026-07-08T23:15:00Z", "2026-07-08T23:40:00Z", "awake"),
-            .init("2026-07-08T23:40:00Z", "2026-07-09T01:10:00Z", "light"),
-            .init("2026-07-09T01:10:00Z", "2026-07-09T02:00:00Z", "deep"),
-            .init("2026-07-09T02:00:00Z", "2026-07-09T03:30:00Z", "rem"),
-            .init("2026-07-09T03:30:00Z", "2026-07-09T06:45:00Z", "light"),
+            .init("2026-07-08T23:15:00Z", "2026-07-08T23:40:00Z", "AWAKE"),
+            .init("2026-07-08T23:40:00Z", "2026-07-09T01:10:00Z", "LIGHT"),
+            .init("2026-07-09T01:10:00Z", "2026-07-09T02:00:00Z", "DEEP"),
+            .init("2026-07-09T02:00:00Z", "2026-07-09T03:30:00Z", "REM"),
+            .init("2026-07-09T03:30:00Z", "2026-07-09T06:45:00Z", "LIGHT"),
         ],
         deviceDisplayName: String? = "Fitbit Air"
     ) -> GoogleDataPoint {
         let payloadSegments: [[String: Any]] = segments.map {
-            ["startTime": $0.start, "endTime": $0.end, "stage": $0.stage]
+            ["startTime": $0.start, "endTime": $0.end, "type": $0.stage]
         }
-        let payloadObject: [String: Any] = ["sleep.segment": payloadSegments]
+        let payloadObject: [String: Any] = ["stages": payloadSegments]
         guard
             let payload = try? JSONSerialization.data(withJSONObject: payloadObject, options: [.sortedKeys])
         else {

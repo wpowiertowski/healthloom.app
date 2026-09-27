@@ -19,7 +19,7 @@ nonisolated public struct GoogleDataPoint: Sendable, Hashable {
     /// Scalar numeric fields, keyed by the *unqualified* field name (the
     /// `<data_type>.` prefix from the wire format is stripped -- e.g. wire
     /// key `"steps.count"` becomes `values["count"]`). Unit-normalized per
-    /// `UnitNormalizer` (WP-05 step 3) before this struct is constructed.
+    /// `GoogleDataTypeSchema` (WP-51) before this struct is constructed.
     public var values: [String: Double]
 
     /// Raw re-serialized JSON of the wire format's `value` object, present

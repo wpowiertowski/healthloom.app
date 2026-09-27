@@ -6,15 +6,12 @@
 // same name as the package/module itself; Swift permits this (see
 // progress.md's WP-05 note if this ever needs revisiting).
 //
-// Resource pattern (base-knowledge.md §2): `users/me/dataTypes/{dataType}/dataPoints`,
-// with the read method as a colon-suffixed custom-method suffix
-// (`:reconcile`, `:dailyRollup`) per Google API convention for custom RPC-style
-// methods. base-knowledge.md doesn't pin down the exact request verb/body
-// shape for `reconcile`/`dailyRollup` (the doc is explicit that intraday
-// endpoints were still rolling out as of its "last verified" date) -- POST
-// with a JSON body (`startTime`/`endTime`/`pageToken`) was chosen as the most
-// plausible shape for a paginated, windowed custom method; this is flagged in
-// progress.md as an assumption to reconcile once real API docs/access exist.
+// WP-51: requests and responses follow the published v4 reference -- see
+// `GoogleDataTypeSchema.swift`, which holds every per-type fact (read
+// method, filter field, response fields, units). Reads are
+// `GET users/me/dataTypes/{kebab-type}/dataPoints:reconcile` (or plain
+// `dataPoints` for the few non-reconcilable types) with an AIP-160 `filter`
+// time window and an empty body.
 //
 // Concurrency: WP-05 step 6 ("All calls @concurrent/nonisolated"). This
 // package's default isolation is `MainActor` (Package.swift), so without an
@@ -27,11 +24,6 @@ import CoreModel
 import Foundation
 
 nonisolated public struct GoogleHealthClient: Sendable {
-    public enum Method: String, Sendable {
-        case reconcile
-        case dailyRollup
-    }
-
     private let config: GoogleHealthClientConfig
     private let httpSession: any HTTPSession
     private let auth: GoogleAuthManager
@@ -52,27 +44,21 @@ nonisolated public struct GoogleHealthClient: Sendable {
         self.jitter = jitter
     }
 
-    /// `reconcile` — the merged, de-duplicated read path (architecture.md D1;
-    /// base-knowledge.md §2). The **only** path this app uses for device
-    /// sample data.
+    /// `reconcile` — the merged, de-duplicated read path (architecture.md D1).
+    /// The **only** read this app uses for device data. A type that isn't
+    /// reconcilable is listed instead (`GoogleDataTypeSchema.endpoint`); a
+    /// type that isn't readable as data points at all throws
+    /// `.notAvailableFromGoogle`.
     @concurrent
     public func reconcile(type: GoogleDataType, since: Date, until: Date, pageToken: String? = nil) async throws(GoogleHealthClientError) -> Page {
-        try await fetchPage(type: type, method: .reconcile, since: since, until: until, pageToken: pageToken)
-    }
-
-    /// `dailyRollup` — server-stitched daily aggregates, used additionally
-    /// for daily-summary types since it composes correctly across DST/
-    /// timezone travel (architecture.md D1).
-    @concurrent
-    public func dailyRollup(type: GoogleDataType, since: Date, until: Date, pageToken: String? = nil) async throws(GoogleHealthClientError) -> Page {
-        try await fetchPage(type: type, method: .dailyRollup, since: since, until: until, pageToken: pageToken)
+        guard let schema = GoogleDataTypeSchema.schema(for: type) else { throw .notAvailableFromGoogle }
+        return try await fetchPage(schema: schema, since: since, until: until, pageToken: pageToken)
     }
 
     // MARK: - Fetch + resilience (WP-05 step 5)
 
     private func fetchPage(
-        type: GoogleDataType,
-        method: Method,
+        schema: GoogleDataTypeSchema,
         since: Date,
         until: Date,
         pageToken: String?
@@ -84,7 +70,7 @@ nonisolated public struct GoogleHealthClient: Sendable {
         // `.defaultIsolation(MainActor.self)` (architecture.md §3), so
         // reading it requires an actor hop; resolved once here rather than
         // on every retry through the loop below.
-        let endpointName = await type.endpointName
+        let endpointName = await schema.type.endpointName
 
         while true {
             // Cooperative probe: a cancel landing anywhere except the
@@ -100,7 +86,7 @@ nonisolated public struct GoogleHealthClient: Sendable {
                 throw .unauthorized
             }
 
-            let request = buildRequest(endpointName: endpointName, method: method, since: since, until: until, pageToken: pageToken, bearerToken: token)
+            let request = buildRequest(endpointName: endpointName, schema: schema, since: since, until: until, pageToken: pageToken, bearerToken: token)
 
             let data: Data
             let response: HTTPURLResponse
@@ -120,7 +106,7 @@ nonisolated public struct GoogleHealthClient: Sendable {
 
             switch response.statusCode {
             case 200..<300:
-                return try decodePage(data, type: type)
+                return try decodePage(data, schema: schema)
 
             case 401:
                 guard !retriedAfter401 else { throw .unauthorized }
@@ -158,30 +144,39 @@ nonisolated public struct GoogleHealthClient: Sendable {
 
     func buildRequest(
         endpointName: String,
-        method: Method,
+        schema: GoogleDataTypeSchema,
         since: Date,
         until: Date,
         pageToken: String?,
         bearerToken: String
     ) -> URLRequest {
-        let urlString = config.baseURL + "users/me/dataTypes/\(endpointName)/dataPoints:\(method.rawValue)"
-        var request = URLRequest(url: URL(string: urlString)!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-
-        var body: [String: Any] = [
-            "startTime": ISO8601Formatting.string(from: since),
-            "endTime": ISO8601Formatting.string(from: until),
+        var components = URLComponents(
+            string: config.baseURL + "users/me/dataTypes/\(endpointName)/dataPoints\(schema.endpoint.rawValue)"
+        )!
+        var items = [
+            URLQueryItem(name: "filter", value: schema.filter(since: since, until: until, timeZone: config.civilTimeZone)),
+            URLQueryItem(name: "pageSize", value: String(schema.pageSize)),
         ]
-        if let pageToken { body["pageToken"] = pageToken }
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        if let pageToken { items.append(URLQueryItem(name: "pageToken", value: pageToken)) }
+        components.queryItems = items
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         return request
     }
 
-    // MARK: - Decoding (WP-05 step 2/3)
+    // MARK: - Decoding
 
+    /// `decodePage` for a type, looking up its schema (tests decode fixtures
+    /// by type).
     func decodePage(_ data: Data, type: GoogleDataType) throws(GoogleHealthClientError) -> Page {
+        guard let schema = GoogleDataTypeSchema.schema(for: type) else { throw .notAvailableFromGoogle }
+        return try decodePage(data, schema: schema)
+    }
+
+    /// Failures name the type and the missing field -- never a value -- so a
+    /// schema mismatch shows up in the Sync Log as a readable reason.
+    func decodePage(_ data: Data, schema: GoogleDataTypeSchema) throws(GoogleHealthClientError) -> Page {
         let object: Any
         do {
             object = try JSONSerialization.jsonObject(with: data, options: [])
@@ -191,78 +186,134 @@ nonisolated public struct GoogleHealthClient: Sendable {
         guard let dict = object as? [String: Any] else {
             throw .decodingFailed("expected a top-level JSON object")
         }
-        let nextPageToken = dict["nextPageToken"] as? String
-        let rawPoints = (dict["point"] as? [[String: Any]]) ?? []
+        let nextPageToken = (dict["nextPageToken"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let rawPoints = (dict["dataPoints"] as? [[String: Any]]) ?? []
         var points: [GoogleDataPoint] = []
         points.reserveCapacity(rawPoints.count)
         for rawPoint in rawPoints {
-            points.append(try decodeDataPoint(rawPoint, type: type))
+            points.append(try decodeDataPoint(rawPoint, schema: schema))
         }
         return Page(points: points, nextPageToken: nextPageToken)
     }
 
-    private func decodeDataPoint(_ dict: [String: Any], type: GoogleDataType) throws(GoogleHealthClientError) -> GoogleDataPoint {
-        guard
-            let id = dict["dataPointId"] as? String,
-            let startString = dict["startTime"] as? String,
-            let endString = dict["endTime"] as? String,
-            let start = ISO8601Formatting.date(from: startString),
-            let end = ISO8601Formatting.date(from: endString)
-        else {
-            throw .decodingFailed("missing/invalid required data point fields")
+    private func decodeDataPoint(_ raw: [String: Any], schema: GoogleDataTypeSchema) throws(GoogleHealthClientError) -> GoogleDataPoint {
+        let label = schema.type.rawValue
+        guard let body = raw[schema.unionKey] as? [String: Any] else {
+            throw .decodingFailed("\(label): missing \(schema.unionKey)")
         }
-
-        let sourceDict = dict["dataSource"] as? [String: Any]
-        let deviceDict = sourceDict?["device"] as? [String: Any]
-        let source = DataSource(
-            platform: sourceDict?["platform"] as? String,
-            deviceDisplayName: deviceDict?["displayName"] as? String,
-            recordingMethod: sourceDict?["recordingMethod"] as? String
-        )
+        let (start, end) = try times(of: body, schema: schema)
 
         var values: [String: Double] = [:]
-        var hasNestedFields = false
-        let valueDict = dict["value"] as? [String: Any] ?? [:]
-        for (key, raw) in valueDict {
-            let field = stripDataTypePrefix(key, dataType: type)
-            if let number = raw as? NSNumber, !isBoolNSNumber(number) {
-                values[field] = UnitNormalizer.normalize(dataType: type, field: field, rawValue: number.doubleValue)
-            } else {
-                hasNestedFields = true
+        for rule in schema.values {
+            if let number = GoogleValueReader.read(rule.source, in: body) {
+                values[rule.outKey] = number * rule.scale
             }
         }
-
-        var sessionPayload: Data?
-        if hasNestedFields {
-            sessionPayload = try? JSONSerialization.data(withJSONObject: valueDict, options: [.sortedKeys])
+        // A type that should carry values but resolved none has fields we
+        // don't recognise -- say which, rather than writing empty samples.
+        if !schema.values.isEmpty, values.isEmpty {
+            throw .decodingFailed("\(label): none of \(schema.values.map(\.outKey).joined(separator: ", ")) found")
         }
 
+        let sessionPayload = schema.keepsPayload
+            ? try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+            : nil
+
         return GoogleDataPoint(
-            id: id,
-            dataType: type,
+            id: Self.pointID(raw: raw, body: body, schema: schema, start: start, end: end),
+            dataType: schema.type,
             start: start,
             end: end,
-            source: source,
+            source: Self.source(from: raw),
             values: values,
             sessionPayload: sessionPayload
         )
     }
 
-    /// Uses `dataType.rawValue` (== `filterName`) directly rather than the
-    /// `filterName` computed property -- see `UnitNormalizer.normalize`'s
-    /// doc comment for why.
-    private func stripDataTypePrefix(_ key: String, dataType: GoogleDataType) -> String {
-        let prefix = dataType.rawValue + "."
-        guard key.hasPrefix(prefix) else { return key }
-        return String(key.dropFirst(prefix.count))
+    private func times(of body: [String: Any], schema: GoogleDataTypeSchema) throws(GoogleHealthClientError) -> (Date, Date) {
+        let label = schema.type.rawValue
+        switch schema.time {
+        case .observationInterval, .session, .sleepSession, .ecgSession:
+            guard let interval = body["interval"] as? [String: Any],
+                  let start = (interval["startTime"] as? String).flatMap(ISO8601Formatting.date(from:)),
+                  let end = (interval["endTime"] as? String).flatMap(ISO8601Formatting.date(from:))
+            else { throw .decodingFailed("\(label): missing interval.startTime/endTime") }
+            return (start, end)
+        case .sampleTime:
+            guard let sample = body["sampleTime"] as? [String: Any],
+                  let time = (sample["physicalTime"] as? String).flatMap(ISO8601Formatting.date(from:))
+            else { throw .decodingFailed("\(label): missing sampleTime.physicalTime") }
+            return (time, time)
+        case .date:
+            guard let date = body["date"] as? [String: Any],
+                  let year = date["year"] as? Int, let month = date["month"] as? Int, let day = date["day"] as? Int
+            else { throw .decodingFailed("\(label): missing date") }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = config.civilTimeZone
+            guard let start = calendar.date(from: DateComponents(year: year, month: month, day: day)),
+                  let end = calendar.date(byAdding: .day, value: 1, to: start)
+            else { throw .decodingFailed("\(label): invalid date") }
+            // A daily summary spans its civil day.
+            return (start, end)
+        }
     }
 
-    /// `NSNumber` boxes both real numbers and Objective-C-bridged `Bool`
-    /// (`kCFBooleanTrue`/`False` decode from `JSONSerialization` as
-    /// `NSNumber` too). Google Health API scalar fields are never booleans,
-    /// so treat a boolean-boxed `NSNumber` as a nested/non-scalar field
-    /// rather than silently coercing `true`/`false` to `1.0`/`0.0`.
-    private func isBoolNSNumber(_ number: NSNumber) -> Bool {
-        CFGetTypeID(number) == CFBooleanGetTypeID()
+    /// Stable across syncs, which is what the pipeline's "already written"
+    /// check keys on: the API's own name when it gives one (only some types
+    /// do), else type + interval (+ the discriminator, e.g. the heart-rate
+    /// zone). Reconciled points never overlap within a type, so that's unique.
+    static func pointID(raw: [String: Any], body: [String: Any], schema: GoogleDataTypeSchema, start: Date, end: Date) -> String {
+        for key in ["dataPointName", "name"] {
+            if let name = raw[key] as? String, !name.isEmpty { return name }
+        }
+        var id = "\(schema.type.rawValue)/\(Int64(start.timeIntervalSince1970 * 1000))-\(Int64(end.timeIntervalSince1970 * 1000))"
+        if let key = schema.idDiscriminator, let part = body[key].map({ "\($0)" }) {
+            id += "/\(part)"
+        }
+        return id
+    }
+
+    /// Listed points carry `dataSource`; reconciled points don't (the merge
+    /// has no single source), so they're labelled as Google Health.
+    static func source(from raw: [String: Any]) -> DataSource {
+        guard let dict = raw["dataSource"] as? [String: Any] else {
+            return DataSource(platform: "Google Health", deviceDisplayName: nil, recordingMethod: nil)
+        }
+        let device = dict["device"] as? [String: Any]
+        return DataSource(
+            platform: dict["platform"] as? String,
+            deviceDisplayName: device?["displayName"] as? String,
+            recordingMethod: dict["recordingMethod"] as? String
+        )
+    }
+}
+
+/// Reads numbers out of a union object: JSON numbers or int64-as-string
+/// (the API sends `count`, `beatsPerMinute` ... as strings). Booleans are
+/// never numbers here.
+nonisolated enum GoogleValueReader {
+    static func read(_ source: GoogleValueRule.Source, in body: [String: Any]) -> Double? {
+        switch source {
+        case .path(let path):
+            var node: Any? = body
+            for key in path { node = (node as? [String: Any])?[key] }
+            return number(node)
+        case .nutrient(let name):
+            let nutrients = body["nutrients"] as? [[String: Any]] ?? []
+            guard let match = nutrients.first(where: { ($0["nutrient"] as? String) == name }) else { return nil }
+            return number((match["quantity"] as? [String: Any])?["grams"])
+        case .sum(let array, let field):
+            let items = body[array] as? [[String: Any]] ?? []
+            let parts = items.compactMap { number($0[field]) }
+            return parts.isEmpty ? nil : parts.reduce(0, +)
+        }
+    }
+
+    static func number(_ value: Any?) -> Double? {
+        if let string = value as? String { return Double(string) }
+        if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
+            return number.doubleValue
+        }
+        return nil
     }
 }

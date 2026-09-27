@@ -1,22 +1,37 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-13). Nutrition Log is a Sample (S) record type per base-knowledge.md §3 -- like weight.json/height.json, not a nested-payload Session (Se) like sleep.json/exercise -- so this fixture assumes one GoogleDataPoint represents one whole meal/log entry, with all four macro fields flat in `value` (no sessionPayload). base-knowledge.md documents neither Google's exact field names for this type nor its wire shape beyond the `<data_type>.<field>` nesting convention (§2) -- field names `nutrition_log.energy_kcal`/`.protein_g`/`.carbs_g`/`.fat_g` are invented, chosen for consistency with this fixture set's existing short, unit-suffixed naming style (active-energy-burned.json's `kcal`, blood-glucose-mgdl.json's `mg_per_dl`). This is the full-macro variant (all four present) -- see nutrition-log-partial.json for WP-13's required 'meal missing macros' scenario. `dataPointId` (`nutrition-0001`) is this design's meal-grouping key (WP-13: 'meal grouping key = Google log entry ID') -- see SyncKit's MappedNutritionCorrelation doc comment for the full one-point-per-meal assumption and its flagged need for reconciliation against a real payload. Mirrored in SyncKit's TypeMapperFixtures.nutritionLogPoint().",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "nutrition-0001",
-      "startTime": "2026-07-01T12:15:00Z",
-      "endTime": "2026-07-01T12:15:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "MANUAL_ENTRY"
-      },
-      "value": {
-        "nutrition_log.energy_kcal": 650,
-        "nutrition_log.protein_g": 35,
-        "nutrition_log.carbs_g": 70,
-        "nutrition_log.fat_g": 22
+      "dataPointName": "",
+      "nutritionLog": {
+        "interval": {
+          "startTime": "2026-07-01T12:15:00Z",
+          "endTime": "2026-07-01T12:15:00Z"
+        },
+        "energy": {
+          "kcal": 650
+        },
+        "totalCarbohydrate": {
+          "grams": 70
+        },
+        "totalFat": {
+          "grams": 22
+        },
+        "nutrients": [
+          {
+            "nutrient": "PROTEIN",
+            "quantity": {
+              "grams": 35
+            }
+          },
+          {
+            "nutrient": "SODIUM",
+            "quantity": {
+              "grams": 0.8
+            }
+          }
+        ]
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

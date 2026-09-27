@@ -18,25 +18,33 @@ import Testing
 @testable import SyncKit
 
 @Suite struct TypeMapperExerciseTests {
-    /// One golden test per row of `TypeMapper`'s explicit
-    /// `googleExerciseActivityTypes` table (WP-12 step 2) -- all thirteen
-    /// recognized Google wire strings, each asserted against its documented
-    /// `MappedWorkoutActivityType` bucket.
+    /// Golden rows over the published `Exercise.ExerciseType` enum (WP-51):
+    /// at least one value per workout bucket, plus the variants most likely
+    /// in real Fitbit/Pixel data, each pinned to its documented bucket.
     @Test(
         arguments: [
-            ("run", MappedWorkoutActivityType.running),
-            ("walk", .walking),
-            ("bike", .cycling),
-            ("swim", .swimming),
-            ("hike", .hiking),
-            ("weights", .traditionalStrengthTraining),
-            ("yoga", .yoga),
-            ("elliptical", .elliptical),
-            ("rowing", .rowing),
-            ("hiit", .highIntensityIntervalTraining),
-            ("stair_climbing", .stairClimbing),
-            ("core_training", .coreTraining),
-            ("workout", .other),
+            ("RUNNING", MappedWorkoutActivityType.running),
+            ("TRAIL_RUN", .running),
+            ("TREADMILL", .running),
+            ("WALKING", .walking),
+            ("POWER_WALKING", .walking),
+            ("BIKING", .cycling),
+            ("STATIONARY_BIKE", .cycling),
+            ("SPINNING", .cycling),
+            ("SWIMMING", .swimming),
+            ("SWIMMING_OPEN_WATER", .swimming),
+            ("HIKING", .hiking),
+            ("WEIGHTS", .traditionalStrengthTraining),
+            ("STRENGTH_TRAINING", .traditionalStrengthTraining),
+            ("YOGA", .yoga),
+            ("YOGA_VINYASA", .yoga),
+            ("ELLIPTICAL", .elliptical),
+            ("ROWING_MACHINE", .rowing),
+            ("HIIT", .highIntensityIntervalTraining),
+            ("STAIRCLIMBER", .stairClimbing),
+            ("CORE_TRAINING", .coreTraining),
+            ("TENNIS", .other),
+            ("OTHER", .other),
         ]
     )
     func recognizedActivityTypeGolden(wireValue: String, expected: MappedWorkoutActivityType) {
@@ -54,7 +62,7 @@ import Testing
     /// targets `.other`) still decides successfully, just bucketed to
     /// `.other` via the table lookup's `?? .other` fallback.
     @Test func unrecognizedActivityTypeDefaultsToOther() {
-        let point = TypeMapperFixtures.exercisePoint(wireActivityType: "paddleboarding_xyz")
+        let point = TypeMapperFixtures.exercisePoint(wireActivityType: "SOME_FUTURE_EXERCISE_TYPE")
         guard case .workout(let workout) = TypeMapper.decide(point) else {
             Issue.record("expected .workout")
             return
@@ -68,7 +76,7 @@ import Testing
     @Test func fullGoldenIncludesDistanceEnergyAndMetadata() {
         let point = TypeMapperFixtures.exercisePoint(
             id: "exercise-0001",
-            wireActivityType: "run",
+            wireActivityType: "RUNNING",
             distanceMeters: 8000.0,
             energyKilocalories: 520.0
         )
@@ -128,11 +136,12 @@ import Testing
         #expect(TypeMapper.decide(point) == .skip)
     }
 
-    /// A payload that decodes as JSON but is missing the required
-    /// `exercise.activity_type` field entirely never crashes -- drops
-    /// (there's no way to classify a workout with no type at all).
-    @Test func payloadMissingActivityTypeFieldRoutesToSkip() {
-        let payload = try! JSONSerialization.data(withJSONObject: ["exercise.distance": 100.0], options: [])
+    /// catches: a session without `exerciseType` being dropped. Google's
+    /// enum has an explicit `EXERCISE_TYPE_UNSPECIFIED`, and a real, timed
+    /// session is better recorded as an Other workout than lost (WP-51; it
+    /// was a skip under the invented pre-WP-51 shape).
+    @Test func payloadMissingActivityTypeIsAnOtherWorkout() {
+        let payload = try! JSONSerialization.data(withJSONObject: ["metricsSummary": ["distanceMillimeters": 100_000.0]], options: [])
         let point = GoogleDataPoint(
             id: "exercise-no-type",
             dataType: .exercise,
@@ -142,7 +151,12 @@ import Testing
             values: [:],
             sessionPayload: payload
         )
-        #expect(TypeMapper.decide(point) == .skip)
+        guard case .workout(let workout) = TypeMapper.decide(point) else {
+            Issue.record("expected an .other workout")
+            return
+        }
+        #expect(workout.activityType == .other)
+        #expect(workout.distanceMeters == 100)
     }
 
     /// A reversed window (`end < start`) is dropped, same invariant as every

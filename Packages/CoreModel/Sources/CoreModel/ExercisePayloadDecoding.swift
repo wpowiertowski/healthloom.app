@@ -29,25 +29,29 @@ import Foundation
 /// (which *would* get the module's MainActor default, having no base type
 /// of its own to infer from) from that nonisolated context fails to build.
 nonisolated public struct ExercisePayloadFields: Sendable, Hashable {
+    /// Display title: the API's `displayName` when it sends one, else the
+    /// title-cased `exerciseType` ("TRAIL_RUN" → "Trail Run").
     public let activityName: String?
+    /// The raw `Exercise.ExerciseType` enum value ("RUNNING"), for anything
+    /// that classifies activities -- names are for people, this is for code.
+    public let exerciseType: String?
     public let distanceMeters: Double?
     public let energyKilocalories: Double?
 
-    public init(activityName: String?, distanceMeters: Double?, energyKilocalories: Double?) {
+    public init(activityName: String?, exerciseType: String? = nil, distanceMeters: Double?, energyKilocalories: Double?) {
         self.activityName = activityName
+        self.exerciseType = exerciseType
         self.distanceMeters = distanceMeters
         self.energyKilocalories = energyKilocalories
     }
 }
 
 extension LocalSample {
-    /// Decodes `payloadJSON`'s `sessionPayload` key (base64 `Data` under
-    /// `JSONEncoder`'s default strategy, itself holding another JSON object)
-    /// for a `.exercise`-type sample: the Google Exercise session's own
-    /// fields (`exercise.activity_type` / `exercise.distance` (m) /
-    /// `exercise.energy` (kcal) -- SyncKit's `ExerciseSessionDecoding.swift`
-    /// wire shape). Degrades to all-`nil` fields on any decode failure at
-    /// any level -- never throws.
+    /// WP-51: `sessionPayload` is the API's typed `exercise` object --
+    /// `exerciseType`, `displayName`, and `metricsSummary` with
+    /// `distanceMillimeters` / `caloriesKcal` (published v4 reference). The
+    /// pre-WP-51 keys (`exercise.activity_type` ...) never matched a real
+    /// response.
     public var decodedExercisePayload: ExercisePayloadFields {
         guard let envelope = try? JSONSerialization.jsonObject(with: payloadJSON) as? [String: Any],
               let sessionBase64 = envelope["sessionPayload"] as? String,
@@ -55,11 +59,14 @@ extension LocalSample {
               let session = try? JSONSerialization.jsonObject(with: sessionData) as? [String: Any] else {
             return ExercisePayloadFields(activityName: nil, distanceMeters: nil, energyKilocalories: nil)
         }
-        let activityName = (session["exercise.activity_type"] as? String).map(GoogleDataType.titleCased)
+        let exerciseType = session["exerciseType"] as? String
+        let displayName = (session["displayName"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let metrics = session["metricsSummary"] as? [String: Any]
         return ExercisePayloadFields(
-            activityName: activityName,
-            distanceMeters: session["exercise.distance"] as? Double,
-            energyKilocalories: session["exercise.energy"] as? Double
+            activityName: displayName ?? exerciseType.map { GoogleDataType.titleCased($0.lowercased()) },
+            exerciseType: exerciseType,
+            distanceMeters: (metrics?["distanceMillimeters"] as? Double).map { $0 / 1000 },
+            energyKilocalories: metrics?["caloriesKcal"] as? Double
         )
     }
 }

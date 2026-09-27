@@ -42,7 +42,7 @@ private enum ActivitiesSnapshotSubject {
     /// A Fitbit session linked to the watch run: its fields render as the
     /// D13.2 supplement line, never as the run's own badges.
     static var runSupplement: FitbitActivitySupplement {
-        let session = Data(#"{"exercise.activity_type":"run","exercise.distance":6300.0,"exercise.energy":410.0}"#.utf8)
+        let session = Data(#"{"exerciseType":"RUNNING","displayName":"Run","metricsSummary":{"distanceMillimeters":6300000.0,"caloriesKcal":410.0}}"#.utf8)
         let start = at(day: 18, hour: 11, minute: 48)
         return FitbitActivitySupplement(sample: LocalSample(
             externalID: "fitbit-run",

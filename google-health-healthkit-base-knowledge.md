@@ -44,9 +44,48 @@ There are **two separate "Google health" surfaces**, and only one is reachable f
 
 ### Data behavior gotchas
 - **Not real-time.** Fitbit devices sync only through the Fitbit/Google Health app — typically every ~15 min while the app is open. The API reflects data only after that sync.
-- **No common schema with old Fitbit API** — zero overlapping field paths. Everything nests under `<data_type>.<field>` + a `dataSource` wrapper (`platform`, `device.displayName`, `recordingMethod`).
+- **No common schema with old Fitbit API** — zero overlapping field paths. Each point is a typed union member named for its data type (see *Wire format* below), with `dataSource` on listed points only.
 - **Odd base units** — e.g. distances in **millimeters** for precision. Normalize on ingest.
 - **Intraday / high-frequency** data was still rolling out mid-2026; some metrics may only be available as daily rollups initially.
+
+### Wire format (verified 2026-09-27 against the published v4 reference)
+
+HealthLoom's first real sync returned 404 for every type because the client was built on
+an assumed flat shape. The published reference
+(developers.google.com/health/reference/rest/v4) says:
+
+- **Reads are `GET` with an empty body.**
+  - Reconcile: `GET v4/users/me/dataTypes/{kebab-type}/dataPoints:reconcile`.
+  - List: the same path without `:reconcile`.
+  - Query parameters: `filter`, `pageSize`, `pageToken`, and optionally `dataSourceFamily`.
+- **`filter` is AIP-160** with a snake_case type prefix. Its field depends on how the type
+  records time:
+  - interval types: `steps.interval.start_time`;
+  - instant samples: `weight.sample_time.physical_time`;
+  - daily summaries: `daily_resting_heart_rate.date` (`YYYY-MM-DD`);
+  - sessions: `exercise.interval.civil_start_time`;
+  - sleep: filtered on `sleep.interval.end_time`;
+  - ECG: only `electrocardiogram.interval.start_time >=`.
+
+  Example: `steps.interval.start_time >= "2026-07-01T00:00:00Z" AND steps.interval.start_time < "2026-07-02T00:00:00Z"`.
+- **Response:** `{ "dataPoints": [...], "nextPageToken": "..." }`. Each point is
+  `{ "dataPointName": "...", "<camelType>": {...} }`, for example
+  `"heartRate": { "sampleTime": { "physicalTime": ... }, "beatsPerMinute": "72" }`.
+  - **Reconciled points have no `dataSource`.**
+  - **`dataPointName` is empty for most types**, so derive a stable ID.
+  - Listed points carry `name` and `dataSource`.
+- **Whole numbers arrive as strings** (`"count": "482"`). Units live in field names:
+  `weightGrams`, `millimeters`, `heightMillimeters`, `kcal`, `temperatureCelsius`,
+  `bloodGlucoseMilligramsPerDeciliter`, `amountConsumed.milliliters`.
+- **Page size:** at most 25 for exercise and sleep, and 10,000 for everything else.
+- **Not every type can be reconciled.** ECG, irregular-rhythm notifications and food are
+  list-only. Total calories and calories-in-heart-rate-zone exist only as roll-ups, and
+  `food` is a catalogue entry, not a time series.
+- Sleep stages are `stages[{startTime, endTime, type}]`, with `type` one of AWAKE, LIGHT,
+  DEEP, REM, ASLEEP or RESTLESS. Exercise carries `exerciseType` (180+ enum values),
+  `displayName` and `metricsSummary` (`distanceMillimeters`, `caloriesKcal`, …).
+
+`Packages/GoogleHealthClient/.../GoogleDataTypeSchema.swift` holds the per-type table.
 
 ---
 

@@ -1,19 +1,15 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Active Energy Burned is an Interval (I) type per base-knowledge.md §3; value key `active_energy_burned.kcal` (field name assumed -- kcal matches the unit HealthKit itself uses for activeEnergyBurned, HKUnit.kilocalorie()). base-knowledge.md §5: Google gives a single energy total -- this type maps only to HKQuantityTypeIdentifierActiveEnergyBurned; SyncKit's TypeMapper deliberately does NOT invent a basalEnergyBurned split from Google's separate Total Calories type (see TypeMapper.swift's decideHealthKitMapped doc comment). Mirrored in SyncKit's TypeMapperFixtures.activeEnergyBurnedPoint().",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "aeb-0001",
-      "startTime": "2026-07-01T08:00:00Z",
-      "endTime": "2026-07-01T09:00:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "active_energy_burned.kcal": 312.5
+      "dataPointName": "",
+      "activeEnergyBurned": {
+        "interval": {
+          "startTime": "2026-07-01T08:00:00Z",
+          "endTime": "2026-07-01T09:00:00Z"
+        },
+        "kcal": 312.5
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

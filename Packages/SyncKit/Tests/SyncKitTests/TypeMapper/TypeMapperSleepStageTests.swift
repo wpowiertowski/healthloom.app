@@ -22,10 +22,10 @@ import Testing
             start: TypeMapperFixtures.date("2026-07-08T23:00:00Z"),
             end: TypeMapperFixtures.date("2026-07-09T01:00:00Z"),
             segments: [
-                .init("2026-07-08T23:00:00Z", "2026-07-08T23:10:00Z", "awake"),
+                .init("2026-07-08T23:00:00Z", "2026-07-08T23:10:00Z", "AWAKE"),
                 .init("2026-07-08T23:10:00Z", "2026-07-08T23:15:00Z", "napping"), // unknown
-                .init("2026-07-08T23:15:00Z", "2026-07-08T23:15:00Z", "light"),  // zero-length
-                .init("2026-07-08T23:15:00Z", "2026-07-09T01:00:00Z", "light"),
+                .init("2026-07-08T23:15:00Z", "2026-07-08T23:15:00Z", "LIGHT"),  // zero-length
+                .init("2026-07-08T23:15:00Z", "2026-07-09T01:00:00Z", "LIGHT"),
             ]
         )
         guard case .category(let segments) = TypeMapper.decide(point) else {
@@ -52,9 +52,9 @@ import Testing
             start: TypeMapperFixtures.date("2026-07-08T22:00:00Z"),
             end: TypeMapperFixtures.date("2026-07-09T00:00:00Z"),
             segments: [
-                .init("2026-07-08T22:00:00Z", "2026-07-08T23:00:00Z", "light"),
-                .init("2026-07-08T22:30:00Z", "2026-07-08T22:45:00Z", "awake"), // fully inside the light segment above
-                .init("2026-07-08T23:00:00Z", "2026-07-09T00:00:00Z", "deep"),
+                .init("2026-07-08T22:00:00Z", "2026-07-08T23:00:00Z", "LIGHT"),
+                .init("2026-07-08T22:30:00Z", "2026-07-08T22:45:00Z", "AWAKE"), // fully inside the light segment above
+                .init("2026-07-08T23:00:00Z", "2026-07-09T00:00:00Z", "DEEP"),
             ]
         )
         guard case .category(let segments) = TypeMapper.decide(point) else {
@@ -78,7 +78,7 @@ import Testing
             segments: [
                 // Starts 30 minutes before the session and ends 30 minutes
                 // after it -- both edges must be clamped inward.
-                .init("2026-07-08T22:30:00Z", "2026-07-09T00:30:00Z", "deep"),
+                .init("2026-07-08T22:30:00Z", "2026-07-09T00:30:00Z", "DEEP"),
             ]
         )
         guard case .category(let segments) = TypeMapper.decide(point) else {
@@ -98,7 +98,7 @@ import Testing
             start: TypeMapperFixtures.date("2026-07-08T23:00:00Z"),
             end: TypeMapperFixtures.date("2026-07-09T00:00:00Z"),
             segments: [
-                .init("2026-07-08T23:00:00Z", "2026-07-08T23:00:00Z", "light"), // zero-length
+                .init("2026-07-08T23:00:00Z", "2026-07-08T23:00:00Z", "LIGHT"), // zero-length
             ]
         )
         #expect(TypeMapper.decide(point) == .skip)
@@ -130,5 +130,37 @@ import Testing
             sessionPayload: Data("not json".utf8)
         )
         #expect(TypeMapper.decide(point) == .skip)
+    }
+
+    // catches: a night with no stage breakdown (a nap, some classic sleeps)
+    // being dropped instead of recorded as sleep (WP-51).
+    @Test func stagelessSessionIsOneUnspecifiedSample() {
+        let point = TypeMapperFixtures.sleepPoint(segments: [])
+        guard case .category(let samples) = TypeMapper.decide(point) else {
+            Issue.record("expected one sleep sample")
+            return
+        }
+        #expect(samples.count == 1)
+        #expect(samples.first?.stage == .asleepUnspecified)
+        #expect(samples.first?.start == point.start)
+        #expect(samples.first?.end == point.end)
+    }
+
+    // catches: classic sleep's ASLEEP / RESTLESS counted as awake -- restless
+    // is movement while asleep, and both are sleep time.
+    @Test func classicSleepStagesAreAsleep() {
+        let point = TypeMapperFixtures.sleepPoint(
+            start: TypeMapperFixtures.date("2026-07-08T23:00:00Z"),
+            end: TypeMapperFixtures.date("2026-07-09T01:00:00Z"),
+            segments: [
+                .init("2026-07-08T23:00:00Z", "2026-07-09T00:00:00Z", "ASLEEP"),
+                .init("2026-07-09T00:00:00Z", "2026-07-09T01:00:00Z", "RESTLESS"),
+            ]
+        )
+        guard case .category(let samples) = TypeMapper.decide(point) else {
+            Issue.record("expected sleep samples")
+            return
+        }
+        #expect(samples.map(\.stage) == [.asleepUnspecified, .asleepUnspecified])
     }
 }

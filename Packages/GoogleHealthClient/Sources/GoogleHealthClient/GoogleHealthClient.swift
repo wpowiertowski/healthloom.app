@@ -2,7 +2,7 @@
 //
 // Placeholder for WP-01 (project skeleton). Real content lands in WP-04
 // (actor GoogleAuthManager - OAuth 2.0 + PKCE) and WP-05 (typed v4 REST client,
-// GoogleDataPoint, UnitNormalizer, pagination, resilience). See
+// GoogleDataPoint, GoogleDataTypeSchema, pagination, resilience). See
 // implementation-plan.md WP-04/WP-05 and architecture.md §2.
 //
 // Depends on CoreModel and Secrets (architecture.md §2 dependency order).

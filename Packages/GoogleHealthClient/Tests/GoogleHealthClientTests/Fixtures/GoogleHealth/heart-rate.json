@@ -1,32 +1,23 @@
 {
-  "_comment": "Hand-derived, same envelope assumption as steps.json (see its _comment). Heart Rate is a Sample (S) type per base-knowledge.md §3, so start == end (an instant reading) is the expected shape; value key is `heart_rate.bpm` (GoogleDataType.heartRate.filterName == \"heart_rate\").",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "hr-0001",
-      "startTime": "2026-07-01T07:30:00Z",
-      "endTime": "2026-07-01T07:30:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "heart_rate.bpm": 58
+      "dataPointName": "",
+      "heartRate": {
+        "sampleTime": {
+          "physicalTime": "2026-07-01T07:30:00Z"
+        },
+        "beatsPerMinute": "58"
       }
     },
     {
-      "dataPointId": "hr-0002",
-      "startTime": "2026-07-01T07:31:00Z",
-      "endTime": "2026-07-01T07:31:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "heart_rate.bpm": 61
+      "dataPointName": "",
+      "heartRate": {
+        "sampleTime": {
+          "physicalTime": "2026-07-01T07:31:00Z"
+        },
+        "beatsPerMinute": "61"
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

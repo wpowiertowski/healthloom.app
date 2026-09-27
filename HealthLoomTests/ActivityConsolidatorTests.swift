@@ -53,7 +53,7 @@ struct ActivityConsolidatorTests {
         end: Date = at(10.72)
     ) -> LocalSample {
         let session = Data(
-            #"{"exercise.activity_type":"run","exercise.distance":8000.0,"exercise.energy":520.0}"#.utf8
+            #"{"exerciseType":"RUNNING","displayName":"Run","metricsSummary":{"distanceMillimeters":8000000.0,"caloriesKcal":520.0}}"#.utf8
         )
         return LocalSample(
             externalID: externalID,
@@ -304,29 +304,30 @@ struct ActivityDetailingTests {
     }
 
     // catches: a Fitbit swim or ride drawn in another family's field. Each
-    // wire key goes through the real decode path (CoreModel title-cases it),
-    // so a change to either vocabulary shows up here.
-    @Test func fitbitNamesMapToTheirFamilies() {
+    // exercise type goes through the real decode path (CoreModel reads
+    // `exerciseType`) and SyncKit's one classification table (WP-51), so a
+    // change to either shows up here.
+    @Test func exerciseTypesMapToTheirFamilies() {
         let expected: [String: ActivityFamily] = [
-            "run": .onFoot, "walk": .onFoot, "hike": .onFoot,
-            "swim": .water,
-            "bike": .endurance, "rowing": .endurance, "elliptical": .endurance, "stair_climbing": .endurance,
-            "weights": .training, "yoga": .training, "hiit": .training, "core_training": .training,
-            "workout": .training,
+            "RUNNING": .onFoot, "TRAIL_RUN": .onFoot, "WALKING": .onFoot, "HIKING": .onFoot,
+            "SWIMMING": .water, "SWIMMING_POOL": .water,
+            "BIKING": .endurance, "ROWING_MACHINE": .endurance, "ELLIPTICAL": .endurance, "STAIRCLIMBER": .endurance,
+            "WEIGHTS": .training, "YOGA": .training, "HIIT": .training, "CORE_TRAINING": .training,
+            "TENNIS": .training, "OTHER": .training,
         ]
-        for (wireKey, family) in expected {
-            let session = Data(#"{"exercise.activity_type":"\#(wireKey)"}"#.utf8)
+        for (exerciseType, family) in expected {
+            let session = Data(#"{"exerciseType":"\#(exerciseType)"}"#.utf8)
             let sample = LocalSample(
-                externalID: "fitbit-\(wireKey)",
+                externalID: "fitbit-\(exerciseType)",
                 dataType: GoogleDataType.exercise.rawValue,
                 payloadJSON: Data(#"{"sessionPayload":"\#(session.base64EncodedString())"}"#.utf8),
                 start: Fixture.at(10), end: Fixture.at(11),
                 source: "Fitbit Air", linkedWatchWorkoutUUID: nil
             )
-            let name = FitbitActivitySupplement(sample: sample).activityName
-            #expect(ActivityFamily(fitbitActivityName: name) == family, "\(wireKey) -> \(name ?? "nil")")
+            let decoded = FitbitActivitySupplement(sample: sample).exerciseType
+            #expect(ActivityFamily(googleExerciseType: decoded) == family, "\(exerciseType)")
         }
-        #expect(ActivityFamily(fitbitActivityName: nil) == .training)
+        #expect(ActivityFamily(googleExerciseType: nil) == .training)
     }
 
     // catches: two activity families sharing a field, so kinds can't be told

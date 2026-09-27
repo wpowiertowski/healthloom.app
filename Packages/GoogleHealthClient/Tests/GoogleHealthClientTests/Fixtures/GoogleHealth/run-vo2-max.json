@@ -1,19 +1,14 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Run VO2 Max is a distinct Google type from plain VO2 Max (base-knowledge.md §3) but base-knowledge.md §5 maps both to the same HealthKit identifier, HKQuantityTypeIdentifierVO2Max -- SyncKit's TypeMapper.decideVO2Max handles both Google types in one function. Value key `run_vo2_max.value` (field name assumed, consistent with vo2-max.json). Mirrored in SyncKit's TypeMapperFixtures.vo2MaxPoint(id: \"run-vo2-0001\", dataType: .runVO2Max, value: 45.1).",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "run-vo2-0001",
-      "startTime": "2026-07-05T09:00:00Z",
-      "endTime": "2026-07-05T09:00:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "run_vo2_max.value": 45.1
+      "dataPointName": "",
+      "runVo2Max": {
+        "sampleTime": {
+          "physicalTime": "2026-07-05T09:00:00Z"
+        },
+        "runVo2Max": 45.1
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

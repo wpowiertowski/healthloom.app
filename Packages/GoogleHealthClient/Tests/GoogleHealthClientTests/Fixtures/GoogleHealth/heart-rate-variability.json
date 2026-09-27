@@ -1,19 +1,14 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Heart Rate Variability is a Sample (S) type per base-knowledge.md §3; value key `heart_rate_variability.rmssd` (field name assumed, and the assumption itself is the point of this fixture). base-knowledge.md documents neither Google's HRV algorithm nor its field name -- 'rmssd' records this session's out-of-band, unconfirmed belief that Fitbit/Google's HRV metric is RMSSD-based (a different statistic than HealthKit's heartRateVariabilitySDNN), not SDNN. Because that belief is unconfirmed by base-knowledge.md itself, SyncKit's TypeMapper routes this whole type to .localOnly regardless of field content -- see TypeMapper.swift's decideHeartRateVariability doc comment and progress.md's WP-11 entry. Mirrored in SyncKit's TypeMapperFixtures.heartRateVariabilityPoint().",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "hrv-0001",
-      "startTime": "2026-07-09T03:00:00Z",
-      "endTime": "2026-07-09T03:00:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "heart_rate_variability.rmssd": 38.2
+      "dataPointName": "",
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-07-09T03:00:00Z"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 38.2
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

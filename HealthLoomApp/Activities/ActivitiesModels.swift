@@ -20,6 +20,7 @@
 
 import CoreModel
 import Foundation
+import SyncKit
 
 /// Which kind of activity an entry is, coarsely -- enough to give each kind
 /// its own concrete field on the duration bar (D16.8). The title always
@@ -34,19 +35,20 @@ enum ActivityFamily: Hashable, CaseIterable {
     /// Strength, yoga, core, HIIT, and anything unrecognized.
     case training
 
-    /// Fitbit-only sessions carry only Google's activity string, title-cased
-    /// by CoreModel (`GoogleDataType.titleCased` over TypeMapper's
-    /// `googleExerciseActivityTypes` keys: "Run", "Bike", "Weights", ...).
+    /// Fitbit-only sessions carry the API's `Exercise.ExerciseType` enum
+    /// ("RUNNING", "SWIMMING_POOL", ...). SyncKit already classifies it into
+    /// workout buckets (`TypeMapper.workoutActivityType`, the one table), so
+    /// the family derives from the bucket rather than a second enum table.
     /// HealthKit workouts don't come through here -- `ActivitiesProvider`
-    /// assigns their family from the real `HKWorkoutActivityType`, beside
-    /// the display name, because the two vocabularies differ ("Bike" vs
-    /// "Ride", "Weights" vs "Strength Training").
-    init(fitbitActivityName name: String?) {
-        switch name {
-        case "Run", "Walk", "Hike": self = .onFoot
-        case "Swim": self = .water
-        case "Bike", "Rowing", "Elliptical", "Stair Climbing": self = .endurance
-        default: self = .training
+    /// assigns their family from the real `HKWorkoutActivityType`.
+    init(googleExerciseType type: String?) {
+        switch TypeMapper.workoutActivityType(forGoogleExerciseType: type) {
+        case .running, .walking, .hiking: self = .onFoot
+        case .swimming: self = .water
+        case .cycling, .rowing, .elliptical, .stairClimbing: self = .endurance
+        case .traditionalStrengthTraining, .yoga, .highIntensityIntervalTraining,
+             .coreTraining, .other:
+            self = .training
         }
     }
 }
@@ -99,6 +101,8 @@ struct FitbitActivitySupplement: Identifiable, Hashable {
     let source: String
     let linkedWatchWorkoutUUID: UUID?
     let activityName: String?
+    /// The raw `Exercise.ExerciseType` value, for classification.
+    let exerciseType: String?
     let distanceMeters: Double?
     let energyKilocalories: Double?
 
@@ -119,6 +123,7 @@ struct FitbitActivitySupplement: Identifiable, Hashable {
 
         let fields = sample.decodedExercisePayload
         self.activityName = fields.activityName
+        self.exerciseType = fields.exerciseType
         self.distanceMeters = fields.distanceMeters
         self.energyKilocalories = fields.energyKilocalories
     }
@@ -303,7 +308,7 @@ enum ActivityConsolidator {
                 end: supplement.end,
                 sourceLabel: supplement.source,
                 supplement: nil,
-                family: ActivityFamily(fitbitActivityName: supplement.activityName),
+                family: ActivityFamily(googleExerciseType: supplement.exerciseType),
                 distanceMeters: supplement.distanceMeters
             )
         })

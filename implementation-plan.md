@@ -1185,6 +1185,37 @@ Welcome.
 
 ---
 
+### WP-51 · Real Google Health API wire format
+
+**Depends on:** P-1.3 (real OAuth client), WP-05, WP-07, WP-12.
+
+The first real sync (TestFlight, 2026-09-27) returned `server(status: 404)` for every
+type: the client was built on assumed shapes (POST + JSON body; flat `dataPointId` /
+`startTime` / `value{}` points) that the shipped v4 API doesn't use.
+
+**Steps:**
+1. `GoogleDataTypeSchema`: one row per readable type from the published reference --
+   union key, time shape (and so filter field), reconcile vs list, value paths with unit
+   scaling into TypeMapper's names. Roll-up-only / non-time-series types throw
+   `.notAvailableFromGoogle`.
+2. Requests: `GET … /dataPoints:reconcile` (or list) with an AIP-160 `filter`, page size
+   (25 for sessions), `pageToken`; civil times in the wearer's zone.
+3. Decoding: `dataPoints[]` of typed union objects; stable IDs (API name, else type +
+   interval + discriminator); named decode failures (field names, never values).
+4. Sessions: sleep `stages[{type}]` (stage-less sessions become one asleep sample);
+   exercise `exerciseType` / `metricsSummary`, 180+ enum values bucketed once in
+   `TypeMapper.workoutActivityType`, which the app's activity families reuse.
+5. Fixtures rewritten to the real shape; `base-knowledge.md` gains a verified wire-format
+   section.
+
+**Tests:** per-fixture decode to TypeMapper's names and units; filter per time shape
+(UTC and civil); GET with no body, path, `:reconcile` vs list, page sizes; unreadable
+types fail without a network call; every synced type has a row; stable, distinct IDs;
+listed points keep their source; named failures; sleep stage map and stage-less
+sessions; exercise buckets over real enum values; app families via the decode path.
+
+---
+
 ---
 
 ## Sequencing summary
@@ -1207,6 +1238,7 @@ P5  WP-47      CloudKit schema as code ................. Production schema deplo
 P5  WP-48      Silkscreen labels spoken as written ..... CI-guarded
 P5  WP-49      iCloud sync timing ...................... changes sync in seconds
 P5  WP-50      Onboarding runs once .................... until a wipe
+P5  WP-51      Real Google Health API wire format ...... first real sync returned 404
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

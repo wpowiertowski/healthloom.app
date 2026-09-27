@@ -1,12 +1,12 @@
 // SleepSessionDecoding.swift
 //
-// WP-07 step 3 (implementation-plan.md): decodes the wire shape of a Google
-// sleep session's nested stage breakdown, as preserved verbatim in
-// `GoogleDataPoint.sessionPayload` (WP-05's `sleep.json` fixture assumes this
-// shape -- a `"sleep.segment"` array of `{startTime, endTime, stage}`
-// objects; see that fixture's own `_comment` for the reasoning, since
-// base-knowledge.md documents the `<data_type>.<field>` nesting convention
-// but not a session's exact internal shape).
+// WP-07 step 3 (implementation-plan.md): decodes a Google sleep session's
+// stage breakdown from `GoogleDataPoint.sessionPayload`, which carries the
+// API's typed `sleep` object verbatim. WP-51: the real v4 shape (published
+// reference) is `stages: [{startTime, endTime, type}]` with `type` one of
+// AWAKE / LIGHT / DEEP / REM (staged sleep) or ASLEEP / RESTLESS (classic
+// sleep). The pre-WP-51 assumption (`"sleep.segment"`, lowercase `stage`)
+// never matched a real response.
 //
 // Deliberately its own file / HealthKit-free, same rationale as
 // GoogleHealthClient's `ISO8601Formatting.swift` (which this mirrors but
@@ -21,12 +21,24 @@ nonisolated struct SleepSessionWire: Decodable {
         let startTime: Date
         let endTime: Date
         let stage: String
+
+        private enum CodingKeys: String, CodingKey {
+            case startTime, endTime
+            case stage = "type"
+        }
     }
 
     let segments: [Segment]
 
     private enum CodingKeys: String, CodingKey {
-        case segments = "sleep.segment"
+        case segments = "stages"
+    }
+
+    /// A session without a stage breakdown (a short nap, some classic
+    /// sleeps) decodes to no segments rather than failing.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        segments = try container.decodeIfPresent([Segment].self, forKey: .segments) ?? []
     }
 }
 

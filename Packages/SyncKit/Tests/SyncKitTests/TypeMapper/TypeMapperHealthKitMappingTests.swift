@@ -318,7 +318,7 @@ import Testing
     /// value `TypeMapper.decide(_:)` produced -- see `MappedObject.workout`'s
     /// doc comment for why there's no real `HKWorkout` to construct here).
     @Test func exerciseSessionMapsToAWorkoutDecisionThroughMap() {
-        guard case .workout(let workout) = TypeMapper.map(TypeMapperFixtures.exercisePoint(wireActivityType: "bike")) else {
+        guard case .workout(let workout) = TypeMapper.map(TypeMapperFixtures.exercisePoint(wireActivityType: "BIKING")) else {
             Issue.record("expected .workout")
             return
         }
