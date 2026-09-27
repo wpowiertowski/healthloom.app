@@ -46,10 +46,14 @@ public enum HealthKitWriterError: Error, Sendable, Equatable, CustomStringConver
 
     public var description: String {
         switch self {
+        // Short prefixes (WP-53): the Sync Log redactor treats any 24+
+        // character identifier run as a possible token, so the old
+        // `HealthKitWriterError.underlying(...)` prefix reached the Data
+        // tab as "[REDACTED](Error Domain=...)".
         case .underlying(let message):
-            return "HealthKitWriterError.underlying(\(message))"
+            return "HealthKit: \(message)"
         case .protectedDataUnavailable:
-            return "HealthKitWriterError.protectedDataUnavailable"
+            return "HealthKit: device locked"
         }
     }
 }
