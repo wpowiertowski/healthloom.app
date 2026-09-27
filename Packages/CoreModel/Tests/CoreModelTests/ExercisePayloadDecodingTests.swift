@@ -19,21 +19,36 @@ struct ExercisePayloadDecodingTests {
         return try! JSONSerialization.data(withJSONObject: envelope)
     }
 
-    @Test("decodes activity type, distance, and energy from sessionPayload")
+    // catches: the real exercise object (WP-51) decoding to nothing -- type,
+    // title, distance (millimeters → meters) and energy all come from it.
+    @Test("decodes the API's typed exercise object")
     func fullDecode() {
         let payload = envelope(sessionPayload: [
-            "exercise.activity_type": "high_intensity_interval_training",
-            "exercise.distance": 1200.5,
-            "exercise.energy": 340.0,
+            "exerciseType": "TRAIL_RUN",
+            "displayName": "Morning trail run",
+            "metricsSummary": ["distanceMillimeters": 1_200_500.0, "caloriesKcal": 340.0],
         ])
         let sample = LocalSample(
             externalID: "ext-1", dataType: "exercise", payloadJSON: payload,
             start: .now, end: .now.addingTimeInterval(1800), source: "Fitbit Air"
         )
         let fields = sample.decodedExercisePayload
-        #expect(fields.activityName == "High Intensity Interval Training")
+        #expect(fields.activityName == "Morning trail run")
+        #expect(fields.exerciseType == "TRAIL_RUN")
         #expect(fields.distanceMeters == 1200.5)
         #expect(fields.energyKilocalories == 340.0)
+    }
+
+    // catches: an activity without `displayName` rendering untitled -- the
+    // enum is title-cased instead.
+    @Test("falls back to the title-cased exercise type")
+    func titleFallsBackToType() {
+        let payload = envelope(sessionPayload: ["exerciseType": "TRAIL_RUN"])
+        let sample = LocalSample(
+            externalID: "ext-2", dataType: "exercise", payloadJSON: payload,
+            start: .now, end: .now.addingTimeInterval(1800), source: "Fitbit Air"
+        )
+        #expect(sample.decodedExercisePayload.activityName == "Trail Run")
     }
 
     @Test("missing sessionPayload degrades to nil fields, never throws")

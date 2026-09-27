@@ -18,10 +18,16 @@ nonisolated enum TestClientFactory {
 
     /// A client that must never actually send a request -- for pure decode/
     /// request-building tests.
-    static func inertClient() -> GoogleHealthClient {
+    static func inertClient(config: GoogleHealthClientConfig = .init()) -> GoogleHealthClient {
         let inertHTTP = RecordingHTTPSession { _, _ in fatalError("no network expected in this test") }
         let auth = GoogleAuthManager(config: authConfig, httpSession: inertHTTP, tokenStore: FakeTokenStore())
-        return GoogleHealthClient(httpSession: inertHTTP, auth: auth)
+        return GoogleHealthClient(config: config, httpSession: inertHTTP, auth: auth)
+    }
+
+    /// A query item's value from a request URL.
+    static func query(_ name: String, in request: URLRequest) -> String? {
+        guard let url = request.url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        return components.queryItems?.first { $0.name == name }?.value
     }
 
     static func tokenJSON(accessToken: String = "data-access-token") -> Data {

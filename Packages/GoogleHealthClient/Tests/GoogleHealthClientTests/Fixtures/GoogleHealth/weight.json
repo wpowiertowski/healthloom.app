@@ -1,19 +1,14 @@
 {
-  "_comment": "Hand-derived, same envelope assumption as steps.json (see its _comment). Weight is a Sample (S) type per base-knowledge.md §3; value key `weight.mass`. WP-07's own plan text flags the unit as unconfirmed ('Google field is grams or kg -- verify against a real payload and pin in a fixture'); this fixture assumes kilograms (70.5) and does not apply any WP-05 UnitNormalizer conversion -- that confirmation/conversion is explicitly left to WP-07 (SyncKit's TypeMapper), not this package. WP-05 only needs this fixture to prove GoogleDataPoint decodes id/start/end/source/values correctly for a Sample type.",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "weight-0001",
-      "startTime": "2026-07-01T06:45:00Z",
-      "endTime": "2026-07-01T06:45:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Aria Air" },
-        "recordingMethod": "MANUAL_ENTRY"
-      },
-      "value": {
-        "weight.mass": 70.5
+      "dataPointName": "",
+      "weight": {
+        "sampleTime": {
+          "physicalTime": "2026-07-01T06:45:00Z"
+        },
+        "weightGrams": 70500
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

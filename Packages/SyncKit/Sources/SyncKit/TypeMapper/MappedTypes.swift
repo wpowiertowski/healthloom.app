@@ -48,7 +48,7 @@ nonisolated public enum MappedUnit: Sendable, Hashable {
     /// `HKUnit.gramUnit(with: .kilo)` -- body mass.
     case kilogram
     /// `HKUnit.meter()` -- distance (already normalized mm->m by
-    /// GoogleHealthClient's `UnitNormalizer`, WP-05), height.
+    /// GoogleHealthClient's `GoogleDataTypeSchema` unit scaling, WP-05), height.
     case meter
     /// `HKUnit.kilocalorie()` -- active energy burned.
     case kilocalorie

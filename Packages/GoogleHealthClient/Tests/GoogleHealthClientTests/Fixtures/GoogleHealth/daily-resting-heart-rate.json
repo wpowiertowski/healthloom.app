@@ -1,19 +1,16 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Daily Resting Heart Rate is a Daily (D) record type per base-knowledge.md §3, assumed here to cover a full calendar-day interval (00:00Z-24:00Z) rather than an instant; value key `daily_resting_heart_rate.bpm`. Maps to HKQuantityTypeIdentifierRestingHeartRate (base-knowledge.md §5). Mirrored in SyncKit's TypeMapperFixtures.restingHeartRatePoint().",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "drhr-0001",
-      "startTime": "2026-07-01T00:00:00Z",
-      "endTime": "2026-07-02T00:00:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "daily_resting_heart_rate.bpm": 52
+      "dataPointName": "",
+      "dailyRestingHeartRate": {
+        "date": {
+          "year": 2026,
+          "month": 7,
+          "day": 1
+        },
+        "beatsPerMinute": "52"
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

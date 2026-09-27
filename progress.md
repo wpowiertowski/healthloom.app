@@ -5780,3 +5780,56 @@ Info.plist scheme each fail exactly their test.
 "unverified app" warning, connection expires every 7 days). Then reconcile TypeMapper's
 activity-type table and the exercise-payload decoding against real responses. Both are
 marked as assumptions until real data exists.
+
+## WP-51 · Real Google Health API wire format (branch `google-health-real-schema` from main b4eaf88)
+
+**Bug.** With the real OAuth client wired in (P-1.3), the owner connected Google on
+TestFlight and every type logged `server(status: 404)`. Sign-in, token and scopes were
+fine. The request and response shapes weren't: the client had been written from
+pre-release notes and flagged its own shape as "an assumption to reconcile once real API
+docs/access exist."
+
+**Source of truth.** The published v4 reference, downloaded as raw HTML and parsed
+directly. A summarising fetch tool had returned wrong field names (`kilojoules` for
+`kcal`, `bloodGlucoseMgPerDl` for `bloodGlucoseMilligramsPerDeciliter`, `celsius` for
+`temperatureCelsius`), so no summary was trusted. What the reference says:
+- **Request:** `GET` with an empty body, not POST.
+- **Window:** an AIP-160 `filter` whose field depends on the time shape, with a
+  snake_case prefix.
+- **Response list:** `dataPoints[]`, not `point[]`.
+- **Each point:** `dataPointName` plus a typed camelCase union object, not a flat point.
+- **Reconciled points:** no `dataSource`, and names are mostly empty.
+- **Values:** whole numbers as strings, units in the field names.
+- **Types:** some list-only (ECG, IRN), some roll-up-only (total calories).
+
+**Fix.**
+- `GoogleDataTypeSchema` is the one per-type table: union key, time shape (so filter
+  field), endpoint, and value rules scaling into the names and units TypeMapper already
+  reads. TypeMapper's contract is unchanged, and its golden tests didn't move.
+- IDs are stable: the API name if present, else type + interval (+ zone for Active Zone
+  Minutes).
+- Decode failures name the type and field, never a value, so the Sync Log pinpoints any
+  remaining mismatch.
+- Sleep: `stages[{type}]` with uppercase stage types. A session with no stages is now one
+  unspecified-asleep sample instead of being dropped.
+- Exercise: `exerciseType` / `displayName` / `metricsSummary`. The 180+ enum values are
+  bucketed once in `TypeMapper.workoutActivityType`, and the app's activity families
+  derive from it, replacing the WP-46 Fitbit-name table. A session without a type is
+  now an Other workout rather than a skip; the enum defines UNSPECIFIED.
+- `UnitNormalizer` and the unused `dailyRollup` path are removed.
+  `blood-glucose-mmol.json` is removed, because the API sends mg/dL only; TypeMapper's
+  mmol branch stays but has no wire source.
+- Fixtures are rewritten to the real shape with values carried over.
+  `base-knowledge.md` gains a verified wire-format section.
+
+**Tests.** GoogleHealthClient 56, SyncKit 318 (2 new), CoreModel 25, CoachKit 198, app
+unit bundle 322. Seven mutants each fail their intended test and nothing else: POST
+instead of GET, wrong filter field, always `:reconcile`, no ID discriminator, unscaled
+weight, no named-failure check, stage-less sleep skipped. Two first attempts didn't
+compile under warnings-as-errors and were re-run as compiling mutants.
+
+**Still doc-derived.** Everything follows the published reference, but nothing has been
+checked against a live response yet. The next TestFlight sync is the check. Anything
+still wrong shows as a named `decodingFailed(...)` reason in the Sync Log. Total
+calories (roll-up only) isn't synced yet: the reconcile union lists a
+`basalEnergyBurned` type that is the likely home, but it's unconfirmed.

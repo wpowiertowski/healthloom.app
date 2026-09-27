@@ -23,12 +23,14 @@ struct ExerciseSupplementTests {
         return try! JSONSerialization.data(withJSONObject: envelope)
     }
 
-    @Test("decodes activity type, distance, and energy from sessionPayload")
+    // catches: the coach's workout supplement losing the real exercise
+    // object's fields (WP-51 shape: exerciseType + metricsSummary in mm/kcal).
+    @Test("decodes the API's typed exercise object")
     func fullDecode() {
         let payload = envelope(sessionPayload: [
-            "exercise.activity_type": "high_intensity_interval_training",
-            "exercise.distance": 1200.5,
-            "exercise.energy": 340.0,
+            "exerciseType": "HIIT",
+            "displayName": "High Intensity Interval Training",
+            "metricsSummary": ["distanceMillimeters": 1_200_500.0, "caloriesKcal": 340.0],
         ])
         let sample = LocalSample(
             externalID: "ext-1", dataType: "exercise", payloadJSON: payload,

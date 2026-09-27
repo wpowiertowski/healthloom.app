@@ -1,19 +1,14 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Blood Glucose is a Sample (S) type per base-knowledge.md §3; base-knowledge.md documents neither Google's wire field name(s) nor which of the two clinically-standard units (US mg/dL vs. mmol/L) it reports. This is the US-conventional mg/dL fixture variant -- WP-11 explicitly asks for both fixture variants rather than inventing a conversion between them. Assumed field name `blood_glucose.mg_per_dl`; the *presence* of this field (rather than `mmol_per_l`, see blood-glucose-mmol.json) is what signals the unit to SyncKit's TypeMapper.decideBloodGlucose -- no separate unit indicator field is assumed. Mirrored in SyncKit's TypeMapperFixtures.bloodGlucoseMgDLPoint().",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "bg-mgdl-0001",
-      "startTime": "2026-07-01T12:00:00Z",
-      "endTime": "2026-07-01T12:00:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "MANUAL_ENTRY"
-      },
-      "value": {
-        "blood_glucose.mg_per_dl": 98
+      "dataPointName": "",
+      "bloodGlucose": {
+        "sampleTime": {
+          "physicalTime": "2026-07-01T12:00:00Z"
+        },
+        "bloodGlucoseMilligramsPerDeciliter": 98
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

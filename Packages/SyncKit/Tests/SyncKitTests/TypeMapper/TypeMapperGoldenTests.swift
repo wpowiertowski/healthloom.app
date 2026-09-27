@@ -108,7 +108,7 @@ import Testing
 
     /// distance.json's `distance-0001` -> `HKQuantityTypeIdentifierDistanceWalkingRunning`,
     /// `.meter`, value 15.0 (already mm->m normalized upstream by
-    /// GoogleHealthClient's `UnitNormalizer`).
+    /// GoogleHealthClient's `GoogleDataTypeSchema` unit scaling).
     @Test func distanceGolden() {
         let point = TypeMapperFixtures.distancePoint()
         guard case .quantity(let sample) = TypeMapper.decide(point) else {

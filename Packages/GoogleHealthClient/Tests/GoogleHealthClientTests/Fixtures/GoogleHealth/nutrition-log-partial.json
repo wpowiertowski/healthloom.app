@@ -1,20 +1,25 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-13) -- companion to nutrition-log.json, same field-name/one-point-per-meal assumptions (see that fixture's own _comment). This is WP-13's required 'meal missing macros' scenario: only energy + protein reported (e.g. a quick log entry without a full carbs/fat breakdown) -- `nutrition_log.carbs_g`/`.fat_g` are simply absent from `value`, not present-as-zero/null, matching how blood-glucose-mgdl.json/blood-glucose-mmol.json each omit the other unit's field entirely rather than nulling it. SyncKit's TypeMapper.decideNutritionLog must build a 2-constituent HKCorrelation(.food) from this, not skip the point and not treat the missing fields as zero. Mirrored in SyncKit's TypeMapperFixtures.nutritionLogPoint(carbsGrams: nil, fatGrams: nil).",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "nutrition-0002",
-      "startTime": "2026-07-01T08:00:00Z",
-      "endTime": "2026-07-01T08:00:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "MANUAL_ENTRY"
-      },
-      "value": {
-        "nutrition_log.energy_kcal": 120,
-        "nutrition_log.protein_g": 18
+      "dataPointName": "",
+      "nutritionLog": {
+        "interval": {
+          "startTime": "2026-07-01T08:00:00Z",
+          "endTime": "2026-07-01T08:00:00Z"
+        },
+        "energy": {
+          "kcal": 120
+        },
+        "nutrients": [
+          {
+            "nutrient": "PROTEIN",
+            "quantity": {
+              "grams": 18
+            }
+          }
+        ]
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

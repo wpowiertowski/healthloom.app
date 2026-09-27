@@ -1,19 +1,15 @@
 {
-  "_comment": "Hand-derived, same envelope assumption as steps.json (see its _comment). Added beyond WP-05 step 7's literal fixture list specifically to exercise the mm->m UnitNormalizer conversion the WP-05 Tests line requires ('mm→m normalization') -- base-knowledge.md §2's only named odd-base-unit example is Distance in millimeters. Raw wire value is 15000mm; UnitNormalizerTests / GoogleDataPointDecodingTests assert the decoded GoogleDataPoint.values[\"distance\"] == 15.0 (meters).",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "distance-0001",
-      "startTime": "2026-07-01T07:00:00Z",
-      "endTime": "2026-07-01T07:20:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "distance.distance": 15000
+      "dataPointName": "",
+      "distance": {
+        "interval": {
+          "startTime": "2026-07-01T07:00:00Z",
+          "endTime": "2026-07-01T07:20:00Z"
+        },
+        "millimeters": "15000"
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }

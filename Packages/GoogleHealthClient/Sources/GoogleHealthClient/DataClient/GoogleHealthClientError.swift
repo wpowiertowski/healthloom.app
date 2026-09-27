@@ -22,6 +22,11 @@ nonisolated public enum GoogleHealthClientError: Error, Sendable, Equatable {
     /// content back) or any part of the request.
     case decodingFailed(String)
 
+    /// The type isn't readable as data points (WP-51): Google offers it only
+    /// through roll-ups (`total_calories`), or it isn't a time series at all
+    /// (`food`). Named so the Sync Log says so instead of showing an error code.
+    case notAvailableFromGoogle
+
     /// No HTTP response was produced at all (offline, DNS failure, ...).
     /// Carries only the underlying error's type name.
     case transport(String)

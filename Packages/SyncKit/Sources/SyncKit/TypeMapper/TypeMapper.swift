@@ -227,19 +227,10 @@ public enum TypeMapper {
     private static func decideWeight(_ point: GoogleDataPoint) -> MappedDecision {
         guard let mass = point.values["mass"] else { return .skip }
         guard point.end >= point.start else { return .skip }
-        // Unit pin (WP-07 step 2: "Google field is grams or kg -- verify
-        // against a real payload and pin in a fixture"): base-knowledge.md's
-        // "odd base units" note names only distance's millimeters, not
-        // weight, and the existing WP-05 `weight.json` fixture explicitly
-        // documents its `70.5` value as already-kilograms with no
-        // `UnitNormalizer` conversion applied, punting the final
-        // confirmation to this WP. `70.5` reads as a plausible adult body
-        // weight in kilograms (it would be an implausible ~70 g, or an
-        // implausible ~70500 g, under the other candidate units) -- so this
-        // maps the raw value straight to kilograms with no scaling. Still an
-        // assumption to reconcile against a real payload once P-1.3 (Google
-        // Cloud OAuth client) unblocks real API access -- flagged again in
-        // progress.md's WP-07 entry.
+        // Unit pin (WP-07 step 2, settled in WP-51): the published v4
+        // reference sends `weight.weightGrams`; GoogleHealthClient's
+        // `GoogleDataTypeSchema` scales it to kilograms, so `mass` arrives
+        // here already in kg and maps straight through.
         guard mass > 0 else { return .skip }
         return .quantity(
             MappedQuantitySample(
@@ -256,7 +247,7 @@ public enum TypeMapper {
     // MARK: - Distance (distanceWalkingRunning / meters) -- WP-11
 
     /// Wire field `distance.distance`, already normalized mm->m by
-    /// GoogleHealthClient's `UnitNormalizer` (WP-05) before this struct is
+    /// GoogleHealthClient's `GoogleDataTypeSchema` unit scaling (WP-05) before this struct is
     /// constructed -- `point.values["distance"]` arrives in meters already,
     /// no further scaling needed (base-knowledge.md §5: "Distance ...
     /// Convert mm -> m").
@@ -589,41 +580,50 @@ public enum TypeMapper {
 
     // MARK: - Exercise (HKWorkout via HKWorkoutBuilder) -- WP-12
 
-    /// WP-12 step 2: the ~13 coarse Google Exercise activity-type wire
-    /// strings this mapper recognizes, each pinned to one
-    /// `MappedWorkoutActivityType` bucket (MappedTypes.swift).
-    /// base-knowledge.md §5 names no exact wire values ("~13 Google types
-    /// are coarse" is the full extent of its guidance) -- this table is
-    /// therefore an invented, documented set based on common Fitbit/Google
-    /// Fit exercise categories (run, walk, bike, swim, weights/strength,
-    /// yoga, hike, elliptical, rowing, HIIT, stair climbing, core training,
-    /// plus a generic "workout" bucket), **not** a confirmed enumeration of
-    /// the real Google Health API's actual enum values. Flagged here and in
-    /// progress.md as needing reconciliation once real API access exists
-    /// (P-1.3) -- the same honesty posture WP-11 already applied to its
-    /// HRV/blood-glucose flags. Any wire string not in this table --
-    /// including a genuinely unrecognized one -- maps to `.other`, per
-    /// WP-12's explicit "default bucket .other for anything unrecognized"
-    /// instruction.
-    static let googleExerciseActivityTypes: [String: MappedWorkoutActivityType] = [
-        "run": .running,
-        "walk": .walking,
-        "bike": .cycling,
-        "swim": .swimming,
-        "hike": .hiking,
-        "weights": .traditionalStrengthTraining,
-        "yoga": .yoga,
-        "elliptical": .elliptical,
-        "rowing": .rowing,
-        "hiit": .highIntensityIntervalTraining,
-        "stair_climbing": .stairClimbing,
-        "core_training": .coreTraining,
-        // Google's own generic/unspecified activity bucket -- distinct from
-        // a truly *unrecognized* wire string (also `.other`, via this
-        // dictionary's `?? .other` fallback below) so the golden-test suite
-        // can exercise both paths to the same result independently.
-        "workout": .other,
-    ]
+    /// WP-12 step 2, reconciled in WP-51 against the published v4
+    /// `Exercise.ExerciseType` enum (180+ values): each maps to the nearest
+    /// of the app's workout buckets (MappedTypes.swift); every value not
+    /// listed -- ball sports, dance, chores, `OTHER`, and anything Google adds
+    /// later -- maps to `.other`, per WP-12's default bucket. The pre-WP-51
+    /// keys (`run`, `bike`, ...) were an invented set that no real response
+    /// uses.
+    static let googleExerciseActivityTypes: [String: MappedWorkoutActivityType] = {
+        let buckets: [MappedWorkoutActivityType: [String]] = [
+            .running: ["RUNNING", "TRAIL_RUN", "TREADMILL", "INCLINE_RUN"],
+            .walking: [
+                "WALKING", "POWER_WALKING", "TREADMILL_WALK", "INCLINE_WALK",
+                "NORDIC_WALKING", "STROLLER_WALK", "WALK_WITH_WEIGHTS",
+            ],
+            .cycling: [
+                "BIKING", "OUTDOOR_BIKE", "MOUNTAIN_BIKE", "STATIONARY_BIKE",
+                "SPINNING", "ELECTRIC_BIKE", "ASSAULT_BIKE", "HAND_CYCLING",
+            ],
+            .swimming: ["SWIMMING", "SWIMMING_POOL", "SWIMMING_OPEN_WATER"],
+            .hiking: ["HIKING", "BACKPACKING", "RUCKING"],
+            .traditionalStrengthTraining: [
+                "WEIGHTS", "WEIGHTLIFTING", "FREE_WEIGHTS", "WEIGHT_MACHINES",
+                "STRENGTH_TRAINING", "POWERLIFTING", "FUNCTIONAL_STRENGTH_TRAINING",
+            ],
+            .yoga: ["YOGA", "YOGA_BIKRAM", "YOGA_HATHA", "YOGA_POWER", "YOGA_VINYASA"],
+            .elliptical: ["ELLIPTICAL"],
+            .rowing: ["ROWING", "ROWING_MACHINE"],
+            .highIntensityIntervalTraining: ["HIIT", "TABATA_WORKOUT", "INTERVAL_WORKOUT"],
+            .stairClimbing: ["STAIRCLIMBER"],
+            .coreTraining: ["CORE_TRAINING"],
+        ]
+        var table: [String: MappedWorkoutActivityType] = [:]
+        for (bucket, values) in buckets {
+            for value in values { table[value] = bucket }
+        }
+        return table
+    }()
+
+    /// The workout bucket for a Google `Exercise.ExerciseType` value -- the
+    /// one place that enum is classified. The app's Activities view derives
+    /// its activity families from this too, so a new mapping lands once.
+    public static func workoutActivityType(forGoogleExerciseType type: String?) -> MappedWorkoutActivityType {
+        type.flatMap { googleExerciseActivityTypes[$0] } ?? .other
+    }
 
     /// Decodes the session payload (`ExerciseSessionDecoding.swift`) and
     /// maps Google's coarse activity-type string to a
@@ -648,7 +648,7 @@ public enum TypeMapper {
             let wire = ExerciseSessionDecoding.decode(payload)
         else { return .skip }
 
-        let activityType = googleExerciseActivityTypes[wire.activityType] ?? .other
+        let activityType = workoutActivityType(forGoogleExerciseType: wire.activityType)
         let distanceMeters = wire.distanceMeters.flatMap { $0 >= 0 ? $0 : nil }
         let energyKilocalories = wire.energyKilocalories.flatMap { $0 >= 0 ? $0 : nil }
 
@@ -741,12 +741,27 @@ public enum TypeMapper {
         guard point.end >= point.start else { return .skip }
         guard
             let payload = point.sessionPayload,
-            let wire = SleepSessionDecoding.decode(payload),
-            !wire.segments.isEmpty
+            let wire = SleepSessionDecoding.decode(payload)
         else { return .skip }
 
         let identifier = "HKCategoryTypeIdentifierSleepAnalysis"
         let sampleMetadata = metadata(for: point)
+
+        // WP-51: a session with no stage breakdown (a short nap, some
+        // classic sleeps) is still sleep -- one unspecified-asleep sample
+        // spanning it, rather than dropping the night.
+        guard !wire.segments.isEmpty else {
+            guard point.end > point.start else { return .skip }
+            return .category([
+                MappedCategorySample(
+                    healthKitIdentifier: identifier,
+                    stage: .asleepUnspecified,
+                    start: point.start,
+                    end: point.end,
+                    metadata: sampleMetadata.derivedUUID(role: "sleep-0")
+                ),
+            ])
+        }
 
         // WP-07 step 3: "Segments must not overlap; clamp to session
         // bounds." Sorting by start and walking a monotonically
@@ -787,15 +802,17 @@ public enum TypeMapper {
         return .category(result)
     }
 
-    /// WP-07 step 3's stage map: `awake→.awake`, `light→.asleepCore`,
-    /// `deep→.asleepDeep`, `rem→.asleepREM`; any other/unrecognized stage
-    /// string (including a literal `"unknown"`) → `.asleepUnspecified`.
+    /// WP-07 step 3's stage map, on the API's `Sleep.SleepStageType`
+    /// (WP-51): `AWAKE→.awake`, `LIGHT→.asleepCore`, `DEEP→.asleepDeep`,
+    /// `REM→.asleepREM`. Classic sleep's `ASLEEP` and `RESTLESS` (restless is
+    /// movement while asleep, not waking), `SLEEP_STAGE_TYPE_UNSPECIFIED` and
+    /// anything unrecognised → `.asleepUnspecified`.
     private static func stage(for rawStage: String) -> MappedSleepStage {
         switch rawStage {
-        case "awake": return .awake
-        case "light": return .asleepCore
-        case "deep": return .asleepDeep
-        case "rem": return .asleepREM
+        case "AWAKE": return .awake
+        case "LIGHT": return .asleepCore
+        case "DEEP": return .asleepDeep
+        case "REM": return .asleepREM
         default: return .asleepUnspecified
         }
     }

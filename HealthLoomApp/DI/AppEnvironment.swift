@@ -783,7 +783,7 @@ final class AppEnvironment {
         // `sessionPayload` is the base64 of the Google Exercise session
         // JSON (`ExerciseSessionDecoding.swift`'s wire shape).
         let seedExerciseSession = Data(
-            #"{"exercise.activity_type":"run","exercise.distance":8000.0,"exercise.energy":520.0}"#.utf8
+            #"{"exerciseType":"RUNNING","displayName":"Run","metricsSummary":{"distanceMillimeters":8000000.0,"caloriesKcal":520.0}}"#.utf8
         )
         context.insert(LocalSample(
             externalID: "seed-exercise-1",

@@ -1,19 +1,14 @@
 {
-  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Core Body Temperature is a Sample (S) type per base-knowledge.md §3; value key `core_body_temperature.celsius` (field name assumed; Celsius chosen to match HealthKit's own degreeCelsius unit, avoiding an unconfirmed Fahrenheit conversion). Mirrored in SyncKit's TypeMapperFixtures.coreBodyTemperaturePoint().",
-  "point": [
+  "_comment": "Real Google Health API v4 shape (WP-51), from the published reference developers.google.com/health/reference/rest/v4 (fetched 2026-09-27): a reconcile response is {dataPoints:[{dataPointName, <unionKey>:{...}}], nextPageToken}, each point a typed union member with its own time field and units. dataPointName is empty for most types (the client derives a stable ID). Values carried over from the pre-WP-51 fixture and converted to wire units. Still doc-derived: confirm against a real response.",
+  "dataPoints": [
     {
-      "dataPointId": "cbt-0001",
-      "startTime": "2026-07-09T03:00:00Z",
-      "endTime": "2026-07-09T03:00:00Z",
-      "dataSource": {
-        "platform": "IOS",
-        "device": { "displayName": "Fitbit Air" },
-        "recordingMethod": "AUTOMATICALLY_RECORDED"
-      },
-      "value": {
-        "core_body_temperature.celsius": 37.1
+      "dataPointName": "",
+      "coreBodyTemperature": {
+        "sampleTime": {
+          "physicalTime": "2026-07-09T03:00:00Z"
+        },
+        "temperatureCelsius": 37.1
       }
     }
-  ],
-  "nextPageToken": null
+  ]
 }
