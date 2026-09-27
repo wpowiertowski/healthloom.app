@@ -42,14 +42,16 @@ final class DashboardUITests: XCTestCase {
         // this check to how much content happens to exist below it.
         XCTAssertTrue(anyElement["dashboard.freshnessHeader"].exists)
 
-        // steps: seeded "ok", 4213 items.
+        // steps: seeded "ok". WP-56: the right-hand column is the 7-day
+        // trend from Apple Health, which the test simulator's empty store
+        // can't supply -- so the empty state, never the synced-item count.
         XCTAssertTrue(anyElement["dashboard.row.steps.name"].waitForExistence(timeout: 5))
-        XCTAssertEqual(anyElement["dashboard.row.steps.itemCount"].label, "4213")
+        XCTAssertEqual(anyElement["dashboard.row.steps.trend"].label, "No recent data")
         XCTAssertFalse(anyElement["dashboard.row.steps.error"].exists)
 
-        // heart_rate: seeded "ok", 812 items.
+        // heart_rate: seeded "ok", same empty trend.
         XCTAssertTrue(anyElement["dashboard.row.heart_rate.name"].exists)
-        XCTAssertEqual(anyElement["dashboard.row.heart_rate.itemCount"].label, "812")
+        XCTAssertEqual(anyElement["dashboard.row.heart_rate.trend"].label, "No recent data")
 
         // The List is lazily rendered (SwiftUI backs it with a
         // UICollectionView) -- the freshness header + section header push
@@ -98,26 +100,28 @@ final class DashboardUITests: XCTestCase {
         // reasoning as the P0 test above).
         scrollUntilExists(anyElement["dashboard.localRow.electrocardiogram.name"], in: app)
 
-        // ECG: clinical -- both badges render.
-        XCTAssertTrue(anyElement["dashboard.localRow.electrocardiogram.name"].exists)
-        XCTAssertEqual(anyElement["dashboard.localRow.electrocardiogram.badge"].label, "Not in Apple Health")
-        XCTAssertTrue(anyElement["dashboard.localRow.electrocardiogram.clinicalBadge"].exists)
-        XCTAssertEqual(anyElement["dashboard.localRow.electrocardiogram.itemCount"].label, "1")
+        // WP-56: "Not in Apple Health" is said once, by the section heading;
+        // rows carry no copy of it. Only the clinical types carry a badge.
 
-        // Irregular Rhythm Notification: clinical -- both badges render.
+        // ECG: clinical badge, and its one seeded recording counted over
+        // the last 30 days (an event count, not an average).
+        XCTAssertTrue(anyElement["dashboard.localRow.electrocardiogram.name"].exists)
+        XCTAssertFalse(anyElement["dashboard.localRow.electrocardiogram.badge"].exists)
+        XCTAssertTrue(anyElement["dashboard.localRow.electrocardiogram.clinicalBadge"].exists)
+        XCTAssertEqual(anyElement["dashboard.localRow.electrocardiogram.trend"].label, "1 recording")
+        XCTAssertEqual(anyElement["dashboard.localRow.electrocardiogram.trendComparison"].label, "last 30 days")
+
+        // Irregular Rhythm Notification: clinical badge.
         scrollUntilExists(anyElement["dashboard.localRow.irregular_rhythm_notification.name"], in: app)
         XCTAssertTrue(anyElement["dashboard.localRow.irregular_rhythm_notification.name"].exists)
-        XCTAssertEqual(
-            anyElement["dashboard.localRow.irregular_rhythm_notification.badge"].label,
-            "Not in Apple Health"
-        )
         XCTAssertTrue(anyElement["dashboard.localRow.irregular_rhythm_notification.clinicalBadge"].exists)
 
-        // Active Zone Minutes: not clinical -- "Not in Apple Health" badge
-        // only, no clinical indicator.
+        // Active Zone Minutes: not clinical -- no badge. Its one seeded
+        // sample is from today (not a completed day), so no trend yet.
         scrollUntilExists(anyElement["dashboard.localRow.active_zone_minutes.name"], in: app)
         XCTAssertTrue(anyElement["dashboard.localRow.active_zone_minutes.name"].exists)
-        XCTAssertEqual(anyElement["dashboard.localRow.active_zone_minutes.badge"].label, "Not in Apple Health")
+        XCTAssertFalse(anyElement["dashboard.localRow.active_zone_minutes.badge"].exists)
+        XCTAssertEqual(anyElement["dashboard.localRow.active_zone_minutes.trend"].label, "No recent data")
         // WP-37: hit-region audit over the Dashboard screen (test plan §6).
         try app.performAccessibilityAudit(for: [.hitRegion])
         XCTAssertFalse(anyElement["dashboard.localRow.active_zone_minutes.clinicalBadge"].exists)
@@ -125,7 +129,7 @@ final class DashboardUITests: XCTestCase {
         // Active Minutes: not clinical -- same as Active Zone Minutes.
         scrollUntilExists(anyElement["dashboard.localRow.active_minutes.name"], in: app)
         XCTAssertTrue(anyElement["dashboard.localRow.active_minutes.name"].exists)
-        XCTAssertEqual(anyElement["dashboard.localRow.active_minutes.badge"].label, "Not in Apple Health")
+        XCTAssertFalse(anyElement["dashboard.localRow.active_minutes.badge"].exists)
         XCTAssertFalse(anyElement["dashboard.localRow.active_minutes.clinicalBadge"].exists)
     }
 

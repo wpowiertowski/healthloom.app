@@ -20,13 +20,10 @@
 // `.name` on the display-name `Text` doubles as "does this row exist" for
 // callers that just need row-level presence.
 //
-// `itemCountText`/`Text(itemCountText)`: deliberately a `String` *variable*,
-// not `Text("\(state?.itemCount ?? 0)")` -- that literal-interpolation form
-// resolves to `Text(LocalizedStringKey)`, whose interpolation applies
-// locale-aware grouping separators to interpolated numbers by default
-// (observed producing "4,213" instead of "4213" against the real simulator
-// run), which is both undesirable here and non-deterministic for the UI
-// test asserting on this label's exact text.
+// WP-56: the right-hand column is the 7-day average and its change against
+// the 30-day average (`DataTrendText`, computed by the caller from Apple
+// Health), not `SyncState.itemCount` -- a running total of readings ever
+// synced read as a heart rate ("373285") and meant nothing at a glance.
 
 import CoreModel
 import SwiftUI
@@ -34,6 +31,7 @@ import SwiftUI
 struct SyncTypeRow: View {
     let type: GoogleDataType
     let state: SyncState?
+    let trend: DataTrendText
 
     // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
     // `TodayMetricRowView`'s geometry, a rust/gray status dot instead of the
@@ -43,25 +41,21 @@ struct SyncTypeRow: View {
         ZStack(alignment: .leading) {
             if isErrored { ThemedAttentionBar() }
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(statusDotColor)
-                        .frame(width: 6, height: 6)
-                        // Decorative status dot (WP-37): an exposed 6pt
-                        // element fails the hit-region audit; the row's
-                        // freshness text carries the same meaning.
-                        .accessibilityHidden(true)
-                        .accessibilityIdentifier("dashboard.row.\(type.rawValue).statusIcon")
-                    Text(displayName)
-                        .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
-                        .foregroundStyle(Theme.ink)
-                        .accessibilityIdentifier("dashboard.row.\(type.rawValue).name")
-                    Spacer()
-                    Text(itemCountText)
-                        .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
-                        .foregroundStyle(Theme.secondary)
-                        .monospacedDigit()
-                        .accessibilityIdentifier("dashboard.row.\(type.rawValue).itemCount")
+                DataRowTitleLine(trend: trend, identifierPrefix: "dashboard.row.\(type.rawValue)") {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(statusDotColor)
+                            .frame(width: 6, height: 6)
+                            // Decorative status dot (WP-37): an exposed 6pt
+                            // element fails the hit-region audit; the row's
+                            // freshness text carries the same meaning.
+                            .accessibilityHidden(true)
+                            .accessibilityIdentifier("dashboard.row.\(type.rawValue).statusIcon")
+                        Text(displayName)
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
+                            .foregroundStyle(Theme.ink)
+                            .accessibilityIdentifier("dashboard.row.\(type.rawValue).name")
+                    }
                 }
                 // D16.3: a timestamp is an instrument reading, not prose.
                 Text(lastSyncedText)
@@ -91,10 +85,6 @@ struct SyncTypeRow: View {
         }
     }
 
-    private var itemCountText: String {
-        String(state?.itemCount ?? 0)
-    }
-
     /// Rust for a healthy row, gray otherwise -- `TodayHeader`'s own
     /// freshness-dot vocabulary. An errored row is additionally marked by the
     /// 2 pt bar and `Theme.accentDeep` error text, so the state is never
@@ -111,13 +101,75 @@ struct SyncTypeRow: View {
     }
 }
 
+/// The right-hand column of a Data-tab row (WP-56): the 7-day average over
+/// its comparison with the 30-day average. Shared by `SyncTypeRow` and
+/// `LocalOnlyTypeRow`, so both row kinds present a trend the same way.
+struct DataTrendColumn: View {
+    let trend: DataTrendText
+    /// `dashboard.row.<type>` / `dashboard.localRow.<type>`; the column adds
+    /// `.trend` and `.trendComparison`.
+    let identifierPrefix: String
+    var alignment: HorizontalAlignment = .trailing
+
+    var body: some View {
+        VStack(alignment: alignment, spacing: 3) {
+            Text(verbatim: trend.value)
+                .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
+                .foregroundStyle(trend.comparison == nil ? Theme.tertiary : Theme.secondary)
+                .monospacedDigit()
+                .accessibilityIdentifier("\(identifierPrefix).trend")
+            if let comparison = trend.comparison {
+                // D16.3: a reading's qualifier is instrument text.
+                Text(verbatim: comparison)
+                    .font(Theme.mono(Theme.Step.caption, .regular, relativeTo: .caption2))
+                    .foregroundStyle(Theme.tertiary)
+                    .accessibilityIdentifier("\(identifierPrefix).trendComparison")
+            }
+        }
+        .multilineTextAlignment(alignment == .trailing ? .trailing : .leading)
+    }
+}
+
+/// A Data-tab row's first line: its title on the left, its trend on the
+/// right -- or, when the two can't share a line (large Dynamic Type, long
+/// names), the trend moved under the title at full width, instead of
+/// wrapping word by word in a narrow column.
+struct DataRowTitleLine<Title: View>: View {
+    let trend: DataTrendText
+    let identifierPrefix: String
+    @ViewBuilder let title: Title
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                title
+                Spacer(minLength: 12)
+                DataTrendColumn(trend: trend, identifierPrefix: identifierPrefix)
+                    .fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                title
+                DataTrendColumn(trend: trend, identifierPrefix: identifierPrefix, alignment: .leading)
+            }
+        }
+    }
+}
+
 #Preview {
     ThemedPanel {
-        SyncTypeRow(type: .steps, state: SyncState(dataType: "steps", lastSyncedAt: Date(), lastStatus: "ok", itemCount: 4213))
+        SyncTypeRow(
+            type: .steps,
+            state: SyncState(dataType: "steps", lastSyncedAt: Date(), lastStatus: "ok", itemCount: 4213),
+            trend: DataTrendText(value: "8,240", comparison: "7d avg · +310 vs 30d")
+        )
         ThemedRowDivider()
-        SyncTypeRow(type: .weight, state: nil)
+        SyncTypeRow(type: .weight, state: nil, trend: .empty)
         ThemedRowDivider()
-        SyncTypeRow(type: .sleep, state: SyncState(dataType: "sleep", lastStatus: "error", lastError: "Google 429: rate limited"))
+        SyncTypeRow(
+            type: .sleep,
+            state: SyncState(dataType: "sleep", lastStatus: "error", lastError: "Google 429: rate limited"),
+            trend: .empty
+        )
     }
     .padding(22)
     .background(Theme.canvas)

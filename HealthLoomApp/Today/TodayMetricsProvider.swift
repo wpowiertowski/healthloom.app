@@ -13,7 +13,7 @@
 //     limit-1 descending `HKSampleQuery`;
 //   - last night's asleep total (sleep) -- asleep-stage category samples
 //     (unspecified/core/deep/REM, never inBed/awake) between 6 pm
-//     yesterday and now, summed.
+//     yesterday and now, overlaps counted once (`AsleepTime`).
 //
 // Error/empty posture, same as `ActivitiesProvider`: any per-kind query
 // failure (including read authorization never granted -- reads never
@@ -215,12 +215,6 @@ final class TodayMetricsProvider {
         // bedtime, narrow enough to exclude the previous night.
         let windowStart = startOfDay.addingTimeInterval(-6 * 3600)
         let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: now, options: [])
-        // Asleep-stage raw values (HKCategoryValueSleepAnalysis):
-        // asleepUnspecified = 1, asleepCore = 3, asleepDeep = 4,
-        // asleepREM = 5 -- inBed (0) and awake (2) are excluded from the
-        // total. Same literal set SyncKit's MappedSleepStage pins (and
-        // cross-checks against the real enum in its own tests).
-        let asleepValues: Set<Int> = [1, 3, 4, 5]
         return await withCheckedContinuation { (continuation: CheckedContinuation<TodayMetricReading?, Never>) in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -229,12 +223,15 @@ final class TodayMetricsProvider {
                 sortDescriptors: nil
             ) { _, samples, _ in
                 let categorySamples = (samples ?? []).compactMap { $0 as? HKCategorySample }
-                let asleep = categorySamples.filter { asleepValues.contains($0.value) }
+                let asleep = categorySamples.filter { AsleepTime.categoryValues.contains($0.value) }
                 guard !asleep.isEmpty else {
                     continuation.resume(returning: nil)
                     return
                 }
-                let total = asleep.reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+                // WP-56: overlaps counted once -- summing raw samples
+                // counted a night twice when the watch and the Fitbit both
+                // recorded it.
+                let total = AsleepTime.total(asleep.map { DateInterval(start: $0.startDate, end: $0.endDate) })
                 let latestEnd = asleep.map(\.endDate).max()
                 continuation.resume(returning: TodayMetricReading(value: total, date: latestEnd))
             }

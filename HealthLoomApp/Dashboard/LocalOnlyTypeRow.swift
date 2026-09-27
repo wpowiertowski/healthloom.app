@@ -1,7 +1,9 @@
 // LocalOnlyTypeRow.swift
 //
 // WP-14 (implementation-plan.md): "dashboard rows show a 'Not in Apple
-// Health' badge" for the four `.localOnly`-writability `GoogleDataType`s
+// Health' badge" -- since WP-56 said once, by the section heading these
+// rows sit under, rather than on every row -- for the four
+// `.localOnly`-writability `GoogleDataType`s
 // (architecture.md D2) -- ECG, Active Zone Minutes, Active Minutes,
 // Irregular Rhythm Notification -- which persist to `LocalSample` (CoreModel,
 // via `SyncEngine.upsertLocalSample`, WP-09) instead of HealthKit, so they
@@ -9,9 +11,9 @@
 //
 // This is a *separate* row view rather than an extension of `SyncTypeRow`:
 // its data source is an array of `LocalSample` rows for one `GoogleDataType`
-// (not an optional `SyncState`), and its badge semantics differ enough
-// (always "Not in Apple Health," plus a clinical indicator for two of the
-// four types) that folding both into one view's `state:` parameter would
+// (not an optional `SyncState`), and its semantics differ enough (never in
+// Apple Health, plus a clinical indicator for two of the four types) that
+// folding both into one view's `state:` parameter would
 // muddy `SyncTypeRow`'s existing contract for its four P0, SyncState-backed
 // rows. `DashboardView` renders both row types in separate `List` sections.
 //
@@ -33,6 +35,7 @@
 // never collide even for a future type that somehow appeared in both lists.
 // No identifier is applied to the enclosing `VStack`.
 
+import CoachKit
 import CoreModel
 import SwiftUI
 import SyncKit
@@ -40,68 +43,32 @@ import SyncKit
 struct LocalOnlyTypeRow: View {
     let type: GoogleDataType
     let samples: [LocalSample]
+    @Environment(\.locale) private var locale
 
     // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
-    // `TodayMetricRowView` geometry and `ThemedBadge` pills in place of the
-    // orange/purple SF Symbol badges. Badge *strings* are untouched:
-    // `DashboardUITests` asserts on their exact labels.
+    // `TodayMetricRowView` geometry and a `ThemedBadge` pill in place of the
+    // orange/purple SF Symbol badges. The badge string is untouched:
+    // `DashboardUITests` asserts on its exact label.
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack {
+            DataRowTitleLine(trend: trend, identifierPrefix: "dashboard.localRow.\(type.rawValue)") {
                 Text(displayName)
                     .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).name")
-                Spacer()
-                Text(itemCountText)
-                    .font(Theme.font(Theme.Step.body, .regular, relativeTo: .subheadline))
-                    .foregroundStyle(Theme.secondary)
-                    .monospacedDigit()
-                    .accessibilityIdentifier("dashboard.localRow.\(type.rawValue).itemCount")
             }
-            HStack(spacing: 6) {
-                // Deliberately `Image` + `Text` (not SwiftUI's `Label`, whose
-                // icon and text render as two *separate* accessibility
-                // elements): a real `xcodebuild test` run against the
-                // simulator showed a single `.accessibilityIdentifier`
-                // applied to a `Label` gets reported on *both* underlying
-                // elements (the image and the text), so an identifier query
-                // resolves to two matches instead of one -- the same
-                // "container identifier cascades to children" family of
-                // pitfall WP-10's progress.md note already documented for
-                // plain `VStack`s, just discovered here for `Label`
-                // specifically. `Image` is marked `.accessibilityHidden` so
-                // only the `Text` -- carrying the one identifier -- is
-                // queryable, and its `.label` is exactly the badge's display
-                // string.
-                // Each badge is now a single `Text` inside `ThemedBadge`,
-                // which resolves the `Label`/icon+text hazard this row
-                // previously worked around by hand: with no decorative
-                // `Image` in the badge at all, there is exactly one
-                // accessibility element per identifier by construction, so
-                // an identifier query can no longer resolve to two matches.
-                // (The original note is kept below for the general rule.)
-                //
-                // Deliberately not SwiftUI's `Label`, whose icon and text
-                // render as two *separate* accessibility elements: a real
-                // `xcodebuild test` run against the simulator showed a
-                // single `.accessibilityIdentifier` applied to a `Label`
-                // gets reported on *both* underlying elements, so an
-                // identifier query resolves to two matches instead of one --
-                // the same "container identifier cascades to children"
-                // family of pitfall WP-10's progress.md note documented for
-                // plain `VStack`s.
+            // WP-56: one quiet badge, only where it adds something. The
+            // section heading already says "Not in Apple Health", so the
+            // per-row copy of it is gone; the clinical note is a neutral
+            // hairline badge -- the filled accent version outweighed the
+            // row it annotated. One `Text` per identifier inside
+            // `ThemedBadge` (never `Label`, whose icon and text report one
+            // identifier twice).
+            if isClinicalType(type) {
                 ThemedBadge(
-                    text: "Not in Apple Health",
-                    accessibilityIdentifier: "dashboard.localRow.\(type.rawValue).badge"
+                    text: "Clinical · excluded from AI",
+                    accessibilityIdentifier: "dashboard.localRow.\(type.rawValue).clinicalBadge"
                 )
-                if isClinicalType(type) {
-                    ThemedBadge(
-                        text: "Clinical · excluded from AI",
-                        style: .accent,
-                        accessibilityIdentifier: "dashboard.localRow.\(type.rawValue).clinicalBadge"
-                    )
-                }
             }
             // D16.3: a timestamp is an instrument reading, not prose.
             Text(lastSampleText)
@@ -122,8 +89,17 @@ struct LocalOnlyTypeRow: View {
         }
     }
 
-    private var itemCountText: String {
-        String(samples.count)
+    /// WP-56: minutes per day (7-day average vs 30-day) or a 30-day event
+    /// count -- not `samples.count`, the number of stored records.
+    private var trend: DataTrendText {
+        DataTrendText.local(
+            type: type,
+            samples: samples,
+            now: Date(),
+            calendar: .current,
+            locale: locale,
+            unitSystem: ContextAssembler.defaultUnitSystem(for: locale)
+        )
     }
 
     private var lastSampleText: String {
