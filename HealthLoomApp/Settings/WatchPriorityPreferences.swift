@@ -1,7 +1,8 @@
 // WatchPriorityPreferences.swift
 //
 // WP-12b (implementation-plan.md) step 4 / architecture.md D13.5: the
-// UI-facing side of the "Prefer Apple Watch during workouts" toggle.
+// UI-facing side of the watch-priority toggle ("Prefer workouts already in
+// Apple Health" since WP-55).
 // Mirrors `SyncPreferences`' shape exactly (UserDefaults-backed,
 // `@Observable`/`@MainActor`, DI'd defaults for tests) -- see that file's
 // header for the conventions this follows.

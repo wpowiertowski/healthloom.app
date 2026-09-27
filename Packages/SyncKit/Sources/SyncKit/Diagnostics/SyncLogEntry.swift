@@ -32,7 +32,8 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
     /// comment (SyncEngine.swift) -- a count of Google data points
     /// processed, never a health value itself.
     public var itemCount: Int
-    /// WP-12b: data points this run deferred to Apple Watch data
+    /// WP-12b: data points this run deferred to data already in Apple
+    /// Health -- an Apple Watch, or since WP-55 another app's workout
     /// (`SyncOutcome.suppressedCount` -- architecture.md D13, test-plan.md
     /// §2.3's "suppressed counts appear in the sync log"). Optional, `nil`
     /// when the run suppressed nothing, **and** so pre-WP-12b `SyncLog.json`
@@ -43,6 +44,15 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
     /// reaches this initializer in production -- see this file's header and
     /// `SyncLogRedactor.swift`.
     public var errorMessage: String?
+
+    /// "‹n› deferred to Apple Health", or `nil` when nothing was deferred:
+    /// THE wording for both the Sync Log screen and its text export. "Apple
+    /// Health", not "Apple Watch": since WP-55 a Hydrow row or any other
+    /// app's workout can win the session too.
+    public var deferredText: String? {
+        guard let suppressedCount, suppressedCount > 0 else { return nil }
+        return "\(suppressedCount) deferred to Apple Health"
+    }
 
     public init(
         id: UUID = UUID(),

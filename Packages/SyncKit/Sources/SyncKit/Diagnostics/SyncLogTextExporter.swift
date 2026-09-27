@@ -35,10 +35,10 @@ nonisolated public enum SyncLogTextExporter {
         let type = entry.dataType.rawValue
         let status = entry.status.rawValue
         var line = "\(timestamp)  \(type)  \(status)  \(entry.itemCount) item(s)"
-        if let suppressedCount = entry.suppressedCount, suppressedCount > 0 {
+        if let deferred = entry.deferredText {
             // WP-12b (test-plan.md §2.3's bookkeeping row): still a count,
             // never a value -- same D11 posture as every other field here.
-            line += "  \u{00B7} \(suppressedCount) deferred to Apple Watch"
+            line += "  \u{00B7} \(deferred)"
         }
         if let errorMessage = entry.errorMessage {
             line += "  \u{2014} \(errorMessage)"

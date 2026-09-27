@@ -46,7 +46,8 @@ struct SettingsView: View {
 
     @Environment(AppEnvironment.self) private var appEnvironment
     @State private var preferences = SyncPreferences()
-    // WP-12b: "Prefer Apple Watch during workouts" (architecture.md D13.5).
+    // WP-12b: the watch-priority toggle (architecture.md D13.5), titled
+    // "Prefer workouts already in Apple Health" since WP-55 widened it.
     @State private var watchPriority = WatchPriorityPreferences()
     // WP-34: morning-insight toggles + live notification posture.
     @State private var insightPrefs = InsightPreferences()
@@ -494,7 +495,7 @@ struct SettingsView: View {
             // next sync (D13.4's retroactive pass).
             ThemedPanel {
                 ThemedToggleRow(
-                    title: "Prefer Apple Watch during workouts",
+                    title: "Prefer workouts already in Apple Health",
                     accessibilityIdentifier: "settings.watchPriority.toggle",
                     isOn: Binding(
                         get: { watchPriority.isEnabled },
@@ -504,7 +505,7 @@ struct SettingsView: View {
             }
             .padding(.top, 20)
 
-            Text("When on, activities your Apple Watch recorded win: overlapping Fitbit workouts and their heart rate, steps, energy, and distance aren't duplicated into Apple Health -- the Fitbit session is kept in HealthLoom as a supplement instead. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
+            Text("When on, workouts already in Apple Health win over the Fitbit's copy: an overlapping Fitbit session isn't added again -- it's kept in HealthLoom as a supplement instead. An Apple Watch workout also wins its heart rate, steps, energy, and distance. A workout another app saved, like a rower's, wins only the session, so Fitbit's heart rate still fills in. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
                 .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.tertiary)
                 .lineSpacing(3)

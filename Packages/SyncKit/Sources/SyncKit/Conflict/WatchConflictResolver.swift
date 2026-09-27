@@ -138,6 +138,9 @@ public actor WatchConflictResolver: ConflictFiltering {
 
         let index = WatchCoverageIndex(windows: windows, policy: policy)
         guard !index.isEmpty else { return }
+        // A stream type is only ever covered by a watch (WP-55): with just
+        // other-app workouts in range there's nothing to resolve or clean.
+        guard type == .exercise || index.coversStreams else { return }
         runs[type]?.index = index
 
         try await retroactiveCleanup(type: type, windowStart: windowStart, windowEnd: windowEnd, index: index)
@@ -148,9 +151,10 @@ public actor WatchConflictResolver: ConflictFiltering {
 
         switch mapped {
         case .workout(let workout):
-            // D13.2: a Google Exercise session overlapping a watch workout
+            // D13.2: a Google Exercise session overlapping a workout
+            // already in Apple Health (watch or, since WP-55, another app)
             // is never written as an HKWorkout -- it becomes a LocalSample
-            // supplement linked to the watch workout (the caller applies the
+            // supplement linked to that workout (the caller applies the
             // link after its upsert, via drainDeferredSessionLinks).
             guard let match = index.matchingWorkout(forSessionStart: workout.start, end: workout.end) else {
                 return mapped

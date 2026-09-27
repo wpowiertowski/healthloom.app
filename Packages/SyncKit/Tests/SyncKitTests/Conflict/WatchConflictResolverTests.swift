@@ -145,6 +145,51 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
 
     // MARK: - Session deferral (D13.2)
 
+    /// A rower's own app saved this row straight to Apple Health (no watch).
+    static func hydrowRowWindow() -> WatchCoverageWindow {
+        WatchCoverageWindow(
+            workoutUUID: watchWorkoutUUID, start: at("10:00:00"), end: at("10:40:00"), source: .otherApp
+        )
+    }
+
+    // catches: a Fitbit session written as a second HKWorkout on top of a
+    // workout another app (Hydrow) already saved to Apple Health -- the
+    // resolver only deferred to Apple Watch workouts (WP-55).
+    @Test func sessionOverlappingAnotherAppsWorkoutDefersToIt() async throws {
+        let harness = try Self.makeHarness(windows: [Self.hydrowRowWindow()])
+        let point = TypeMapperFixtures.exercisePoint(
+            id: "fitbit-row-1", start: Self.at("10:01:00"), end: Self.at("10:39:00")
+        )
+        harness.mock.setPage(type: .exercise, pageToken: nil, page: Page(points: [point], nextPageToken: nil))
+
+        let outcome = await harness.engine.sync(type: .exercise)
+
+        #expect(outcome.status == .ok)
+        #expect(outcome.suppressedCount == 1)
+        #expect(harness.builderFactory.requestedActivityTypes.isEmpty)
+        let samples = try Self.localSamples(harness.container)
+        #expect(samples.map(\.externalID) == ["fitbit-row-1"])
+        #expect(samples.first?.linkedWatchWorkoutUUID == Self.watchWorkoutUUID)
+    }
+
+    // catches: another app's workout suppressing Fitbit heart rate -- Hydrow
+    // saves no continuous heart rate, so suppressing it would leave a hole
+    // in Apple Health for the whole row (WP-55: other apps win sessions,
+    // never streams).
+    @Test func heartRateDuringAnotherAppsWorkoutStillImports() async throws {
+        let harness = try Self.makeHarness(windows: [Self.hydrowRowWindow()])
+        let point = TypeMapperFixtures.heartRatePoint(
+            id: "hr-rowing-1", start: Self.at("10:15:00"), end: Self.at("10:15:00"), bpm: 135
+        )
+        harness.mock.setPage(type: .heartRate, pageToken: nil, page: Page(points: [point], nextPageToken: nil))
+
+        let outcome = await harness.engine.sync(type: .heartRate)
+
+        #expect(outcome.status == .ok)
+        #expect(outcome.suppressedCount == 0)
+        #expect(harness.store.savedBatches.flatMap { $0 }.count == 1)
+    }
+
     @Test func overlappingExerciseSessionDefersToLocalSampleWithWatchLink() async throws {
         let harness = try Self.makeHarness(windows: [Self.morningRunWindow()])
         // Fitbit auto-detected the same run, slightly offset: 10:02-10:43.
@@ -337,6 +382,32 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
         #expect(harness.store.sampleCount(ofType: stepsType) == 0)
     }
 
+    // catches: the duplicates already written before WP-55 staying put --
+    // an imported Fitbit row overlapping a Hydrow workout must be deleted
+    // on the next run and re-linked as a supplement, same as a late watch
+    // workout.
+    @available(*, deprecated, message: "constructs a test-only fake HKWorkout via a deprecated initializer, see MockWorkoutBuilder.swift")
+    @Test func anotherAppsWorkoutCleansUpAnAlreadyImportedDuplicate() async throws {
+        let harness = try Self.makeHarness(windows: [])
+        let point = TypeMapperFixtures.exercisePoint(
+            id: "fitbit-row-2", start: Self.at("10:01:00"), end: Self.at("10:39:00")
+        )
+        harness.mock.setPage(type: .exercise, pageToken: nil, page: Page(points: [point], nextPageToken: nil))
+        harness.builderFactory.builder.storeToSeedOnFinish = harness.store
+        seedFinishResult(harness, point: point)
+        _ = await harness.engine.sync(type: .exercise)
+        #expect(harness.store.sampleCount(ofType: .workoutType()) == 1)
+
+        harness.coverage.windows = [Self.hydrowRowWindow()]
+        harness.clock.set(Self.fixedNow.addingTimeInterval(3600))
+        let second = await harness.engine.sync(type: .exercise)
+
+        #expect(second.status == .ok)
+        #expect(harness.store.sampleCount(ofType: .workoutType()) == 0)
+        let samples = try Self.localSamples(harness.container)
+        #expect(samples.first?.linkedWatchWorkoutUUID == Self.watchWorkoutUUID)
+    }
+
     @available(*, deprecated, message: "constructs a test-only fake HKWorkout via a deprecated initializer, see MockWorkoutBuilder.swift")
     @Test func lateArrivingWatchWorkoutTriggersCleanupOfConflictingImportedWorkout() async throws {
         // Run 1: Fitbit session imported as a real HKWorkout (no coverage).
@@ -469,7 +540,8 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
         let entry = try #require(await logStore.recentEntries().first)
         #expect(entry.suppressedCount == 1)
         let export = SyncLogTextExporter.export([entry], generatedAt: Self.fixedNow)
-        #expect(export.contains("1 deferred to Apple Watch"))
+        let deferred = try #require(entry.deferredText)
+        #expect(export.contains(deferred))
     }
 
     // MARK: - Concurrent types share one resolver without sharing runs

@@ -49,12 +49,13 @@ struct SyncLogRow: View {
                     .foregroundStyle(Theme.secondary)
                     .accessibilityIdentifier("synclog.row.\(entry.id).count")
                 // WP-12b: watch-priority suppression bookkeeping (architecture
-                // .md D13.3 / test-plan.md §2.3 -- "deferred to Apple Watch").
+                // .md D13.3 / test-plan.md §2.3; wording single-sourced in
+                // `SyncLogEntry.deferredText`).
                 // Only rendered when the run actually deferred something.
                 // Deliberately not `Label`: see LocalOnlyTypeRow.swift's note
                 // on `Label` reporting one identifier on two elements.
-                if let suppressedCount = entry.suppressedCount, suppressedCount > 0 {
-                    Text("\(suppressedCount) deferred to Apple Watch")
+                if let deferred = entry.deferredText {
+                    Text(deferred)
                         .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption2))
                         .foregroundStyle(Theme.tertiary)
                         .accessibilityIdentifier("synclog.row.\(entry.id).suppressed")

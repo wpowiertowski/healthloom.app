@@ -5949,3 +5949,38 @@ headers. Headers without actions hold only the title, so they're unchanged.
 **Tests.** `ThemedHeaderLayoutTests`: the header renders the same height with the Sync
 button idle and busy. The baseline-aligned mutant fails it. Idle and busy renders were
 inspected by eye: buttons centered on the title, geometry identical.
+
+## WP-55 · Workouts other apps saved to Apple Health win the session (branch `wp-55-health-workouts-win` from main 96240eb)
+
+**Bug.** The owner rows on a Hydrow, which saves each row straight to Apple Health
+without a watch, and also starts rowing on the Fitbit. Activities showed both "Rowing ·
+HYDROW" and "Rowing · HEALTHLOOM" for every row. Watch priority (D13) only built
+coverage from Apple Watch workouts, so a Fitbit session overlapping any other app's
+workout was written as a second HKWorkout.
+
+**Fix.**
+- `WatchCoverageWindow.Source`: `.appleWatch` or `.otherApp`.
+  `HealthKitWatchCoverageProvider` now returns every workout HealthLoom didn't write,
+  tagged by the classifier. The HealthLoom-import exclusion is load-bearing now: without
+  it an imported session would defer to itself.
+- `WatchCoverageIndex`: the session rule (D13.2) matches any window. Stream suppression
+  (D13.3) and stream cleanup use Apple Watch windows only, because an app like Hydrow
+  saves no continuous heart rate and suppressing Fitbit's would leave a hole.
+  `coversStreams` lets the resolver skip stream types when only other-app workouts are
+  in range.
+- Retroactive cleanup (D13.4) applies to other-app workouts too, so already-imported
+  duplicate rows inside a run's window are deleted and re-linked as supplements.
+  Activities already groups a supplement under its linked workout.
+- Copy: the toggle is now "Prefer workouts already in Apple Health", with text
+  explaining watch vs other-app. The Sync Log's "deferred to Apple Watch" became
+  "deferred to Apple Health", single-sourced in `SyncLogEntry.deferredText` (used by
+  the log screen and the text export). architecture.md D13 is updated.
+
+**Limit.** Cleanup only reaches a run's window: the lookback, about 3 days behind the
+cursor. Duplicate rows imported before that stay until a wider sweep runs.
+
+**Tests.** SyncKit 328 (4 new): other-app windows win sessions but never streams
+(index); a session overlapping another app's workout defers and links; heart rate during
+it still imports; an already-imported duplicate is cleaned up and re-linked. Mutants
+that each fail them: stream spans built from all windows, and other-app windows
+excluded from the session rule.

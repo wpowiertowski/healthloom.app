@@ -2,9 +2,11 @@
 //
 // WP-12b (implementation-plan.md) step 1 / architecture.md D13.1: the real,
 // HealthKit-backed `WatchCoverageProviding` -- queries HealthKit for
-// workouts in a window, keeps the ones an injected `WorkoutSourceClassifier`
-// says came from an Apple Watch (any recording app, not just Apple's Workout
-// app), and returns their unpadded spans as `WatchCoverageWindow`s
+// workouts in a window, drops the ones HealthLoom wrote, tags each of the
+// rest with whether an injected `WorkoutSourceClassifier` says an Apple
+// Watch recorded it (any recording app, not just Apple's Workout app;
+// everything else is `.otherApp` since WP-55), and returns their unpadded
+// spans as `WatchCoverageWindow`s
 // (padding is `WatchCoverageIndex`'s job -- see WatchCoverage.swift).
 //
 // Guarded `#if canImport(HealthKit)` per the WP-06/07/08 platform boundary.
@@ -85,16 +87,21 @@ public final class HealthKitWatchCoverageProvider: WatchCoverageProviding, Senda
         return samples.compactMap { sample in
             guard let workout = sample as? HKWorkout else { return nil }
             // Never treat this app's own imported (Fitbit-sourced) workouts
-            // as watch coverage -- they carry HealthLoom's external-ID stamp
-            // (architecture.md D4). The classifier's Watch-productType check
-            // already excludes them (this app runs on iPhone), so this is
-            // belt-and-suspenders against any future in-app watch extension.
+            // as coverage -- they carry HealthLoom's external-ID stamp
+            // (architecture.md D4). Load-bearing since WP-55: every non-watch
+            // workout now covers as `.otherApp`, so without this check an
+            // imported session would defer to itself and retroactive cleanup
+            // would delete it.
             guard workout.metadata?["healthloom.externalID"] == nil else { return nil }
-            guard classifier.isAppleWatchWorkout(workout) else { return nil }
+            // WP-55: every other workout covers too. One saved straight to
+            // Apple Health by another app (a Hydrow rower) already records
+            // the session the Fitbit logged alongside it, so it wins the
+            // session; only a watch also wins the streams.
             return WatchCoverageWindow(
                 workoutUUID: workout.uuid,
                 start: workout.startDate,
-                end: workout.endDate
+                end: workout.endDate,
+                source: classifier.isAppleWatchWorkout(workout) ? .appleWatch : .otherApp
             )
         }
     }
