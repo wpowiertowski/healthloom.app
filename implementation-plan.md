@@ -94,6 +94,10 @@ These gate everything; start them on day one. Agents cannot do them.
    reliably — AI work is device-tested.
 2. **Apple Developer Program**: App ID with HealthKit capability.
 3. **Google Cloud project**: enable Google Health API; create an iOS OAuth 2.0 client.
+   **Done 2026-09-27:** project "HealthLoom", Google Health API enabled, consent screen
+   External / Testing with the owner as test user, the six read-only Health scopes plus
+   `openid`/`email` declared, iOS client for `app.healthloom` wired in
+   (`AppEnvironment.googleAuthConfig`). Verification (item 4) not started.
 4. **Start Google OAuth verification now** (launch long pole #1): all Health API scopes
    are Restricted ⇒ verified domain, live homepage, privacy policy, per-scope written
    justification. Track status in `progress.md`.

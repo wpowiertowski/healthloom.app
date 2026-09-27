@@ -5737,3 +5737,46 @@ real code lands on Today; with the save line removed, the same launch shows Welc
 The first run of the negative control passed wrongly: `simctl spawn … defaults delete`
 edits the simulator's global defaults, not the app container's, so the first run's flag
 survived. Uninstalling the app between runs is the real reset.
+
+## P-1.3 · Real Google OAuth client wired in (branch `google-oauth-client` from main 7c4868a)
+
+**Human step done.** With the owner, 2026-09-27: Cloud project "HealthLoom", Google
+Health API enabled. Consent screen is External / Testing with the owner's account as the
+only test user, and declares the six `googlehealth.*.readonly` scopes plus `openid` and
+`email`. The iOS client is for bundle `app.healthloom`, team `6AS496S47T`. The user
+support email is the owner's personal address for now; switch it to the domain address
+(as a Google account granted project Owner) before verification.
+
+**Code.**
+- `AppEnvironment.googleAuthConfig` holds the real client ID, replacing
+  `"GOOGLE_IOS_CLIENT_ID_PENDING_P-1.3"`.
+- `GoogleAuthConfig.iOSClient(clientID:)` derives the redirect from the ID (the
+  reversed-client-ID scheme, `…:/oauth2redirect`), so the two can't drift.
+- `project.yml`'s `CFBundleURLSchemes` now lists that scheme instead of the placeholder
+  `com.healthloom.app`, and Info.plist is regenerated.
+
+**Two gaps from the local OAuth notes, closed now that the real client exists:**
+- **`include_granted_scopes=true`** on the authorization URL. Without it, a later
+  incremental consent could return a token holding only the new scopes, and with one
+  stored refresh token, earlier grants would vanish.
+- **Granted scopes loaded before deciding.** `grantedScopes` isn't persisted, so on a
+  fresh launch `ensure(scopes:)` would re-ask for scopes granted in an earlier launch.
+  `missingHealthScopesAfterLoadingGrants` mints an access token first, because the
+  refresh response carries `scope`. This avoids widening the token store to persist
+  scopes.
+
+**Tests.** GoogleHealthClient 48 (2 new) and the app unit bundle 322 (2 new). Catches:
+- the missing `include_granted_scopes` parameter;
+- a hand-built redirect drifting from the client ID;
+- a fresh launch re-asking for granted scopes, and a no-credentials device failing
+  instead of asking;
+- `project.yml`'s URL scheme drifting from the derived one (Info.plist check);
+- the placeholder or a non-iOS client shipping.
+
+Mutation-checked: dropping the parameter, dropping the grant loading, and reverting the
+Info.plist scheme each fail exactly their test.
+
+**Next.** Connect the owner's real Google account on a device build (Testing mode:
+"unverified app" warning, connection expires every 7 days). Then reconcile TypeMapper's
+activity-type table and the exercise-payload decoding against real responses. Both are
+marked as assumptions until real data exists.

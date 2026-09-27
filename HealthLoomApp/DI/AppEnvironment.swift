@@ -95,6 +95,17 @@ final class AppEnvironment {
     /// re-foregrounds skip).
     private(set) var lastForegroundReconcile: Date?
 
+    /// The Google Cloud iOS OAuth client (P-1.3), project "HealthLoom",
+    /// bundle `app.healthloom`. Not a secret: it ships in the binary and
+    /// shows in the consent URL, and Google only honours it for this bundle
+    /// and the project's listed test users while the app is in Testing.
+    /// The redirect scheme derives from it (`GoogleAuthConfig.iOSClient`)
+    /// and must match `project.yml`'s `CFBundleURLSchemes` --
+    /// `GoogleOAuthClientTests` checks the built Info.plist.
+    nonisolated static let googleAuthConfig = GoogleAuthConfig.iOSClient(
+        clientID: "675860065452-jm69qublifqtsv0v45hnetk5nhpt5nu9.apps.googleusercontent.com"
+    )
+
     /// Pure gate for the foreground trigger (unit-pinned; the call
     /// site stamps via `noteForegroundReconcile`).
     /// WP-49: the interval is `CloudSyncEngine.foregroundMinInterval`
@@ -302,19 +313,8 @@ final class AppEnvironment {
         InsightRunnerHost.quiesceCheck = { WipeQuiesce.isLatched }
         self.healthKitAuth = HealthKitAuth()
 
-        let authConfig = GoogleAuthConfig(
-            // Placeholder client ID -- no real Google Cloud iOS OAuth client
-            // exists yet (P-1.3, human prerequisite; see progress.md's
-            // WP-01/WP-04 notes on the placeholder redirect scheme this
-            // must be reconciled with). Real consent against Google is
-            // untestable until that lands; this wiring is otherwise complete
-            // and matches `project.yml`'s placeholder `CFBundleURLSchemes`.
-            clientID: "GOOGLE_IOS_CLIENT_ID_PENDING_P-1.3",
-            redirectURI: "com.healthloom.app:/oauth2redirect",
-            redirectURIScheme: "com.healthloom.app"
-        )
         let authManager = GoogleAuthManager(
-            config: authConfig,
+            config: Self.googleAuthConfig,
             httpSession: URLSessionHTTPSession(),
             tokenStore: KeychainStore()
         )

@@ -46,6 +46,7 @@ struct GoogleAuthURLTests {
         #expect(params["code_challenge"] == "challenge-abc")
         #expect(params["code_challenge_method"] == "S256")
         #expect(params["access_type"] == "offline")
+        #expect(params["include_granted_scopes"] == "true")
         #expect(params["state"] == "state-123")
 
         let scopeString = params["scope"] ?? ""
@@ -58,8 +59,19 @@ struct GoogleAuthURLTests {
         // Exactly the parameter *names* above -- no extras, nothing missing.
         #expect(Set(params.keys) == [
             "client_id", "redirect_uri", "response_type", "scope",
-            "code_challenge", "code_challenge_method", "access_type", "prompt", "state",
+            "code_challenge", "code_challenge_method", "access_type", "include_granted_scopes",
+            "prompt", "state",
         ])
+    }
+
+    // catches: a hand-built redirect drifting from the client ID -- Google
+    // rejects a redirect that isn't the reversed ID of the iOS client.
+    @Test("an iOS client's redirect is its reversed client ID")
+    func iOSClientRedirectIsReversedClientID() {
+        let config = GoogleAuthConfig.iOSClient(clientID: "123-abc.apps.googleusercontent.com")
+        #expect(config.clientID == "123-abc.apps.googleusercontent.com")
+        #expect(config.redirectURIScheme == "com.googleusercontent.apps.123-abc")
+        #expect(config.redirectURI == "com.googleusercontent.apps.123-abc:/oauth2redirect")
     }
 
     @Test("redirect code extraction requires a matching state and yields the code")

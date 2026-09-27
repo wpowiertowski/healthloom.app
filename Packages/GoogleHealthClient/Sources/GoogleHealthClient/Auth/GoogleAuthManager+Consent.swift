@@ -58,7 +58,7 @@ extension GoogleAuthManager {
         scopes: [GoogleDataType.Scope],
         presentationContextProvider: any ASWebAuthenticationPresentationContextProviding
     ) async throws(GoogleAuthError) -> Bool {
-        let missing = await missingHealthScopes(from: scopes)
+        let missing = await missingHealthScopesAfterLoadingGrants(from: scopes)
         guard !missing.isEmpty else { return true }
         try await beginConsent(scopes: Array(missing), presentationContextProvider: presentationContextProvider)
         return false

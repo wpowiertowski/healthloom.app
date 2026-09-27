@@ -312,6 +312,31 @@ struct GoogleAuthManagerTests {
         #expect(missingNone.isEmpty)
     }
 
+    // catches: a fresh launch re-asking for scopes granted in an earlier
+    // launch (granted scopes aren't persisted), and a no-credentials device
+    // failing instead of asking.
+    @Test("missing scopes are decided after loading this account's grants")
+    func missingScopesLoadGrantsFirst() async throws {
+        let grantedScope = GoogleOAuthScope.urlString(for: .activityAndFitness)
+        let refreshes = CallCounter()
+        let http = RecordingHTTPSession { _, _ in
+            await refreshes.increment()
+            return (Self.tokenResponseJSON(accessToken: "a", scope: grantedScope), httpResponse(statusCode: 200))
+        }
+        let manager = GoogleAuthManager(config: Self.testConfig, httpSession: http, tokenStore: FakeTokenStore(refreshToken: "r"))
+        let missing = await manager.missingHealthScopesAfterLoadingGrants(from: [.activityAndFitness, .sleep])
+        #expect(missing == [.sleep])
+        #expect(await refreshes.count == 1)
+
+        let noCredentials = GoogleAuthManager(
+            config: Self.testConfig,
+            httpSession: RecordingHTTPSession { _, _ in fatalError("no refresh without a refresh token") },
+            tokenStore: FakeTokenStore()
+        )
+        let allMissing = await noCredentials.missingHealthScopesAfterLoadingGrants(from: [.activityAndFitness, .sleep])
+        #expect(allMissing == [.activityAndFitness, .sleep])
+    }
+
     // MARK: - Redaction tripwire (test-plan.md §2.4)
 
     @Test("no GoogleAuthError description ever contains the refresh token or authorization code")

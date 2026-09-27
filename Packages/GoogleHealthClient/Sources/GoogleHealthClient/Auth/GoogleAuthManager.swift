@@ -52,7 +52,8 @@ public actor GoogleAuthManager {
     /// The set of full scope URLs (`GoogleOAuthScope.urlString`) granted by
     /// the most recent consent/refresh response's `scope` field. Empty until
     /// the first successful consent or refresh in this process (not
-    /// persisted across launches -- see progress.md's WP-04 note on this).
+    /// persisted across launches; `missingHealthScopesAfterLoadingGrants`
+    /// refreshes first so a fresh launch doesn't re-ask for granted scopes).
     public var currentGrantedScopes: Set<String> { grantedScopes }
 
     /// Exposed (read-only, nonisolated -- `config` is an immutable `let`) so
@@ -310,6 +311,20 @@ public actor GoogleAuthManager {
         Set(requested.filter { !grantedScopes.contains(GoogleOAuthScope.urlString(for: $0)) })
     }
 
+    /// `missingHealthScopes`, after making sure `grantedScopes` reflects this
+    /// account. It isn't persisted, so on a fresh launch it's empty until a
+    /// token response arrives -- and deciding then would re-ask for scopes
+    /// the user granted in an earlier launch. Minting an access token first
+    /// fixes that: a refresh response carries the granted `scope`. No stored
+    /// credentials, or a failed refresh, leaves it empty -- consent is the
+    /// right answer then anyway.
+    func missingHealthScopesAfterLoadingGrants(from requested: [GoogleDataType.Scope]) async -> Set<GoogleDataType.Scope> {
+        if grantedScopes.isEmpty {
+            _ = try? await validAccessToken()
+        }
+        return missingHealthScopes(from: requested)
+    }
+
     // MARK: - Authorization URL (WP-04 step 2)
 
     /// Builds the `accounts.google.com` authorization-request URL. Pure/
@@ -327,6 +342,11 @@ public actor GoogleAuthManager {
             URLQueryItem(name: "code_challenge", value: codeChallenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "access_type", value: "offline"),
+            // A later consent for more scopes returns a token carrying the
+            // earlier grants too. Without it the new token could hold only
+            // the newly requested scopes, and since one refresh token is
+            // stored, previously granted access would silently vanish.
+            URLQueryItem(name: "include_granted_scopes", value: "true"),
             URLQueryItem(name: "prompt", value: "consent"),
             URLQueryItem(name: "state", value: state),
         ]

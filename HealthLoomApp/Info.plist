@@ -31,7 +31,7 @@
 			<string>com.healthloom.app.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.healthloom.app</string>
+				<string>com.googleusercontent.apps.675860065452-jm69qublifqtsv0v45hnetk5nhpt5nu9</string>
 			</array>
 		</dict>
 	</array>
