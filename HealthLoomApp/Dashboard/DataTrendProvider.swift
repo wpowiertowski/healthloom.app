@@ -42,35 +42,50 @@ final class DataTrendProvider {
     private func dailyValues(for type: GoogleDataType, now: Date) async -> [Date: Double] {
         let today = calendar.startOfDay(for: now)
         guard let start = calendar.date(byAdding: .day, value: -RollingTrend.monthDays, to: today) else { return [:] }
+        let store = healthStore
+        let calendar = calendar
         switch type {
         case .steps:
-            return await daily(.stepCount, unit: .count(), options: .cumulativeSum, from: start, to: today)
+            return await Self.daily(
+                .stepCount, unit: .count(), options: .cumulativeSum,
+                from: start, to: today, store: store, calendar: calendar
+            )
         case .heartRate:
-            return await daily(
-                .heartRate, unit: HKUnit.count().unitDivided(by: .minute()),
-                options: .discreteAverage, from: start, to: today
+            return await Self.daily(
+                .heartRate, unit: HKUnit.count().unitDivided(by: .minute()), options: .discreteAverage,
+                from: start, to: today, store: store, calendar: calendar
             )
         case .weight:
-            return await daily(.bodyMass, unit: .gramUnit(with: .kilo), options: .discreteAverage, from: start, to: today)
+            return await Self.daily(
+                .bodyMass, unit: .gramUnit(with: .kilo), options: .discreteAverage,
+                from: start, to: today, store: store, calendar: calendar
+            )
         case .sleep:
-            return await nightlyAsleep(from: start, to: now)
+            return await Self.nightlyAsleep(from: start, to: now, store: store, calendar: calendar)
         default:
             return [:]
         }
     }
 
+    // The two query shapes are `nonisolated static` (WP-57): HealthKit runs
+    // their result handlers on its own queues, and a handler closure formed
+    // inside this MainActor class inherits main-actor isolation -- the
+    // runtime traps the moment HealthKit calls it. Built here, the closures
+    // carry no isolation at all.
+
     /// One statistic per calendar day in `start ..< end`, days without
     /// samples left out.
-    private func daily(
+    nonisolated private static func daily(
         _ identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
         options: HKStatisticsOptions,
         from start: Date,
-        to end: Date
+        to end: Date,
+        store healthStore: HKHealthStore,
+        calendar: Calendar
     ) async -> [Date: Double] {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { return [:] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
-        let calendar = calendar
         return await withCheckedContinuation { (continuation: CheckedContinuation<[Date: Double], Never>) in
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
@@ -96,10 +111,14 @@ final class DataTrendProvider {
     }
 
     /// Asleep seconds per night (`RollingTrend.nightlyAsleep`).
-    private func nightlyAsleep(from start: Date, to end: Date) async -> [Date: Double] {
+    nonisolated private static func nightlyAsleep(
+        from start: Date,
+        to end: Date,
+        store healthStore: HKHealthStore,
+        calendar: Calendar
+    ) async -> [Date: Double] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
-        let calendar = calendar
         return await withCheckedContinuation { (continuation: CheckedContinuation<[Date: Double], Never>) in
             let query = HKSampleQuery(
                 sampleType: type,

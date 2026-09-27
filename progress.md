@@ -6028,3 +6028,45 @@ re-recorded, and I inspected every image. `DashboardUITests` asserts the trend l
 the removed per-row badge, and the clinical badges. Three mutants each fail the trend
 tests: today counted in the week, overlaps summed, and record count instead of minutes.
 CoachKit is unchanged at 198.
+
+## WP-57 · Hotfix: build 21 crashed at launch (branch `wp-57-launch-crash-hotfix` from main acad839)
+
+**Crash.** TestFlight 0.1.0 (21) died instantly on launch with EXC_BREAKPOINT on a
+background thread: `_dispatch_assert_queue_fail` ← `swift_task_checkIsolated` ←
+closure #1 in `AsleepTime.merged` (the sort comparator, DataTrend.swift:78) ←
+`AsleepTime.total` ← `TodayMetricsProvider.lastNightAsleepSeconds`'s HealthKit result
+handler.
+
+**Cause.** WP-56 added `AsleepTime` and `RollingTrend` to the app target, whose default
+isolation is MainActor, so their closures carried a main-actor check. HealthKit runs
+result handlers on its own queues, so the first real night of sleep to reach the merge
+trapped. Today computes last night's sleep at launch, hence the instant crash. The
+simulator's empty store never reached the merge, and neither did any test.
+`DataTrendProvider` had the same flaw twice: the same sleep math, and an
+`initialResultsHandler` closure assigned inside its MainActor class.
+
+**Fix.** `RollingTrend` and `AsleepTime` are `nonisolated`, the repo's existing idiom for
+pure types used off the main thread (e.g. CloudSyncPayload). `DataTrendProvider`'s two
+query shapes are `nonisolated static`, so the handler closures they build carry no
+isolation. I swept the other HealthKit callbacks (Readiness, Activities,
+HealthKitSourceDeleter): they call only closures formed inside the handler, and
+Activities maps after the continuation returns.
+
+**Test.** `sleepMathRunsOffTheMainActor` runs the merge and nightly bucketing from a
+detached task, with overlapping intervals so the comparator executes. With the isolation
+removed, the test no longer compiles ("expression is 'async' but is not marked with
+'await'"), so the guarantee is checked at build time.
+
+**Readiness sleep (owner asked to include it).** `ReadinessInputsProvider.lastNightSleep`
+summed raw asleep samples. A night both the watch and the Fitbit recorded counted twice,
+inflating the readiness score's sleep hours and pinning efficiency at 100%. The math now
+lives in `nonisolated static func sleepSummary(of:)`: asleep time via `AsleepTime.total`
+(overlaps counted once, the shared asleep-stage set), and efficiency as asleep ÷ the
+full sample span (in-bed and awake included), clamped to a fraction as before. The
+HealthKit handler only maps samples and calls it. The force-unwrapped `min()!`/`max()!`
+are gone.
+
+**Tests.** DataTrend 8 (1 new), readiness 3 new: a night recorded twice counts once,
+awake time widens the span but isn't sleep, and the summary runs off the main actor.
+Mutants: raw sum fails the double-count test; dropping `nonisolated` fails the build
+("main actor-isolated static method … cannot be called from outside of the actor").

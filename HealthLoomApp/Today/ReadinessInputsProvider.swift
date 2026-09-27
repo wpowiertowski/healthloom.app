@@ -10,8 +10,8 @@
 //   - HRV ratio: latest SDNN sample vs its 30-day average baseline;
 //   - resting-HR delta: latest resting HR vs its 30-day average baseline;
 //   - sleep hours + efficiency: last night's asleep-stage total (same
-//     6 pm-yesterday window and asleep-value set as the metric provider)
-//     and asleep ÷ in-bed span;
+//     6 pm-yesterday window and `AsleepTime` merge as the metric provider,
+//     overlaps counted once) and asleep ÷ in-bed span (`sleepSummary`);
 //   - prior-day strain: yesterday's workout energy, mapped to 0...1 at
 //     800 kcal = maximal (a documented heuristic, not physiology — the
 //     engine treats it as recovery demand, and the mapping is the one
@@ -179,7 +179,6 @@ final class ReadinessInputsProvider {
         // post-noon samples — naps — are excluded.
         let noon = startOfDay.addingTimeInterval(12 * 3600)
         let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: min(now, noon), options: [])
-        let asleepValues: Set<Int> = [1, 3, 4, 5]
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -187,29 +186,36 @@ final class ReadinessInputsProvider {
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                let category = (samples ?? []).compactMap { $0 as? HKCategorySample }
-                guard !category.isEmpty else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                let asleep = category
-                    .filter { asleepValues.contains($0.value) }
-                    .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
-                guard asleep > 0 else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                // In-bed span: first sample start to last sample end across
-                // all stages (in-bed/awake included) — efficiency is
-                // asleep ÷ span, clamped to a fraction.
-                let spanStart = category.map(\.startDate).min()!
-                let spanEnd = category.map(\.endDate).max()!
-                let span = spanEnd.timeIntervalSince(spanStart)
-                let efficiency = span > 0 ? min(max(asleep / span, 0), 1) : nil
-                continuation.resume(returning: (asleep, efficiency))
+                let nightSamples = (samples ?? [])
+                    .compactMap { $0 as? HKCategorySample }
+                    .map { (value: $0.value, interval: DateInterval(start: $0.startDate, end: $0.endDate)) }
+                continuation.resume(returning: Self.sleepSummary(of: nightSamples))
             }
             healthStore.execute(query)
         }
+    }
+
+    /// Last night's asleep seconds and efficiency (asleep ÷ the span from
+    /// the first to the last sample, in-bed and awake included), or `nil`
+    /// with no asleep time. Asleep time counts overlaps once (WP-57): a
+    /// night both an Apple Watch and a Fitbit recorded used to count twice,
+    /// inflating the readiness score's sleep hours and pinning efficiency
+    /// at 100%. `nonisolated`: it runs inside HealthKit's result handler.
+    nonisolated static func sleepSummary(
+        of samples: [(value: Int, interval: DateInterval)]
+    ) -> (asleep: Double, efficiency: Double?)? {
+        let asleep = AsleepTime.total(
+            samples.filter { AsleepTime.categoryValues.contains($0.value) }.map(\.interval)
+        )
+        // In-bed span: first sample start to last sample end across all
+        // stages (in-bed/awake included).
+        guard asleep > 0,
+              let spanStart = samples.map(\.interval.start).min(),
+              let spanEnd = samples.map(\.interval.end).max()
+        else { return nil }
+        let span = spanEnd.timeIntervalSince(spanStart)
+        let efficiency = span > 0 ? min(max(asleep / span, 0), 1) : nil
+        return (asleep, efficiency)
     }
 
     private func yesterdayWorkoutKcal(now: Date) async -> Double? {

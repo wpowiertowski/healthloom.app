@@ -67,6 +67,25 @@ import Testing
         #expect(AsleepTime.total([b, a, c]) == 5400 + 600)
     }
 
+    // catches: the build-21 launch crash. HealthKit calls the sleep math on
+    // its own queues; with main-actor isolation the merge's sort closure
+    // trapped the first time a real night of sleep reached it (WP-57). Run
+    // here from a detached task, off the main actor, with overlapping
+    // intervals so the comparator actually executes.
+    @Test func sleepMathRunsOffTheMainActor() async {
+        let start = Self.day(-1)
+        let intervals = [
+            DateInterval(start: start.addingTimeInterval(1800), duration: 3600),
+            DateInterval(start: start, duration: 3600),
+        ]
+        let calendar = Self.calendar
+        let (total, nights) = await Task.detached {
+            (AsleepTime.total(intervals), RollingTrend.nightlyAsleep(intervals, calendar: calendar))
+        }.value
+        #expect(total == 5400)
+        #expect(nights.values.reduce(0, +) == 5400)
+    }
+
     // catches: a trend printed without its unit, a falling average missing
     // its minus sign, and a rounding-level change shown as "+0".
     @Test func trendStringsCarryUnitsAndSignedChange() {
