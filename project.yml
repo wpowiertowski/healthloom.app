@@ -170,15 +170,16 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - com.healthloom.sync.refresh
         # OAuth redirect URL scheme (WP-04's ASWebAuthenticationSession
-        # redirect target). Placeholder scheme derived from the bundle ID;
-        # this MUST be reconciled with the reversed iOS-client-ID scheme
-        # Google issues once the real OAuth client is created (P-1.3) --
-        # tracked as a deviation in progress.md.
+        # redirect target): the reversed iOS client ID of the real Google
+        # Cloud OAuth client (P-1.3). Must equal
+        # `AppEnvironment.googleAuthConfig.redirectURIScheme`, which derives
+        # it from the client ID -- GoogleOAuthClientTests checks the built
+        # Info.plist against it.
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
             CFBundleURLName: com.healthloom.app.oauth
             CFBundleURLSchemes:
-              - com.healthloom.app
+              - com.googleusercontent.apps.675860065452-jm69qublifqtsv0v45hnetk5nhpt5nu9
     entitlements:
       path: HealthLoomApp/HealthLoom.entitlements
       properties:

@@ -5,9 +5,9 @@
 // depends on a small, app-owned protocol rather than the concrete actor
 // directly. This is what lets `-UITestStubGoogle` substitute a stub that
 // never presents `ASWebAuthenticationSession` or touches the network
-// (test-plan.md §5), while the real path (`LiveGoogleConsentCoordinator`) is
-// still fully wired for once a real Google Cloud iOS OAuth client exists
-// (P-1.3, still an outstanding human prerequisite -- see progress.md).
+// (test-plan.md §5), while the real path (`LiveGoogleConsentCoordinator`)
+// talks to the real Google Cloud iOS OAuth client (P-1.3,
+// `AppEnvironment.googleAuthConfig`).
 //
 // Real API discovered here (progress.md's WP-04 entry,
 // `GoogleAuthManager+Consent.swift`): `beginConsent` is `@MainActor`,

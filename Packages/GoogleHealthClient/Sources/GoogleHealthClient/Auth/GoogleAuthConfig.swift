@@ -2,8 +2,9 @@
 //
 // WP-04 (implementation-plan.md): everything environment/client-specific
 // about the OAuth flow, gathered in one injectable value so tests never
-// depend on a real Google Cloud OAuth client existing (P-1.3, still a human
-// prerequisite -- see progress.md).
+// depend on the real Google Cloud OAuth client. The app builds its config
+// with `iOSClient(clientID:)` from the real client (P-1.3, created
+// 2026-09-27), which derives the redirect from the ID.
 
 import Foundation
 
@@ -12,12 +13,11 @@ nonisolated public struct GoogleAuthConfig: Sendable {
     /// secret: installed-app / native clients authenticate via PKCE only.
     public var clientID: String
 
-    /// Redirect URI registered with the OAuth client. Google's guidance for
-    /// iOS installed-app clients is the reversed-client-ID custom scheme
-    /// (e.g. `com.googleusercontent.apps.XXXX:/oauth2redirect`); WP-01 left a
-    /// placeholder scheme (`com.healthloom.app`) pending the real client
-    /// (progress.md WP-01 note (4)). Keep `redirectURI` and
-    /// `redirectURIScheme` reconciled with whatever the real client issues.
+    /// Redirect URI registered with the OAuth client. For an iOS client it's
+    /// the reversed-client-ID custom scheme
+    /// (`com.googleusercontent.apps.XXXX:/oauth2redirect`) -- build it with
+    /// `iOSClient(clientID:)` rather than by hand, so it can't drift from the
+    /// ID. The app's `CFBundleURLSchemes` must list the same scheme.
     public var redirectURI: String
 
     /// The URL scheme portion of `redirectURI`, passed to
@@ -60,5 +60,24 @@ nonisolated public struct GoogleAuthConfig: Sendable {
         self.revocationEndpoint = revocationEndpoint
         self.userInfoEndpoint = userInfoEndpoint
         self.additionalScopes = additionalScopes
+    }
+
+    /// The config for a Google iOS OAuth client, from its client ID alone:
+    /// Google's iOS convention is a redirect on the reversed client ID
+    /// (`com.googleusercontent.apps.<id>:/oauth2redirect`, one slash).
+    public static func iOSClient(clientID: String) -> GoogleAuthConfig {
+        let scheme = reversedClientIDScheme(for: clientID)
+        return GoogleAuthConfig(
+            clientID: clientID,
+            redirectURI: "\(scheme):/oauth2redirect",
+            redirectURIScheme: scheme
+        )
+    }
+
+    /// `123-abc.apps.googleusercontent.com` → `com.googleusercontent.apps.123-abc`.
+    public static func reversedClientIDScheme(for clientID: String) -> String {
+        let suffix = ".apps.googleusercontent.com"
+        let id = clientID.hasSuffix(suffix) ? String(clientID.dropLast(suffix.count)) : clientID
+        return "com.googleusercontent.apps.\(id)"
     }
 }
