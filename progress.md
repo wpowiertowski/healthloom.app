@@ -6057,6 +6057,16 @@ detached task, with overlapping intervals so the comparator executes. With the i
 removed, the test no longer compiles ("expression is 'async' but is not marked with
 'await'"), so the guarantee is checked at build time.
 
-**Follow-up (not in this hotfix).** `ReadinessInputsProvider.lastNightSleep` still sums
-raw asleep samples, so it double-counts nights both the watch and the Fitbit recorded.
-It should use `AsleepTime.total` like the Today panel does.
+**Readiness sleep (owner asked to include it).** `ReadinessInputsProvider.lastNightSleep`
+summed raw asleep samples. A night both the watch and the Fitbit recorded counted twice,
+inflating the readiness score's sleep hours and pinning efficiency at 100%. The math now
+lives in `nonisolated static func sleepSummary(of:)`: asleep time via `AsleepTime.total`
+(overlaps counted once, the shared asleep-stage set), and efficiency as asleep ÷ the
+full sample span (in-bed and awake included), clamped to a fraction as before. The
+HealthKit handler only maps samples and calls it. The force-unwrapped `min()!`/`max()!`
+are gone.
+
+**Tests.** DataTrend 8 (1 new), readiness 3 new: a night recorded twice counts once,
+awake time widens the span but isn't sleep, and the summary runs off the main actor.
+Mutants: raw sum fails the double-count test; dropping `nonisolated` fails the build
+("main actor-isolated static method … cannot be called from outside of the actor").

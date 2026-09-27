@@ -263,3 +263,49 @@ struct SignalIndexFieldTests {
         #expect(Set(fields).count == ReadinessSignal.allCases.count)
     }
 }
+
+@Suite("ReadinessInputsProvider.sleepSummary")
+struct ReadinessSleepSummaryTests {
+    static let bedtime = Date(timeIntervalSince1970: 1_790_470_800) // an evening, 23:00 UTC
+    static func interval(_ startHours: Double, _ endHours: Double) -> DateInterval {
+        DateInterval(
+            start: bedtime.addingTimeInterval(startHours * 3600),
+            end: bedtime.addingTimeInterval(endHours * 3600)
+        )
+    }
+
+    // catches: a night recorded by both an Apple Watch and a Fitbit counting
+    // twice in the readiness score's sleep hours (14 h instead of 7) and
+    // pinning efficiency at 100% (WP-57).
+    @Test func aNightRecordedTwiceCountsOnce() throws {
+        let watch = (value: 3, interval: Self.interval(0, 7))      // asleepCore
+        let fitbit = (value: 1, interval: Self.interval(0.5, 7))   // asleepUnspecified
+        let summary = try #require(ReadinessInputsProvider.sleepSummary(of: [watch, fitbit]))
+        #expect(summary.asleep == 7 * 3600)
+        #expect(summary.efficiency == 1)
+    }
+
+    // catches: awake and in-bed time counted as sleep, or left out of the
+    // span efficiency divides by.
+    @Test func awakeTimeWidensTheSpanButIsNotSleep() throws {
+        let samples = [
+            (value: 0, interval: Self.interval(-0.5, 0)),   // inBed
+            (value: 4, interval: Self.interval(0, 3)),      // asleepDeep
+            (value: 2, interval: Self.interval(3, 3.5)),    // awake
+            (value: 5, interval: Self.interval(3.5, 7.5)),  // asleepREM
+        ]
+        let summary = try #require(ReadinessInputsProvider.sleepSummary(of: samples))
+        #expect(summary.asleep == 7 * 3600)
+        #expect(summary.efficiency == 7.0 / 8.0)
+        #expect(ReadinessInputsProvider.sleepSummary(of: [(value: 2, interval: Self.interval(0, 1))]) == nil)
+    }
+
+    // catches: the build-21 crash shape -- this runs inside HealthKit's
+    // result handler, off the main actor; with main-actor isolation this
+    // call no longer compiles.
+    @Test func runsOffTheMainActor() async {
+        let samples = [(value: 3, interval: Self.interval(0, 7)), (value: 1, interval: Self.interval(1, 8))]
+        let asleep = await Task.detached { ReadinessInputsProvider.sleepSummary(of: samples)?.asleep }.value
+        #expect(asleep == 8.0 * 3600)
+    }
+}
