@@ -11,9 +11,9 @@
 //     Fitbit-imported baseline compose per architecture.md D13.3;
 //   - the latest sample (heart rate, blood oxygen, weight) via a
 //     limit-1 descending `HKSampleQuery`;
-//   - last night's asleep total (sleep) -- asleep-stage category samples
-//     (unspecified/core/deep/REM, never inBed/awake) between 6 pm
-//     yesterday and now, overlaps counted once (`AsleepTime`).
+//   - last night's asleep total (sleep) -- `LastNightSleep`, the readiness
+//     score's night: asleep stages (unspecified/core/deep/REM, never
+//     inBed/awake) between 6 pm yesterday and noon, overlaps counted once.
 //
 // Error/empty posture, same as `ActivitiesProvider`: any per-kind query
 // failure (including read authorization never granted -- reads never
@@ -69,7 +69,7 @@ final class TodayMetricsProvider {
         case .weight:
             return await latestSample(.bodyMass, unit: .gramUnit(with: .kilo), now: now)
         case .sleep:
-            return await lastNightAsleepSeconds(now: now, startOfDay: startOfDay)
+            return await lastNightAsleepSeconds(now: now)
         }
     }
 
@@ -209,12 +209,13 @@ final class TodayMetricsProvider {
         }
     }
 
-    private func lastNightAsleepSeconds(now: Date, startOfDay: Date) async -> TodayMetricReading? {
-        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return nil }
-        // "Last night" = 6 pm yesterday .. now: wide enough for any real
-        // bedtime, narrow enough to exclude the previous night.
-        let windowStart = startOfDay.addingTimeInterval(-6 * 3600)
-        let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: now, options: [])
+    private func lastNightAsleepSeconds(now: Date) async -> TodayMetricReading? {
+        // WP-59: the readiness score's night, not a copy of it
+        // (`LastNightSleep`): 6 pm yesterday to noon, overlaps counted once.
+        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis),
+              let window = LastNightSleep.window(now: now, calendar: calendar)
+        else { return nil }
+        let predicate = HKQuery.predicateForSamples(withStart: window.start, end: window.end, options: [])
         return await withCheckedContinuation { (continuation: CheckedContinuation<TodayMetricReading?, Never>) in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -222,18 +223,8 @@ final class TodayMetricsProvider {
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                let categorySamples = (samples ?? []).compactMap { $0 as? HKCategorySample }
-                let asleep = categorySamples.filter { AsleepTime.categoryValues.contains($0.value) }
-                guard !asleep.isEmpty else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                // WP-56: overlaps counted once -- summing raw samples
-                // counted a night twice when the watch and the Fitbit both
-                // recorded it.
-                let total = AsleepTime.total(asleep.map { DateInterval(start: $0.startDate, end: $0.endDate) })
-                let latestEnd = asleep.map(\.endDate).max()
-                continuation.resume(returning: TodayMetricReading(value: total, date: latestEnd))
+                let night = LastNightSleep.summary(of: SleepStageSample.from(samples), in: window)
+                continuation.resume(returning: night.map { TodayMetricReading(value: $0.asleep, date: $0.wokeAt) })
             }
             healthStore.execute(query)
         }

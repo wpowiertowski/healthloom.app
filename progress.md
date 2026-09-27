@@ -6117,3 +6117,56 @@ not carried; cancellation not forwarded; claim ignores in-flight runs; sync igno
 claims; repair deletes every copy; repair without its once-guard; repair marked done
 before running. The mock reconcile client gained `leadingOverlap` to model the `.date`
 filter's civil-day truncation.
+
+## WP-59 — Readiness, Data tab and iCloud review findings
+
+Source: the WP-57 review (findings 1, 2, 4–10) and the whole-repo review (4, 5, 6, 8, 9,
+10). Stacked on WP-58 (both touch the project file and this log).
+
+**One night (`LastNightSleep`).** The Today sleep row and the readiness score each kept a
+copy of the sleep window, stage mapping and merge, and the copies disagreed: the row ran to
+`now` (an afternoon nap counted), readiness stopped at noon. One window now (6 pm yesterday
+to noon, or `now` before noon), built with `date(bySettingHour:)` so a daylight-saving
+night doesn't move an edge by an hour, and one summary. Samples are clipped to the window
+before merging, so an evening nap that began before 6 pm counts only its inside part and
+doesn't stretch the span efficiency divides by. `SleepStageSample.from` is the one
+HealthKit mapping; the Data tab's nightly sleep uses it too.
+
+**Rest days.** No workouts yesterday is strain 0 (the engine's full-rest subscore), not a
+missing signal — a rest day used to score below a light workout day. It still reads as no
+signal when there are no workouts in 30 days, because HealthKit returns a denied read as an
+empty result (`priorDayKcal`). A failed query is no signal.
+
+**Score history restarts.** Pre-WP-57 scores counted a dual-device night twice; comparing
+new scores against them inflated "vs 30-day average" for a month. The ring moved to a
+`.v2` key and the old key is removed.
+
+**Data tab.** `DataTrendProvider` is a `nonisolated`, `Sendable` class (store and calendar
+are both `Sendable`); the four queries run in a task group, so the rows wait on the slowest
+query, not the sum. WP-57's static query shapes and their comment are gone: HealthKit's
+handlers are `NS_SWIFT_SENDABLE`, so they never inherited main-actor isolation — the crash
+was the MainActor helper they called. (The project memory note was corrected too.)
+
+**iCloud settings merge.** A local edit made after another device's push, but before this
+device synced, was reverted by the pull even when it was newer and on a different field.
+The push phase now merges three ways against the content both sides last agreed on
+(`SingletonMerge`, baselines persisted per singleton and cleared by the wipe): fields only
+this device changed survive and are pushed, disabled types merge per type, and only a field
+both changed takes the server's value. No clock comparison, so the r9 skew fix holds.
+Without a baseline (first sync after upgrading) it defers to the server as before.
+`SingletonMerge.sameContent` replaces four hand-written field comparisons.
+
+**iCloud turn walk.** A sync with turns to push walked every server turn record twice (push
+existence set, then pull). The push returns its walk and the pull reuses it.
+
+**Not changed (owner's call).** When one source marks a stretch awake and another marks it
+asleep, the union counts it as sleep. Health.app instead picks one source per night by
+priority; switching is a product decision, not a bug fix.
+
+**Tests.** App: `LastNightSleep` 5 (replacing the 3 `sleepSummary` tests; the double-count
+test now has an in-bed sample so its efficiency half can fail), strain 3, history 1, iCloud
+5 (the pinned "local edit loses" test became "both devices' edits survive"). The fixture
+comment's "23:00 UTC" is now true (1_790_463_600). Mutants, each caught: no clipping; no
+noon cap; noon as midnight + 12 h (the DST bug); rest day as nil; retired history key kept;
+no merge; local wins a same-field conflict; pull re-walks turns; efficiency from the raw
+sum.

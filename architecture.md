@@ -150,6 +150,10 @@ WWDC 26 while Apple hardened the underlying biometrics — the same data-first s
 this decision encodes.) iOS 27's HealthKit newly exposes the user's heart-rate zone
 configuration to third-party apps; zones become a `KnowledgeProfile` field and a
 candidate prior-day-strain input — behind the same deterministic formula, never the LLM.
+Last night is one window for the score and the Today sleep row (`LastNightSleep`, WP-59):
+6 pm yesterday to noon, samples clipped to it, overlaps counted once. A day without
+workouts is strain 0 (full rest) for anyone who logged a workout in the past 30 days; with
+none in 30 days strain is missing, since HealthKit returns a denied read as empty.
 
 **D7 — AI context = `KnowledgeProfile` only, plus tools; never raw dumps.**
 `ContextAssembler` builds `HealthContext` exclusively from the human-readable,
@@ -456,8 +460,11 @@ field allowlist the encoder and decoder both enforce (`CloudRecordFields`). Both
 stores set `cloudKitDatabase: .none`, so all CloudKit traffic goes through
 `CloudSyncEngine`.
 
-Records live in the default zone: `SyncSettings` and `InsightPrefs` are singletons with
-last-sync-wins resolution against a seen-watermark (server `modificationDate` ordering);
+Records live in the default zone: `SyncSettings` and `InsightPrefs` are singletons
+resolved against a seen-watermark (server `modificationDate` ordering). When the server
+changed since this device last saw it, a three-way merge against the last agreed content
+keeps the fields only this device changed and takes the server's for the rest; disabled
+types merge per type, and only a field both devices changed goes to the server (WP-59);
 `CoachTurn` is append-only and saved if absent, so it needs no resolution. No account →
 silent local-only; transient failures set a retry flag; local state is always the source
 of truth, so a failed sync loses nothing.
