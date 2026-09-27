@@ -247,13 +247,11 @@ public actor WatchConflictResolver: ConflictFiltering {
     public func drainDeferredSessionLinks(for type: GoogleDataType) async -> [String: UUID] {
         let links = runs[type]?.deferredSessionLinks ?? [:]
         runs[type]?.deferredSessionLinks = [:]
-        // Both drains end the run: release the coverage index here (and in
-        // the count drain below -- whichever runs first frees it) so five
-        // synced types don't hold five padded coverage windows until their
-        // next runs, and a deep-horizon backfill chunk doesn't hold a year
-        // of workouts between chunks. Safe: no `resolve` can run after a
-        // drain within the same run (drains are the run's last calls).
-        runs[type]?.index = nil
+        // WP-52: links drain after every committed span of a run, so this
+        // drain keeps the coverage index -- later spans still resolve
+        // against it. (It used to release the index, which left every span
+        // after the first unfiltered.) The count drain below ends the run
+        // and frees the whole entry.
         return links
     }
 
@@ -264,7 +262,10 @@ public actor WatchConflictResolver: ConflictFiltering {
         // permanent shell per type (26 entries × 2 resolvers for app
         // lifetime). This drain is every run's last filter call (links
         // drain first at every call site — order pinned by test), so
-        // freeing here breaks nothing downstream.
+        // freeing here breaks nothing downstream. It also releases the
+        // coverage index, so five synced types don't hold five padded
+        // coverage windows until their next runs, and a deep-horizon
+        // backfill chunk doesn't hold a year of workouts between chunks.
         runs.removeValue(forKey: type)
         return count
     }

@@ -57,20 +57,20 @@ import SwiftData
 ///      explicitly deferred to WP-09's SyncEngine" note -- this is that
 ///      wiring).
 /// `SyncState.itemCount` is a **running cumulative total across the type's
-/// entire history**, incremented by a run's count only when that run's full
-/// window succeeds (see below) -- never reset, never decremented.
+/// entire history**, incremented by each span's count when that span
+/// commits (see below) -- never reset, never decremented.
 ///
-/// **Cursor semantics** (architecture.md D3): `SyncState.lastSyncedAt` only
-/// advances to the run's `window.end` when *every* page of *every* fetch in
-/// that run succeeds. Any failure -- a page fetch, an existence check, a
-/// save -- leaves `lastSyncedAt` exactly where it was; the next run
-/// recomputes the same (or a superset) window from the untouched cursor and
-/// safely re-pulls it, relying entirely on D4's idempotent existence diff to
-/// avoid duplicate writes for whatever the failed run already wrote.
-/// `SyncOutcome.itemCount` on a failed run still reports whatever partial
-/// progress was made before the failure (informational), but that partial
-/// count is *not* added to the persisted `SyncState.itemCount` -- only a
-/// fully-successful run commits its count.
+/// **Cursor semantics** (architecture.md D3, WP-52): a run's window is
+/// walked in `SyncConfiguration.chunkSpan` pieces, oldest first.
+/// `SyncState.lastSyncedAt` advances to a span's end only when *every* page
+/// of that span succeeds and its rows are saved. Any failure -- a page
+/// fetch, an existence check, a save -- leaves `lastSyncedAt` at the last
+/// committed span (or where the run found it); the next run recomputes its
+/// window from there, one lookback earlier, and safely re-pulls, relying on
+/// D4's idempotent existence diff to avoid duplicate writes for whatever
+/// the failed span already wrote. `SyncOutcome.itemCount` on a failed run
+/// reports all progress made before the failure (informational); only the
+/// committed spans' counts reach the persisted `SyncState.itemCount`.
 public actor SyncEngine {
     private let client: any GoogleReconcileClient
     private let writer: HealthKitWriter
@@ -272,66 +272,84 @@ public actor SyncEngine {
                 )
             }
 
-            // Round-6 item 8: the bounded shared walk (same-token
-            // break, page cap, cancellation probe — see PagePipeline).
-            // `.localOnly` upserts stay on this executor (round-10 item
-            // 14: the pipeline resumes off-actor after its awaits, and
-            // `ModelContext` is not thread-safe — context work never
-            // crosses into it). A throwing page propagates
-            // `PageWalkPartial` to the run's catch below, which commits
-            // the completed pages' rows there.
-            let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
-                .processPages(knownExternalIDs: knownExternalIDs) { token in
-                    try await client.reconcile(
-                        type: type, since: windowStart, until: windowEnd, pageToken: token
+            // WP-52: the window is walked one `chunkSpan` at a time, oldest
+            // first, and each completed span commits its rows AND the
+            // cursor (`lastSyncedAt` = the span's end) before the next
+            // begins. An interrupted run -- cancelled, suspended, killed,
+            // or failed -- keeps every finished day; the next run resumes
+            // one lookback before the last committed span. (One whole-window
+            // walk restarted from zero every run and never finished a first
+            // heart-rate sync, and a page-cap hit advanced the cursor past
+            // the unwalked remainder.)
+            for chunk in configuration.chunks(from: windowStart, to: windowEnd) {
+                // Re-checked per span, not just at `sync(type:)`'s door: a
+                // dense first sync runs for minutes, and a wipe latched
+                // mid-run must not let the remaining days write behind it.
+                // Thrown as a cancellation -- the stop-not-failure branch
+                // below, cursor at the last committed span.
+                if isQuiesced() { throw CancellationError() }
+                // Round-6 item 8: the bounded shared walk (same-token
+                // break, page cap, cancellation probe — see PagePipeline).
+                // `.localOnly` upserts stay on this executor (round-10 item
+                // 14: the pipeline resumes off-actor after its awaits, and
+                // `ModelContext` is not thread-safe — context work never
+                // crosses into it). A throwing page propagates
+                // `PageWalkPartial` to the run's catch below, which commits
+                // the completed pages' rows there; earlier spans are
+                // already saved.
+                let walked = try await PagePipeline(conflictFilter: conflictFilter, writer: writer)
+                    .processPages(knownExternalIDs: knownExternalIDs) { token in
+                        try await client.reconcile(
+                            type: type, since: chunk.start, until: chunk.end, pageToken: token
+                        )
+                    }
+                for point in walked.localOnly {
+                    // Round-8 item 13: throws on unencodable payloads (no
+                    // silent zero-byte rows) — into the run's existing
+                    // failure path (cursor at the last committed span,
+                    // error surfaced).
+                    try PagePipeline.upsertLocalSample(for: point, context: context)
+                }
+                totalItemCount += walked.total
+                // A span past the cap (100 pages in one day) is
+                // pathological; its remainder is recovered only through
+                // lookback overlap on later runs, so say so loudly.
+                if walked.hitPageCap {
+                    DiagnosticsLog.sync.notice(
+                        "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) in one span — partial span committed; remainder beyond lookback overlap will not be revisited."
                     )
                 }
-            for point in walked.localOnly {
-                // Round-8 item 13: throws on unencodable payloads (no
-                // silent zero-byte rows) — into the run's existing
-                // failure path (cursor unmoved, error surfaced).
-                try PagePipeline.upsertLocalSample(for: point, context: context)
-            }
-            totalItemCount += walked.total
-            // Fix-round N3: a cap-hit still advances the cursor
-            // with a partial `.ok` — log it loudly. Anything past
-            // the cap in this window is recovered only through
-            // lookback overlap on later runs, so silence here would
-            // read as full success.
-            if walked.hitPageCap {
-                DiagnosticsLog.sync.notice(
-                    "Page cap (\(PagePipeline.maxPages, privacy: .public)) hit for \(String(describing: type), privacy: .public) — partial window committed; remainder beyond lookback overlap will not be revisited."
-                )
-            }
 
-            // WP-12b: apply deferred-session links (external ID -> watch
-            // workout UUID) to the LocalSample rows the pages above
-            // upserted -- the resolver records the link at `resolve` time,
-            // but the row only exists after `upsertLocalSample` ran
-            // (fetches see pending inserts in the same context). Identity
-            // filter drains nothing.
-            PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+                // WP-12b: apply deferred-session links (external ID -> watch
+                // workout UUID) to the LocalSample rows this span upserted
+                // -- the resolver records the link at `resolve` time, but
+                // the row only exists after `upsertLocalSample` ran
+                // (fetches see pending inserts in the same context).
+                // Identity filter drains nothing.
+                PagePipeline.applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(for: type), context: context)
+
+                // Span succeeded (every page fetched, mapped, and
+                // written/upserted without throwing) -- advance the cursor
+                // to its end and commit its count.
+                syncState.lastSyncedAt = chunk.end
+                syncState.lastStatus = SyncStatus.ok.rawValue
+                syncState.lastError = nil
+                syncState.itemCount += walked.total
+                do {
+                    try context.save()
+                } catch {
+                    // A save failure leaves lastSyncedAt at the last
+                    // committed span (the in-memory advance above dies with
+                    // this context's rollback): report the failure instead
+                    // of an `.ok` nothing was persisted under.
+                    // Raw description here, redacted once at the catch
+                    // below (the documented D11 boundary) -- redacting at
+                    // both layers just burns regex passes and hides the
+                    // ownership.
+                    throw HealthKitWriterError.underlying(String(describing: error))
+                }
+            }
             let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
-
-            // Full window succeeded (every page fetched, mapped, and
-            // written/upserted without throwing) -- advance the cursor and
-            // commit this run's count.
-            syncState.lastSyncedAt = windowEnd
-            syncState.lastStatus = SyncStatus.ok.rawValue
-            syncState.lastError = nil
-            syncState.itemCount += totalItemCount
-            do {
-                try context.save()
-            } catch {
-                // A save failure leaves lastSyncedAt where it was (the
-                // in-memory cursor advance above dies with this context):
-                // report the failure instead of an `.ok` nothing was
-                // persisted under.
-                // Raw description here, redacted once at the catch
-                // below (the documented D11 boundary) -- redacting at both
-                // layers just burns regex passes and hides the ownership.
-                throw HealthKitWriterError.underlying(String(describing: error))
-            }
             let outcome = SyncOutcome(
                 dataType: type, status: .ok, itemCount: totalItemCount, suppressedCount: suppressedCount
             )
@@ -403,11 +421,15 @@ public actor SyncEngine {
             let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
 
             // Cancellation is a stop, not a failure: no error status, no
-            // message, cursor untouched -- the next run retries the same
-            // window. (Without this branch a routine expiration-handler
+            // message, cursor at the last committed span -- the next run
+            // resumes from there. (Without this branch a routine expiration-handler
             // cancel paints a red dashboard row for the system doing its
-            // job.)
-            if effective is CancellationError || (effective as? GoogleHealthClientError) == .cancelled {
+            // job.) A locked device is the same kind of stop (WP-52):
+            // HealthKit can't be read until the phone is unlocked, and a
+            // background wake on a locked phone painted every type red.
+            if effective is CancellationError
+                || (effective as? GoogleHealthClientError) == .cancelled
+                || (effective as? HealthKitWriterError) == .protectedDataUnavailable {
                 // Status moves, message stays: a previous run's genuine
                 // error is evidence for the user/support, and a stop
                 // resolves nothing about it. Clearing it here would trade
@@ -422,10 +444,10 @@ public actor SyncEngine {
                 return stopped
             }
 
-            // Partial-window failure: `lastSyncedAt` is deliberately left
-            // untouched (architecture.md D3) so the *entire* window --
-            // including whatever pages already succeeded this run -- is
-            // safely re-pulled next time; idempotent existence-diff means
+            // Partial-span failure: `lastSyncedAt` deliberately stays at the
+            // last committed span (architecture.md D3) so the failed span --
+            // including whatever pages already succeeded in it -- is safely
+            // re-pulled next time; idempotent existence-diff means
             // re-processing already-written pages costs nothing but a query.
             // Redacted (architecture.md D11, SyncState.lastError's own
             // doc): pipeline errors can embed bearer tokens or

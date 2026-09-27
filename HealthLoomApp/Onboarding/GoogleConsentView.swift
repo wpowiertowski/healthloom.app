@@ -66,7 +66,7 @@ struct GoogleConsentView: View {
     private func beginConsent() {
         isConsenting = true
         errorMessage = nil
-        let scopes = Array(Set(AppEnvironment.p0Types.map(\.scope)))
+        let scopes = SyncPreferences.consentScopes()
         Task {
             let result = await appEnvironment.consentCoordinator.beginConsent(scopes: scopes)
             isConsenting = false

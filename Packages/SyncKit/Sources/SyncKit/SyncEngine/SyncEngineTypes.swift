@@ -33,15 +33,39 @@ nonisolated public struct SyncConfiguration: Sendable, Equatable {
     /// Sleep-specific lookback (architecture.md D3: 7d -- "since sleep
     /// sessions finalize late").
     public var sleepLookback: TimeInterval
+    /// WP-52: a window is walked this much at a time, oldest first, and the
+    /// cursor commits after each span. A first heart-rate sync is hundreds
+    /// of thousands of points; walked as one piece it outlived every
+    /// foreground session and background wake, restarting from scratch
+    /// each run, and a page-cap hit advanced the cursor past the unwalked
+    /// rest of the window.
+    public var chunkSpan: TimeInterval
 
     public init(
         initialWindow: TimeInterval = 7 * 24 * 3600,
         defaultLookback: TimeInterval = 72 * 3600,
-        sleepLookback: TimeInterval = 7 * 24 * 3600
+        sleepLookback: TimeInterval = 7 * 24 * 3600,
+        chunkSpan: TimeInterval = 24 * 3600
     ) {
         self.initialWindow = initialWindow
         self.defaultLookback = defaultLookback
         self.sleepLookback = sleepLookback
+        self.chunkSpan = chunkSpan
+    }
+
+    /// `start ..< end` cut into consecutive `chunkSpan` pieces, oldest
+    /// first; the last piece ends exactly at `end`. Empty when `end` isn't
+    /// after `start`; a non-positive span means one piece (never a loop
+    /// that can't advance).
+    public nonisolated func chunks(from start: Date, to end: Date) -> [DateInterval] {
+        var pieces: [DateInterval] = []
+        var cursor = start
+        while cursor < end {
+            let next = chunkSpan > 0 ? min(cursor.addingTimeInterval(chunkSpan), end) : end
+            pieces.append(DateInterval(start: cursor, end: next))
+            cursor = next
+        }
+        return pieces
     }
 
     /// `.sleep` gets the 7-day lookback (sessions finalize late); every other
@@ -136,7 +160,9 @@ nonisolated public protocol ConflictFiltering: Sendable {
     /// workout since the last drain (architecture.md D13.2). The caller
     /// applies them to the matching `LocalSample` rows' `linkedWatchWorkoutUUID`
     /// after its local upserts -- the resolver can't set the field itself
-    /// because the row doesn't exist yet when `resolve` runs.
+    /// because the row doesn't exist yet when `resolve` runs. Called after
+    /// each committed span (WP-52), so it must not end the run: the run's
+    /// state lives until `drainSuppressedCount`, always the last call.
     /// Drains only `type`'s recorded links, leaving any
     /// concurrently-running type's run state untouched (one resolver per
     /// pipeline serves every type that pipeline syncs). There is

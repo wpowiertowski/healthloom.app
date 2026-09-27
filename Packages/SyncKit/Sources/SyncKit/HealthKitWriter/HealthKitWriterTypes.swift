@@ -34,10 +34,22 @@ public enum HealthKitWriterError: Error, Sendable, Equatable, CustomStringConver
     /// implementation").
     case underlying(String)
 
+    /// HealthKit refused because the device is locked: protected health
+    /// data is readable only while it's unlocked (WP-52 -- a background
+    /// wake on a locked phone logged "Protected health data is
+    /// inaccessible" as a red error for every type). A pause, not a
+    /// failure: `SyncEngine` stops the run like a cancellation and the next
+    /// run retries. Classified where HealthKit errors are wrapped
+    /// (`init(wrapping:)`, HealthStoreProtocol.swift), never by callers
+    /// parsing `underlying`'s text.
+    case protectedDataUnavailable
+
     public var description: String {
         switch self {
         case .underlying(let message):
             return "HealthKitWriterError.underlying(\(message))"
+        case .protectedDataUnavailable:
+            return "HealthKitWriterError.protectedDataUnavailable"
         }
     }
 }

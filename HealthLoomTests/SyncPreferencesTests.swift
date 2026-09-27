@@ -78,6 +78,15 @@ struct SyncPreferencesPureFunctionTests {
         #expect(SyncPreferences.requiredScopes(for: []).isEmpty)
     }
 
+    // catches: connect asking for fewer scopes than Sync Now reads -- the
+    // P0-only request left ECG, irregular-rhythm, and nutrition reads 403ing
+    // (WP-52) -- and a scope order that shifts between calls.
+    @Test func consentScopesCoverEverySyncableTypeInAStableOrder() {
+        let scopes = SyncPreferences.consentScopes(for: SyncPreferences.syncableTypes)
+        #expect(scopes == GoogleDataType.Scope.allCases)
+        #expect(SyncPreferences.consentScopes(for: [.sleep, .steps]) == [.activityAndFitness, .sleep])
+    }
+
     @Test func syncableTypesExcludesEverySkipType() async throws {
         let skipTypes = GoogleDataType.allCases.filter { $0.writability == .skip }
 

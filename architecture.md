@@ -116,6 +116,9 @@ Each type keeps `lastSyncedAt`, but every sync pulls `since: lastSyncedAt − lo
 (default 72 h; sleep 7 d, since sleep sessions finalize late). Late-arriving device data
 falls inside the window; the idempotency key (D4) makes re-pulling overlap free. A pure
 high-water mark would silently drop any sample synced late by the device.
+The window is walked one day at a time, oldest first, and `lastSyncedAt` commits after
+each day (WP-52): a dense type (heart rate is hundreds of thousands of points on a first
+sync) keeps every finished day when a run is cut short, and resumes from there.
 
 **D4 — Idempotency via external ID metadata.**
 Every HealthKit sample is stamped with `HKMetadataKeyExternalUUID` = Google data-point ID

@@ -174,9 +174,21 @@ nonisolated struct GoogleDataTypeSchema: Sendable {
     }
 
     /// Exercise and sleep cap at 25 per page (the API's own limit); other
-    /// types allow 10,000, and 1,000 keeps a page small on a slow link.
+    /// types take the API's maximum of 10,000. Heart rate runs to tens of
+    /// thousands of samples a day: at 1,000 a page a 30-day backfill chunk
+    /// needed ~500 pages, five times the walk's 100-page cap, and failed
+    /// every retry (WP-52).
     var pageSize: Int {
-        type == .sleep || type == .exercise ? 25 : 1000
+        type == .sleep || type == .exercise ? 25 : 10_000
+    }
+
+    /// `page` held to `..< until`. The server applies every other type's
+    /// upper bound itself; ECG's filter supports only `>=` on start time, so
+    /// without this a caller walking day by day would get every recording
+    /// since `since` once per day.
+    func holdingToWindow(_ page: Page, until: Date) -> Page {
+        guard time == .ecgSession else { return page }
+        return Page(points: page.points.filter { $0.start < until }, nextPageToken: page.nextPageToken)
     }
 
     /// The AIP-160 time window for this type. The filter prefix is the snake

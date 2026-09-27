@@ -5833,3 +5833,67 @@ checked against a live response yet. The next TestFlight sync is the check. Anyt
 still wrong shows as a named `decodingFailed(...)` reason in the Sync Log. Total
 calories (roll-up only) isn't synced yet: the reconcile union lists a
 `basalEnergyBurned` type that is the likely home, but it's unconfirmed.
+
+## WP-52 · First real sync finishes (branch `wp-52-sync-completes` from main 2c41444)
+
+**Evidence.** The first TestFlight sync after WP-51 moved real data: active energy
+9,289, distance 3,918, active minutes 4,238, AZM 655, floors 82, exercise 25. Both runs
+in the Sync Log still stopped after `food`, though. `syncAll` continues past failures,
+so `food` wasn't the cause: `heart_rate`, next alphabetically, was still running when
+each export was taken. A type only logs when it finishes.
+
+**Bugs.**
+1. **Dense types never finished, and a cap-hit lost data.** A first sync pulls 10 days
+   (7-day initial window plus 72 h lookback), which for Fitbit heart rate is hundreds of
+   thousands of points. One whole-window walk committed the cursor only at the end, so
+   any interruption (backgrounding, a background wake's budget, a second tap) restarted
+   from zero. At 1,000 points a page, the 100-page cap stopped the walk at 100k points,
+   yet the cursor advanced to the window's end, and everything past the cap and older
+   than the lookback was never revisited.
+2. **Backfill of heart rate failed forever.** A 30-day chunk at 1,000 a page is about
+   500 pages. The cap fails the chunk, and every retry fails the same way.
+3. **ECG 403.** Onboarding asked only for the 4 P0 types' scopes (activity, health
+   metrics, sleep), but Sync Now has walked every syncable type since round-6 item 9.
+   The ECG, IRN and nutrition scopes were never granted (the Dashboard header had
+   flagged this as follow-up). Hydration, nutrition log and IRN would 403 too once
+   reached.
+4. **Locked phone.** An earlier run logged HealthKit Code 6 "Protected health data is
+   inaccessible" as a red error for every type.
+
+**Fix.**
+- `SyncEngine` walks the window one `SyncConfiguration.chunkSpan` (24 h) at a time,
+  oldest first. Each finished span saves its rows, its count, and `lastSyncedAt` =
+  span end, so an interrupted run keeps its finished days and the next one resumes
+  one lookback before them. The cap now bounds one day.
+  `WatchConflictResolver.drainDeferredSessionLinks` no longer frees the coverage index,
+  because links now drain per span. The count drain, always last, frees the run entry.
+  architecture.md D3 records the change.
+- `pageSize` is 10,000 for non-session types (the API maximum), which takes a heart-rate
+  backfill chunk well under the cap and cuts requests 10×. Sleep and exercise stay at 25.
+- ECG's filter has no upper bound, so the client holds ECG pages to `..< until`
+  (`GoogleDataTypeSchema.holdingToWindow`). Otherwise a day-by-day walk would re-read
+  every recording once per day.
+- 403 → `GoogleHealthClientError.permissionDenied`, not retried. Every connect path
+  (onboarding, Dashboard, Settings) asks for `SyncPreferences.consentScopes()`, the
+  scopes of the types Sync Now walks. Settings gains **Update Google Access** for
+  installs connected before this: `ensure` asks only for what's missing.
+- The HealthKit wrap sites classify `errorDatabaseInaccessible` as
+  `HealthKitWriterError.protectedDataUnavailable` (`init(wrapping:)`), and `SyncEngine`
+  stops on it like a cancellation: no error row, and the cursor holds.
+- The wipe quiesce is re-checked before every span, not only when a run starts. A
+  minutes-long first sync must not keep writing days after a wipe has latched.
+
+**Tests.** The SyncEngine tests' mock is now window-aware: it returns only points inside
+the requested window, as the real filter does. Tests about a run's own mechanics
+(pagination, cursor on failure, coalescing, page cap, token echo) run with
+`SyncConfiguration.wholeWindow`. The window, cursor and non-finite tests assert on the
+first and last spans. New tests: span tiling, an interrupted run keeping its finished
+days (failure and cancel), locked device as a stop, the lock classifier, 403 as
+`permissionDenied` without retry, ECG held to the window, and consent scopes covering
+every syncable type, and a wipe latched mid-run stopping before the next span. The app's
+credentials-gate test now asserts only ECG was requested (a run makes one request per
+day). Counts: GoogleHealthClient 58, SyncKit 323, app unit bundle 323. Mutants that
+each fail their test: quiesce not re-checked per span, cursor committed only at the
+window end, span count not committed, spans newest-first, index released on link drain
+(24 watch-conflict failures), no 403 case, widened ECG bound, locked device not treated
+as a stop, classifier on the wrong code.

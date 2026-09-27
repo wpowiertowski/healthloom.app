@@ -68,6 +68,8 @@ struct SettingsView: View {
     /// One-shot HealthKit re-request state (existing installs, see below).
     @State private var isRefreshingHealthSharing = false
     @State private var healthSharingMessage: String? = nil
+    @State private var isRefreshingGoogleAccess = false
+    @State private var googleAccessMessage: String? = nil
     @State private var isConnectingGoogle = false
     @State private var googleConnectMessage: String? = nil
 
@@ -520,6 +522,38 @@ struct SettingsView: View {
                 }
             }
 
+            if !googleSkipped {
+                // WP-52: catch-up for installs connected before consent
+                // covered every synced type (see `refreshGoogleAccess`).
+                ThemedSectionHeader(title: "Google Access")
+                ThemedPanel {
+                    Button {
+                        refreshGoogleAccess()
+                    } label: {
+                        HStack {
+                            Text("Update Google Access")
+                            Spacer()
+                            if isRefreshingGoogleAccess {
+                                ProgressView()
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("settings.googleAccess.refresh")
+                    .disabled(isRefreshingGoogleAccess)
+
+                    if let message = googleAccessMessage {
+                        ThemedErrorText(
+                            message: message,
+                            accessibilityIdentifier: "settings.googleAccess.message"
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+                    }
+                }
+            }
+
             // One-shot catch-up for installs onboarded before workout
             // sharing shipped (see `refreshHealthSharing`): re-presents
             // only the still-undetermined HealthKit types.
@@ -687,13 +721,14 @@ struct SettingsView: View {
         }
     }
 
-    /// Explicit Google connect (onboarding-skip-Google): requests the P0 scopes via
-    /// the same incremental `ensure` the toggles use, then clears the skip flag so
-    /// Dashboard/background sync resume. Failure renders inline, never throws out.
+    /// Explicit Google connect (onboarding-skip-Google): requests
+    /// `SyncPreferences.consentScopes()` via the same incremental `ensure`
+    /// the toggles use, then clears the skip flag so Dashboard/background
+    /// sync resume. Failure renders inline, never throws out.
     private func connectGoogle() {
         isConnectingGoogle = true
         googleConnectMessage = nil
-        let scopes = Array(Set(AppEnvironment.p0Types.map(\.scope)))
+        let scopes = SyncPreferences.consentScopes()
         Task {
             defer { isConnectingGoogle = false }
             do {
@@ -704,6 +739,29 @@ struct SettingsView: View {
                 GoogleConnectionSetting().clearSkipped()
             } catch {
                 googleConnectMessage = "Couldn't connect Google: \(SyncLogRedactor.redact(String(describing: error)))"
+            }
+        }
+    }
+
+    /// Asks Google for whichever of `SyncPreferences.consentScopes()` the
+    /// account hasn't granted (WP-52). Exists for installs connected while
+    /// consent covered only the P0 types' scopes -- their ECG, irregular-
+    /// rhythm, and nutrition reads fail with "permissionDenied", and they
+    /// never see onboarding again. `ensure` shows no UI when nothing is
+    /// missing.
+    private func refreshGoogleAccess() {
+        isRefreshingGoogleAccess = true
+        googleAccessMessage = nil
+        Task {
+            defer { isRefreshingGoogleAccess = false }
+            do {
+                try await appEnvironment.googleAuthManager.ensure(
+                    scopes: SyncPreferences.consentScopes(),
+                    presentationContextProvider: consentPresenter
+                )
+                googleAccessMessage = "Google access is up to date."
+            } catch {
+                googleAccessMessage = "Couldn't update Google access: \(SyncLogRedactor.redact(String(describing: error)))"
             }
         }
     }

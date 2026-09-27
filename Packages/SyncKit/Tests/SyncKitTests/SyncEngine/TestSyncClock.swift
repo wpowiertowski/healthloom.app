@@ -35,3 +35,11 @@ final class TestSyncClock: SyncClock, @unchecked Sendable {
         lock.unlock()
     }
 }
+
+extension SyncConfiguration {
+    /// One span per run (WP-52): for tests about a run's own mechanics --
+    /// pagination, the cursor on failure, coalescing -- whose scripted mock
+    /// hands out results per call. Day-by-day spans would spread a script
+    /// across days; the span behaviour has its own tests.
+    static let wholeWindow = SyncConfiguration(chunkSpan: 0)
+}
