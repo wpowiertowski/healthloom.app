@@ -5931,3 +5931,21 @@ run.
 app tests: the run names the type in flight and ends idle, and a second start while
 running does nothing. Three mutants each fail their test: the old description prefix,
 `current` never set, and no running guard.
+
+## WP-54 · Header buttons stay put while syncing (branch `wp-54-header-alignment` from main 944052f)
+
+**Bug.** On TestFlight, tapping Sync Now grew the Data tab's header by about 23 pt:
+the title rose and the Settings and Sync buttons dropped. The owner also asked for the
+buttons to sit level with the "HealthLoom" title. `ThemedHeader` laid out title and
+actions on `.firstTextBaseline`. The idle Sync icon (an SF Symbol) has a text baseline,
+but the busy `ProgressView` doesn't, so it aligned its bottom edge to the title's
+baseline. This predates WP-53, which only made the busy state last long enough to
+notice.
+
+**Fix.** The row is `.center`-aligned, so the buttons are centered on the title in every
+state. The change is in the shared header, so it covers the Data, Coach and Sync Log
+headers. Headers without actions hold only the title, so they're unchanged.
+
+**Tests.** `ThemedHeaderLayoutTests`: the header renders the same height with the Sync
+button idle and busy. The baseline-aligned mutant fails it. Idle and busy renders were
+inspected by eye: buttons centered on the title, geometry identical.

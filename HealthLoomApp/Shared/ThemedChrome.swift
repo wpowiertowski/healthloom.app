@@ -125,7 +125,12 @@ struct ThemedHeader<Actions: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
+            // Centered, not `.firstTextBaseline` (WP-54): a symbol image
+            // has a text baseline but a busy `ProgressView` doesn't, so on
+            // a baseline row the Sync spinner hung from the title's baseline
+            // -- the buttons dropped and the row grew ~23 pt mid-sync.
+            // Centering also keeps the buttons level with the title.
+            HStack(alignment: .center) {
                 Text(title)
                     .font(Theme.font(Theme.Step.hero, .light, relativeTo: .title))
                     .foregroundStyle(Theme.ink)
