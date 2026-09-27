@@ -36,6 +36,29 @@ import Testing
         )
     }
 
+    // MARK: - Other-app workouts (WP-55)
+
+    // catches: a workout another app saved (no watch) either not winning
+    // the session, or suppressing streams it never recorded -- and a watch
+    // workout beside it losing its stream coverage.
+    @Test func otherAppWorkoutsWinSessionsButNeverStreams() throws {
+        let rower = WatchCoverageWindow(
+            workoutUUID: UUID(), start: Self.at(0), end: Self.at(60), source: .otherApp
+        )
+        let watch = WatchCoverageWindow(workoutUUID: UUID(), start: Self.at(100), end: Self.at(160))
+        let rowerOnly = WatchCoverageIndex(windows: [rower])
+        #expect(rowerOnly.matchingWorkout(forSessionStart: Self.at(1), end: Self.at(59))?.workoutUUID == rower.workoutUUID)
+        #expect(rowerOnly.resolveStream(start: Self.at(30), end: Self.at(30), cumulative: false) == .keep)
+        #expect(rowerOnly.resolveStream(start: Self.at(10), end: Self.at(20), cumulative: true) == .keep)
+        #expect(!rowerOnly.intersectsPaddedCoverage(start: Self.at(10), end: Self.at(20)))
+        #expect(!rowerOnly.coversStreams)
+
+        let both = WatchCoverageIndex(windows: [rower, watch])
+        #expect(both.coversStreams)
+        #expect(both.resolveStream(start: Self.at(130), end: Self.at(130), cumulative: false) == .suppress)
+        #expect(both.resolveStream(start: Self.at(30), end: Self.at(30), cumulative: false) == .keep)
+    }
+
     // MARK: - Session rule truth table (D13.2 / test-plan.md §2.3)
 
     @Test func exactMatchSessionDefers() {

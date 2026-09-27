@@ -352,7 +352,7 @@ final class AppEnvironment {
         // Each resolver deletes conflicts through the same `HealthKitWriter`
         // its pipeline writes through, keeping D4's idempotency story in one
         // place. `UserDefaultsWatchPriorityPreference` reads the same key
-        // `SettingsView`'s "Prefer Apple Watch during workouts" toggle
+        // `SettingsView`'s "Prefer workouts already in Apple Health" toggle
         // writes (`WatchPriorityPreferences`, Settings/) -- default ON.
         let watchCoverageProvider = HealthKitWatchCoverageProvider()
 

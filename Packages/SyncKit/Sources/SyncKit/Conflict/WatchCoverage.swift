@@ -22,8 +22,9 @@ import Foundation
 
 // MARK: - Coverage window
 
-/// One Apple Watch workout's time span, as discovered in HealthKit by a
-/// `WatchCoverageProviding` conformer (architecture.md D13.1). `start`/`end`
+/// One workout already in Apple Health (not written by HealthLoom), as
+/// discovered by a `WatchCoverageProviding` conformer (architecture.md
+/// D13.1; widened beyond Apple Watch by WP-55). `start`/`end`
 /// are the workout's **own, unpadded** bounds -- D13.2's session-overlap
 /// classification compares against these directly, while D13.3's stream
 /// suppression uses the ±`WatchConflictPolicy.coveragePadding` padded form
@@ -36,11 +37,27 @@ nonisolated public struct WatchCoverageWindow: Sendable, Hashable {
     public var workoutUUID: UUID
     public var start: Date
     public var end: Date
+    public var source: Source
 
-    public init(workoutUUID: UUID, start: Date, end: Date) {
+    /// What recorded the workout, which decides how much it wins (WP-55).
+    public enum Source: Sendable, Hashable {
+        /// An Apple Watch: it also measured heart rate, steps, energy and
+        /// distance throughout, so it wins the session (D13.2) AND those
+        /// streams (D13.3).
+        case appleWatch
+        /// Another app that saves workouts to Apple Health (a Hydrow
+        /// rower, iPhone Fitness...). The session is already there, but
+        /// its streams may not be -- Hydrow saves no continuous heart
+        /// rate -- so it wins the session only, and Fitbit's streams
+        /// still fill Apple Health.
+        case otherApp
+    }
+
+    public init(workoutUUID: UUID, start: Date, end: Date, source: Source = .appleWatch) {
         self.workoutUUID = workoutUUID
         self.start = start
         self.end = end
+        self.source = source
     }
 }
 
@@ -121,25 +138,33 @@ nonisolated public struct WatchCoverageIndex: Sendable, Equatable {
     public let windows: [WatchCoverageWindow]
     public let policy: WatchConflictPolicy
 
-    /// Padded (±`policy.coveragePadding`) window spans, merged where padding
-    /// makes neighbors overlap or touch -- so back-to-back watch workouts
-    /// behave as one continuous covered span for stream math, and split
-    /// slices can never fall into the sliver between two adjacent windows.
+    /// Padded (±`policy.coveragePadding`) Apple Watch window spans, merged
+    /// where padding makes neighbors overlap or touch -- so back-to-back
+    /// watch workouts behave as one continuous covered span for stream
+    /// math, and split slices can never fall into the sliver between two
+    /// adjacent windows. `.otherApp` windows never enter it: they win
+    /// sessions, not streams (WP-55).
     private let mergedPaddedSpans: [StreamSlice]
 
     public init(windows: [WatchCoverageWindow], policy: WatchConflictPolicy = .default) {
         let sorted = windows.sorted { $0.start < $1.start }
         self.windows = sorted
         self.policy = policy
-        self.mergedPaddedSpans = Self.mergePaddedSpans(sorted, padding: policy.coveragePadding)
+        self.mergedPaddedSpans = Self.mergePaddedSpans(
+            sorted.filter { $0.source == .appleWatch }, padding: policy.coveragePadding
+        )
     }
 
     public var isEmpty: Bool { windows.isEmpty }
 
+    /// Whether any window suppresses streams -- i.e. at least one Apple
+    /// Watch workout (WP-55: other-app workouts win sessions only).
+    public var coversStreams: Bool { !mergedPaddedSpans.isEmpty }
+
     // MARK: Session rule (D13.2)
 
-    /// The watch workout an incoming Google Exercise session defers to, or
-    /// `nil` if the session stands on its own (Fitbit-only workout --
+    /// The Apple Health workout (watch or other app) an incoming Google
+    /// Exercise session defers to, or `nil` if the session stands on its own (Fitbit-only workout --
     /// architecture.md §6: "no coverage window ⇒ full Fitbit session imports
     /// as HKWorkout").
     ///
@@ -173,7 +198,8 @@ nonisolated public struct WatchCoverageIndex: Sendable, Equatable {
     // MARK: Stream rule (D13.3)
 
     /// Suppress/split/keep for one stream sample's interval, against the
-    /// merged **padded** coverage spans. `cumulative: true` for types whose
+    /// merged **padded** Apple Watch coverage spans (other-app workouts
+    /// never suppress streams). `cumulative: true` for types whose
     /// value distributes over the interval (steps, distance, active energy
     /// -- splittable with pro-rating); `false` for instantaneous readings
     /// (heart rate -- a partial overlap is dropped whole, there is nothing
@@ -251,8 +277,10 @@ nonisolated public struct WatchCoverageIndex: Sendable, Equatable {
 
 // MARK: - Coverage source seam
 
-/// Async source of Apple Watch workout windows for a date range
-/// (architecture.md D13.1). Production: `HealthKitWatchCoverageProvider`
+/// Async source of coverage windows for a date range (architecture.md
+/// D13.1): Apple Watch workouts, and since WP-55 every other workout in
+/// Apple Health that HealthLoom didn't write, each tagged with its
+/// `WatchCoverageWindow.Source`. Production: `HealthKitWatchCoverageProvider`
 /// (WatchCoverageProvider.swift), which queries HealthKit and classifies
 /// workout sources behind `WorkoutSourceClassifier`. Tests inject a stub
 /// returning fixed windows -- the simulator cannot fake a watch source, so

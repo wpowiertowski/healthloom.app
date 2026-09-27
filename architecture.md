@@ -224,6 +224,10 @@ dense HR), so it is the priority source wherever it exists; Fitbit fills everyth
 1. **`WatchCoverageIndex`** queries HealthKit for coverage windows: workouts whose source
    device is an Apple Watch (any app, not just Apple's Workout app), padded ± 5 min.
    Source detection sits behind a protocol seam so tests can inject windows.
+   **WP-55:** every other workout in HealthKit that HealthLoom didn't write (e.g. a Hydrow
+   rower saving straight to Apple Health) is a coverage window too, tagged `.otherApp`.
+   It wins the session (rule 2) but never the streams (rule 3), because such apps may
+   not record continuous heart rate. Apple Watch windows win both.
 2. **Session-level:** an incoming Google Exercise session that overlaps a watch workout
    (≥ 50 % of the shorter duration, or start *and* end within 10 min) is **not** written
    as an `HKWorkout`. It is kept in `LocalSample`, linked to the watch workout's UUID,
@@ -240,7 +244,8 @@ dense HR), so it is the priority source wherever it exists; Fitbit fills everyth
    Every sync therefore re-evaluates its lookback window (D3) against the *current*
    coverage index and retroactively deletes app-written samples/workouts that now conflict
    — the same delete-by-external-ID machinery as D4.
-5. **User control:** Settings toggle "Prefer Apple Watch during workouts", default ON.
+5. **User control:** Settings toggle "Prefer workouts already in Apple Health" (named
+   "Prefer Apple Watch during workouts" before WP-55), default ON.
    OFF ⇒ everything imports and Apple Health's own source-priority ordering governs.
 6. **Coach:** no special casing needed — `KnowledgeStore` reads HealthKit, so watch
    workouts are first-class inputs; Fitbit-only supplements come via `LocalSample`.
