@@ -188,6 +188,7 @@
 		F5201EEB895AEADD50381C78 /* ActivityConsolidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15AF48D6CF1DCBA4EE186B07 /* ActivityConsolidatorTests.swift */; };
 		F7E35BF744E94F2F3B8D43F8 /* list-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = CB36BE1648B0A4F7E4ECAA76 /* list-light-AXXXL.png */; };
 		F89DE3A9340A6893F06EFC18 /* Archivo.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 12FB571E89093F864BBC6CE5 /* Archivo.ttf */; };
+		F94EF4B9D99741D6351F8F4F /* ThemedHeaderLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E36FBA184B5FAAE1009174A /* ThemedHeaderLayoutTests.swift */; };
 		FA50039999C357D67DA8F195 /* firstScoreHero-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = CBC00FA872457B549B0C8CE8 /* firstScoreHero-light-XL.png */; };
 		FAAB82ED0CD0CD63CD4CFD6A /* SyncLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C550F4E92C3575964B896C7 /* SyncLogView.swift */; };
 		FCD752F0D92075F064ED5A21 /* CoachChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7864808117705B414497C116 /* CoachChatViewModel.swift */; };
@@ -332,6 +333,7 @@
 		99168A76726FB69F20CC579A /* firstScoreHero-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "firstScoreHero-dark-XL.png"; sourceTree = "<group>"; };
 		9C0ADEA90A1A2396F78D7CCC /* firstScoreHero-light-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "firstScoreHero-light-XS.png"; sourceTree = "<group>"; };
 		9C757C1A9219A4BB6DA975B7 /* HealthLoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthLoomTests.swift; sourceTree = "<group>"; };
+		9E36FBA184B5FAAE1009174A /* ThemedHeaderLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemedHeaderLayoutTests.swift; sourceTree = "<group>"; };
 		9E381DBA043CB6A38E879E72 /* InsightNotificationContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightNotificationContent.swift; sourceTree = "<group>"; };
 		9EF17EA63843B91DDD68835B /* firstScoreHero-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "firstScoreHero-light-AXXXL.png"; sourceTree = "<group>"; };
 		A03FB573C3AA54B936C4A2CB /* CloudKeyValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKeyValidatorTests.swift; sourceTree = "<group>"; };
@@ -835,6 +837,7 @@
 				19ACC74CFE335BD5CAC2B60B /* StoreProtectionTests.swift */,
 				260DEF38CD6BB5D9E58E74C8 /* SyncPreferencesTests.swift */,
 				ED8706F893B71AC8DB1CE841 /* TestDoubles.swift */,
+				9E36FBA184B5FAAE1009174A /* ThemedHeaderLayoutTests.swift */,
 				48253AADAE1641E5999D90FB /* ThirdPartyR9Tests.swift */,
 				93910D48DA29A35F9B043B6C /* TierSwitcherTests.swift */,
 				3AA5DF674AC3FE2C1689652B /* TipStoreTests.swift */,
@@ -1181,6 +1184,7 @@
 				A079FB0965D96B27D482A0B3 /* StoreProtectionTests.swift in Sources */,
 				3713189EC3038011FF2AE50F /* SyncPreferencesTests.swift in Sources */,
 				74E6A701DC55C18B534BCEE6 /* TestDoubles.swift in Sources */,
+				F94EF4B9D99741D6351F8F4F /* ThemedHeaderLayoutTests.swift in Sources */,
 				9C719989E6190A3FBE8DD064 /* ThirdPartyR9Tests.swift in Sources */,
 				931228E1D5990D9898D00DBC /* TierSwitcherTests.swift in Sources */,
 				B6AB397E8649AA2281D00F67 /* TipStoreTests.swift in Sources */,
