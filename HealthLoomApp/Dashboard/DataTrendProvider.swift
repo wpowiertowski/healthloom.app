@@ -16,8 +16,14 @@ import CoreModel
 import Foundation
 import HealthKit
 
-@MainActor
-final class DataTrendProvider {
+/// `nonisolated` and `Sendable` (WP-59): it holds only the store and a
+/// calendar, both `Sendable`, so the four queries run side by side and the
+/// sleep math runs where HealthKit calls back. (WP-57 had turned the query
+/// shapes into statics that took both as parameters, on the mistaken
+/// belief that a handler closure formed in a MainActor class inherits its
+/// isolation. The SDK marks HealthKit's handlers `NS_SWIFT_SENDABLE`, so
+/// they never did; the crash was the MainActor sleep helper they called.)
+nonisolated final class DataTrendProvider: Sendable {
     private let healthStore: HKHealthStore
     private let calendar: Calendar
 
@@ -26,66 +32,57 @@ final class DataTrendProvider {
         self.calendar = calendar
     }
 
-    /// Trends for every type in `types` that has one and has data.
+    /// Trends for every type in `types` that has one and has data. The
+    /// queries run concurrently: the rows wait on the slowest, not the sum.
     func trends(for types: [GoogleDataType], now: Date = Date()) async -> [GoogleDataType: RollingTrend] {
         guard HKHealthStore.isHealthDataAvailable() else { return [:] }
-        var trends: [GoogleDataType: RollingTrend] = [:]
-        for type in types {
-            let daily = await dailyValues(for: type, now: now)
-            if let trend = RollingTrend.from(daily: daily, now: now, calendar: calendar) {
+        return await withTaskGroup(of: (GoogleDataType, RollingTrend?).self) { group in
+            for type in types {
+                group.addTask {
+                    let daily = await self.dailyValues(for: type, now: now)
+                    return (type, RollingTrend.from(daily: daily, now: now, calendar: self.calendar))
+                }
+            }
+            var trends: [GoogleDataType: RollingTrend] = [:]
+            for await (type, trend) in group {
                 trends[type] = trend
             }
+            return trends
         }
-        return trends
     }
 
     private func dailyValues(for type: GoogleDataType, now: Date) async -> [Date: Double] {
         let today = calendar.startOfDay(for: now)
         guard let start = calendar.date(byAdding: .day, value: -RollingTrend.monthDays, to: today) else { return [:] }
-        let store = healthStore
-        let calendar = calendar
         switch type {
         case .steps:
-            return await Self.daily(
-                .stepCount, unit: .count(), options: .cumulativeSum,
-                from: start, to: today, store: store, calendar: calendar
-            )
+            return await daily(.stepCount, unit: .count(), options: .cumulativeSum, from: start, to: today)
         case .heartRate:
-            return await Self.daily(
+            return await daily(
                 .heartRate, unit: HKUnit.count().unitDivided(by: .minute()), options: .discreteAverage,
-                from: start, to: today, store: store, calendar: calendar
+                from: start, to: today
             )
         case .weight:
-            return await Self.daily(
-                .bodyMass, unit: .gramUnit(with: .kilo), options: .discreteAverage,
-                from: start, to: today, store: store, calendar: calendar
-            )
+            return await daily(.bodyMass, unit: .gramUnit(with: .kilo), options: .discreteAverage, from: start, to: today)
         case .sleep:
-            return await Self.nightlyAsleep(from: start, to: now, store: store, calendar: calendar)
+            return await nightlyAsleep(from: start, to: now)
         default:
             return [:]
         }
     }
 
-    // The two query shapes are `nonisolated static` (WP-57): HealthKit runs
-    // their result handlers on its own queues, and a handler closure formed
-    // inside this MainActor class inherits main-actor isolation -- the
-    // runtime traps the moment HealthKit calls it. Built here, the closures
-    // carry no isolation at all.
-
     /// One statistic per calendar day in `start ..< end`, days without
     /// samples left out.
-    nonisolated private static func daily(
+    private func daily(
         _ identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
         options: HKStatisticsOptions,
         from start: Date,
-        to end: Date,
-        store healthStore: HKHealthStore,
-        calendar: Calendar
+        to end: Date
     ) async -> [Date: Double] {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { return [:] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let calendar = calendar
         return await withCheckedContinuation { (continuation: CheckedContinuation<[Date: Double], Never>) in
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
@@ -111,14 +108,10 @@ final class DataTrendProvider {
     }
 
     /// Asleep seconds per night (`RollingTrend.nightlyAsleep`).
-    nonisolated private static func nightlyAsleep(
-        from start: Date,
-        to end: Date,
-        store healthStore: HKHealthStore,
-        calendar: Calendar
-    ) async -> [Date: Double] {
+    private func nightlyAsleep(from start: Date, to end: Date) async -> [Date: Double] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let calendar = calendar
         return await withCheckedContinuation { (continuation: CheckedContinuation<[Date: Double], Never>) in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -126,10 +119,9 @@ final class DataTrendProvider {
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                let asleep = (samples ?? [])
-                    .compactMap { $0 as? HKCategorySample }
+                let asleep = SleepStageSample.from(samples)
                     .filter { AsleepTime.categoryValues.contains($0.value) }
-                    .map { DateInterval(start: $0.startDate, end: $0.endDate) }
+                    .map(\.interval)
                 continuation.resume(returning: RollingTrend.nightlyAsleep(asleep, calendar: calendar))
             }
             healthStore.execute(query)

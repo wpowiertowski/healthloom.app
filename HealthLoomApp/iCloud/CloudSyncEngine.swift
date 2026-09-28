@@ -5,15 +5,18 @@
 // data ONLY — settings, insight preferences, coach history. HealthKit-
 // sourced values never cross (see CloudSyncPayload.swift's invariant).
 //
-// Conflict model: last-sync-wins with a seen-watermark. Each singleton
+// Conflict model: a seen-watermark plus a three-way merge. Each singleton
 // tracks the newest server `updatedAt` it has ever observed; a push goes
-// out only when the server is NOT newer than last seen, and a pull
-// applies only server state newer than last applied. Rationale:
-// single-user private database; concurrent multi-device edits are rare;
-// convergence (no oscillation, no server-data destruction) beats CRDT
-// machinery for preferences. Documented tradeoff, pinned by test: a
-// device that stayed offline while another wrote newer state defers to
-// the server, discarding its own stale edit. Coach turns are append-only
+// out when the server is NOT newer than last seen, and a pull applies
+// only server state newer than last applied. When the server IS newer,
+// the push phase merges against the content both sides last agreed on
+// (`SingletonMerge`, WP-59): fields only this device changed survive and
+// are pushed, everything else takes the server's, and disabled types
+// merge per type. Only a field both devices changed goes to the server --
+// the documented convergence tradeoff, pinned by test, now limited to a
+// true same-field conflict. No clocks decide a winner, so skew can't.
+// (Before WP-59 the whole local edit lost, even a newer one on a
+// different field.) Coach turns are append-only
 // and never updated, so they need no resolution at all (save-if-absent).
 // Every loss direction is tested: server-newer overwrites local,
 // local-newer overwrites server, equal content skips the write,
@@ -297,6 +300,8 @@ final class CloudSyncEngine {
     private static let seenSettingsKey = "com.healthloom.cloudsync.seenSettingsAt"
     private static let seenPrefsKey = "com.healthloom.cloudsync.seenPrefsAt"
     private static let pushedTurnsKey = "com.healthloom.cloudsync.pushedTurnsThrough"
+    private static let settingsBaselineKey = "com.healthloom.cloudsync.settingsBaseline"
+    private static let prefsBaselineKey = "com.healthloom.cloudsync.prefsBaseline"
 
     private let container: ModelContainer
     private let defaults: UserDefaults
@@ -417,9 +422,9 @@ final class CloudSyncEngine {
         insightPrefs.reload()
         do {
             try await pushSingletons()
-            try await pushNewTurns()
+            let serverTurns = try await pushNewTurns()
             try await pullSingletons()
-            try await pullMissingTurns()
+            try await pullMissingTurns(serverTurns: serverTurns)
             retryPending = false
             lastSync = now()
             status = .synced(at: lastSync, pending: 0)
@@ -537,7 +542,21 @@ final class CloudSyncEngine {
         let serverSettings = try await database.fetchRecord(recordName: CloudRecordType.settingsRecordName)
         let settingsDecision = Self.settingsPushDecision(server: serverSettings, snapshot: settings, previouslySeen: seenSettingsAt, serverOrderDate: serverSettings?.modificationDate)
         seenSettingsAt = settingsDecision.newSeen
-        if settingsDecision.push {
+        // WP-59: the server changed since we last saw it -- keep this
+        // device's own edits instead of letting the pull discard them.
+        var settingsToPush: SyncSettingsSnapshot? = settingsDecision.push ? settings : nil
+        if !settingsDecision.push,
+           let merged = Self.mergedSettings(server: serverSettings, local: settings, base: settingsBaseline, now: now())
+        {
+            applySettings(merged)
+            settingsToPush = merged
+        } else if !settingsDecision.push, let serverSettings,
+                  let serverSnap = try? CloudRecordDecoder.settings(from: serverSettings),
+                  SingletonMerge.sameContent(serverSnap, settings)
+        {
+            settingsBaseline = settings
+        }
+        if let settings = settingsToPush {
             let saved: CKRecord
             if let server = serverSettings {
                 // Round-4-sync item 2: mutate the FETCHED record — it
@@ -562,12 +581,25 @@ final class CloudSyncEngine {
             // fast-clock device can never poison the watermark with a future-dated
             // local `now()` (third-party r9 clock-skew fix).
             seenSettingsAt = max(seenSettingsAt, saved.modificationDate ?? settings.updatedAt)
+            settingsBaseline = settings
         }
-        let prefs = readPrefs()
+        let localPrefs = readPrefs()
         let serverPrefs = try await database.fetchRecord(recordName: CloudRecordType.insightPrefsRecordName)
-        let prefsDecision = Self.prefsPushDecision(server: serverPrefs, snapshot: prefs, previouslySeen: seenPrefsAt, serverOrderDate: serverPrefs?.modificationDate)
+        let prefsDecision = Self.prefsPushDecision(server: serverPrefs, snapshot: localPrefs, previouslySeen: seenPrefsAt, serverOrderDate: serverPrefs?.modificationDate)
         seenPrefsAt = prefsDecision.newSeen
-        if prefsDecision.push {
+        var prefsToPush: InsightPrefsSnapshot? = prefsDecision.push ? localPrefs : nil
+        if !prefsDecision.push,
+           let merged = Self.mergedPrefs(server: serverPrefs, local: localPrefs, base: prefsBaseline, now: now())
+        {
+            applyPrefs(merged)
+            prefsToPush = merged
+        } else if !prefsDecision.push, let serverPrefs,
+                  let serverSnap = try? CloudRecordDecoder.prefs(from: serverPrefs),
+                  SingletonMerge.sameContent(serverSnap, localPrefs)
+        {
+            prefsBaseline = localPrefs
+        }
+        if let prefs = prefsToPush {
             let saved: CKRecord
             if let server = serverPrefs {
                 try CloudRecordBuilder.update(server, with: prefs)
@@ -576,7 +608,31 @@ final class CloudSyncEngine {
                 saved = try await database.saveRecord(try CloudRecordBuilder.record(for: prefs))
             }
             seenPrefsAt = max(seenPrefsAt, saved.modificationDate ?? prefs.updatedAt)
+            prefsBaseline = prefs
         }
+    }
+
+    /// What to push when the server moved on since we last saw it but this
+    /// device still holds edits the server lacks (WP-59): the three-way
+    /// merge against the last agreed content, stamped `now`. Nil means
+    /// nothing of ours to keep -- no baseline yet, a newer-schema or
+    /// malformed record, or the merge equals the server (the pull applies
+    /// it). Without this a toggle made on a device that synced after
+    /// another device's push was silently reverted by the pull.
+    nonisolated static func mergedSettings(server: CKRecord?, local: SyncSettingsSnapshot, base: SyncSettingsSnapshot?, now: Date) -> SyncSettingsSnapshot? {
+        guard let server, let base, let serverSnap = try? CloudRecordDecoder.settings(from: server) else { return nil }
+        var merged = SingletonMerge.settings(base: base, local: local, server: serverSnap)
+        guard !SingletonMerge.sameContent(merged, serverSnap) else { return nil }
+        merged.updatedAt = now
+        return merged
+    }
+
+    nonisolated static func mergedPrefs(server: CKRecord?, local: InsightPrefsSnapshot, base: InsightPrefsSnapshot?, now: Date) -> InsightPrefsSnapshot? {
+        guard let server, let base, let serverSnap = try? CloudRecordDecoder.prefs(from: server) else { return nil }
+        var merged = SingletonMerge.prefs(base: base, local: local, server: serverSnap)
+        guard !SingletonMerge.sameContent(merged, serverSnap) else { return nil }
+        merged.updatedAt = now
+        return merged
     }
 
     /// Push unless the server holds state newer than we have ever seen
@@ -614,9 +670,7 @@ final class CloudSyncEngine {
             if orderDate > previouslySeen {
                 return SingletonPushDecision(push: false, newSeen: newSeen)
             }
-            let differs = serverSnap.disabledTypeRawValues != snapshot.disabledTypeRawValues
-                || serverSnap.preferAppleWatch != snapshot.preferAppleWatch
-            return SingletonPushDecision(push: differs, newSeen: newSeen)
+            return SingletonPushDecision(push: !SingletonMerge.sameContent(serverSnap, snapshot), newSeen: newSeen)
         } catch CloudSyncError.newerSchema {
             // Third-party r9 forward-safety: an older app must NEVER overwrite a
             // newer schema's record (the old `try?` collapsed this into the
@@ -645,11 +699,7 @@ final class CloudSyncEngine {
             if orderDate > previouslySeen {
                 return SingletonPushDecision(push: false, newSeen: newSeen)
             }
-            let differs = serverSnap.morningInsightsEnabled != snapshot.morningInsightsEnabled
-                || serverSnap.lockScreenDetails != snapshot.lockScreenDetails
-                || serverSnap.insightsViaCloud != snapshot.insightsViaCloud
-                || serverSnap.lastRun != snapshot.lastRun
-            return SingletonPushDecision(push: differs, newSeen: newSeen)
+            return SingletonPushDecision(push: !SingletonMerge.sameContent(serverSnap, snapshot), newSeen: newSeen)
         } catch CloudSyncError.newerSchema {
             if let orderDate = serverOrderDate ?? server.modificationDate {
                 return SingletonPushDecision(push: false, newSeen: max(previouslySeen, orderDate))
@@ -779,7 +829,11 @@ final class CloudSyncEngine {
         }
     }
 
-    private func pushNewTurns() async throws(CloudSyncError) {
+    /// Returns the server turn walk when it made one, so the pull reuses it
+    /// instead of walking every turn record a second time (WP-59). The
+    /// turns pushed here aren't in it, but they came from the local store,
+    /// which the pull dedupes against anyway.
+    private func pushNewTurns() async throws(CloudSyncError) -> [CKRecord]? {
         let turns = try unpushedTurnBatch(limit: 500)
         // Third-party r9: ONE paged existence walk instead of one `fetchRecord` per
         // turn (up to 500 sequential round trips per sync on every foreground
@@ -789,12 +843,9 @@ final class CloudSyncEngine {
         // record-name set once up front mirrors how `pullMissingTurns` builds
         // `localTurnKeys()` before its loop. Catches: a 500-turn backlog must push
         // without 500 pre-save fetches.
-        let existingNames: Set<String>
-        if turns.isEmpty {
-            existingNames = []
-        } else {
-            existingNames = Set(try await pullAllTurnRecords().map(\.recordID.recordName))
-        }
+        guard !turns.isEmpty else { return nil }
+        let serverTurns = try await pullAllTurnRecords()
+        let existingNames = Set(serverTurns.map(\.recordID.recordName))
         // In-batch save-if-absent: same-date same-role turns share a synthetic turnID
         // (round-9 proof — only date+role feed the name), so a pathological batch can
         // name one record dozens of times. A second save of the same name is a wasted
@@ -813,6 +864,7 @@ final class CloudSyncEngine {
         if let latest {
             pushedTurnsThrough = latest
         }
+        return serverTurns
     }
 
     // MARK: - Pull (last-write-wins)
@@ -833,12 +885,11 @@ final class CloudSyncEngine {
                 // Content-equal (e.g. our own just-pushed write read back):
                 // advance the watermark silently, no redundant apply.
                 let current = readSettings()
-                if snap.disabledTypeRawValues != current.disabledTypeRawValues
-                    || snap.preferAppleWatch != current.preferAppleWatch
-                {
+                if !SingletonMerge.sameContent(snap, current) {
                     applySettings(snap)
                 }
                 appliedSettingsAt = orderDate
+                settingsBaseline = snap
             }
         }
         if let server = try await database.fetchRecord(recordName: CloudRecordType.insightPrefsRecordName),
@@ -847,14 +898,11 @@ final class CloudSyncEngine {
             let orderDate = server.modificationDate ?? snap.updatedAt
             if orderDate > appliedPrefsAt {
                 let current = readPrefs()
-                if snap.morningInsightsEnabled != current.morningInsightsEnabled
-                    || snap.lockScreenDetails != current.lockScreenDetails
-                    || snap.insightsViaCloud != current.insightsViaCloud
-                    || snap.lastRun != current.lastRun
-                {
+                if !SingletonMerge.sameContent(snap, current) {
                     applyPrefs(snap)
                 }
                 appliedPrefsAt = orderDate
+                prefsBaseline = snap
             }
         }
     }
@@ -894,8 +942,13 @@ final class CloudSyncEngine {
         "\(role)|\(content)|\(createdAt.timeIntervalSince1970)"
     }
 
-    private func pullMissingTurns() async throws(CloudSyncError) {
-        let serverTurns = try await pullAllTurnRecords()
+    private func pullMissingTurns(serverTurns walked: [CKRecord]?) async throws(CloudSyncError) {
+        let serverTurns: [CKRecord]
+        if let walked {
+            serverTurns = walked
+        } else {
+            serverTurns = try await pullAllTurnRecords()
+        }
         // Round-6 item 5: dedupe against the FULL local key set, not
         // the push window's newest-500 — server turns older than the
         // window (a second device's history, or >500 arrivals between
@@ -1025,6 +1078,8 @@ final class CloudSyncEngine {
         appliedSettingsAt = Date(timeIntervalSince1970: 0)
         appliedPrefsAt = Date(timeIntervalSince1970: 0)
         pushedTurnsThrough = nil
+        settingsBaseline = nil
+        prefsBaseline = nil
         status = .synced(at: nil, pending: 0)
     }
 
@@ -1138,6 +1193,53 @@ final class CloudSyncEngine {
         }
         set {
             defaults.set(newValue?.timeIntervalSince1970 ?? 0, forKey: Self.pushedTurnsKey)
+        }
+    }
+
+    /// The singleton content this device and the server last agreed on
+    /// (WP-59): what the three-way merge diffs each side against. Set on
+    /// every push, pull and equal-content check; nil until the first.
+    private var settingsBaseline: SyncSettingsSnapshot? {
+        get {
+            guard let stored = defaults.dictionary(forKey: Self.settingsBaselineKey),
+                  let disabled = stored["disabled"] as? [String],
+                  let preferAppleWatch = stored["preferAppleWatch"] as? Bool
+            else { return nil }
+            return SyncSettingsSnapshot(disabledTypeRawValues: disabled, preferAppleWatch: preferAppleWatch, updatedAt: .distantPast)
+        }
+        set {
+            guard let newValue else { return defaults.removeObject(forKey: Self.settingsBaselineKey) }
+            defaults.set(
+                ["disabled": newValue.disabledTypeRawValues, "preferAppleWatch": newValue.preferAppleWatch],
+                forKey: Self.settingsBaselineKey
+            )
+        }
+    }
+
+    private var prefsBaseline: InsightPrefsSnapshot? {
+        get {
+            guard let stored = defaults.dictionary(forKey: Self.prefsBaselineKey),
+                  let enabled = stored["enabled"] as? Bool,
+                  let lockScreen = stored["lockScreen"] as? Bool,
+                  let viaCloud = stored["viaCloud"] as? Bool
+            else { return nil }
+            return InsightPrefsSnapshot(
+                morningInsightsEnabled: enabled,
+                lockScreenDetails: lockScreen,
+                insightsViaCloud: viaCloud,
+                lastRun: (stored["lastRun"] as? Double).map(Date.init(timeIntervalSince1970:)),
+                updatedAt: .distantPast
+            )
+        }
+        set {
+            guard let newValue else { return defaults.removeObject(forKey: Self.prefsBaselineKey) }
+            var stored: [String: Any] = [
+                "enabled": newValue.morningInsightsEnabled,
+                "lockScreen": newValue.lockScreenDetails,
+                "viaCloud": newValue.insightsViaCloud,
+            ]
+            stored["lastRun"] = newValue.lastRun?.timeIntervalSince1970
+            defaults.set(stored, forKey: Self.prefsBaselineKey)
         }
     }
 

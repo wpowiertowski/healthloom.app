@@ -131,8 +131,12 @@ actor StubCloudDatabase: CloudDatabase {
     private var turnPageSnapshot: [String] = []
     private(set) var deletedRecordNames: [String] = []
 
+    /// Full turn walks started (a nil-cursor page request).
+    private(set) var turnWalks = 0
+
     func turnPage(cursor: Data?) async throws(CloudSyncError) -> CloudTurnPage {
         if let error = queryError { throw error }
+        if cursor == nil { turnWalks += 1 }
         // Opaque cursor, integer-indexed (see the protocol: Live
         // archives the real CKQueryCursor; both are just "next page
         // please" tokens to the engine's loop). Snapshot on walk
@@ -313,24 +317,65 @@ struct CloudSyncTests {
 
     // MARK: Pull — last-sync-wins
 
-    @Test("server-newer settings apply locally (documented tradeoff)")
-    func serverNewerApplies() async throws {
+    // catches: a newer local edit discarded because another device pushed
+    // first. Device B disabled Weight and turned on Prefer Apple Watch;
+    // this device, not yet synced, disabled Steps. Both edits survive,
+    // here and on the server (WP-59; before, the pull reverted Steps).
+    @Test("both devices' edits survive a server-newer sync")
+    func serverNewerMergesLocalEdits() async throws {
         let harness = try CloudSyncHarness.make()
-        await harness.engine().syncNow() // primes watermarks on empty server
-        // Another device writes newer state behind our back.
+        await harness.engine().syncNow() // primes watermarks + baseline on empty server
         let server = SyncSettingsSnapshot(
             disabledTypeRawValues: [GoogleDataType.weight.rawValue],
             preferAppleWatch: true,
             updatedAt: harness.now.addingTimeInterval(100)
         )
         await harness.db.seedRecord(try CloudRecordBuilder.record(for: server))
-        // A stale local edit loses to the newer server state — the
-        // documented convergence tradeoff, pinned, not hidden.
         SyncPreferences(defaults: harness.defaults).setEnabled(false, for: .steps)
         await harness.engine().syncNow()
-        #expect(SyncPreferences(defaults: harness.defaults).isEnabled(.steps))
-        #expect(!SyncPreferences(defaults: harness.defaults).isEnabled(.weight))
+
+        let local = SyncPreferences(defaults: harness.defaults)
+        #expect(!local.isEnabled(.steps))
+        #expect(!local.isEnabled(.weight))
         #expect(harness.defaults.bool(forKey: "com.healthloom.settings.preferAppleWatchDuringWorkouts"))
+        let pushed = try #require(await harness.db.saved(ofType: CloudRecordType.settings).last)
+        let snap = try CloudRecordDecoder.settings(from: pushed)
+        #expect(snap.disabledTypeRawValues == [GoogleDataType.steps.rawValue, GoogleDataType.weight.rawValue].sorted())
+        #expect(snap.preferAppleWatch)
+    }
+
+    // catches: the merge keeping a local value the server also changed (a
+    // true conflict must converge on the server's), or dropping a
+    // local-only change alongside it.
+    @Test("a field both devices changed takes the server's value")
+    func sameFieldConflictTakesServer() {
+        let base = InsightPrefsSnapshot(morningInsightsEnabled: false, lockScreenDetails: false, insightsViaCloud: false, lastRun: nil, updatedAt: .distantPast)
+        let local = InsightPrefsSnapshot(morningInsightsEnabled: true, lockScreenDetails: false, insightsViaCloud: false, lastRun: Date(timeIntervalSince1970: 100), updatedAt: .distantPast)
+        let server = InsightPrefsSnapshot(morningInsightsEnabled: false, lockScreenDetails: true, insightsViaCloud: false, lastRun: Date(timeIntervalSince1970: 200), updatedAt: .distantPast)
+        let merged = SingletonMerge.prefs(base: base, local: local, server: server)
+        #expect(merged.lastRun == Date(timeIntervalSince1970: 200))
+        #expect(merged.morningInsightsEnabled, "local-only change kept")
+        #expect(merged.lockScreenDetails, "server-only change kept")
+    }
+
+    // catches: per-type merge errors -- a type re-enabled here coming back
+    // disabled, or one disabled there dropped.
+    @Test("disabled types merge per type")
+    func disabledTypesMergePerType() {
+        let base = SyncSettingsSnapshot(disabledTypeRawValues: ["sleep", "steps"], preferAppleWatch: false, updatedAt: .distantPast)
+        let local = SyncSettingsSnapshot(disabledTypeRawValues: ["sleep"], preferAppleWatch: false, updatedAt: .distantPast)
+        let server = SyncSettingsSnapshot(disabledTypeRawValues: ["sleep", "steps", "weight"], preferAppleWatch: false, updatedAt: .distantPast)
+        #expect(SingletonMerge.settings(base: base, local: local, server: server).disabledTypeRawValues == ["sleep", "weight"])
+    }
+
+    // catches: merging without a baseline (first sync after upgrade), which
+    // can't tell a local edit from stale state -- it must defer to the
+    // server as before.
+    @Test("no baseline defers to the server")
+    func noBaselineDefersToServer() throws {
+        let server = try CloudRecordBuilder.record(for: SyncSettingsSnapshot(disabledTypeRawValues: ["weight"], preferAppleWatch: true, updatedAt: .distantPast))
+        let local = SyncSettingsSnapshot(disabledTypeRawValues: ["steps"], preferAppleWatch: false, updatedAt: .distantPast)
+        #expect(CloudSyncEngine.mergedSettings(server: server, local: local, base: nil, now: .distantPast) == nil)
     }
 
     @Test("newer-schema records are skipped, local untouched")
@@ -997,6 +1042,20 @@ struct CloudSyncTests {
     }
 
     // MARK: Turns — append-only
+
+    // catches: the push and the pull each walking every server turn record
+    // (up to 2×100 pages per sync). One walk serves both, and the pull
+    // still finds the other device's turn.
+    @Test("a sync with turns to push walks the server turns once")
+    func oneTurnWalkPerSync() async throws {
+        let harness = try CloudSyncHarness.make()
+        let otherDevice = CoachTurnSnapshot(turnID: "ipad-turn-1", role: "assistant", content: "from the iPad", createdAt: harness.now.addingTimeInterval(-60))
+        await harness.db.seedRecord(try CloudRecordBuilder.record(for: otherDevice))
+        try harness.seedTurn(content: "hello", at: harness.now)
+        await harness.engine().syncNow()
+        #expect(await harness.db.turnWalks == 1)
+        #expect(try harness.localTurnCount() == 2)
+    }
 
     @Test("new turns push once and advance the watermark")
     func newTurnsPush() async throws {

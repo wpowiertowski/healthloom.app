@@ -9,13 +9,15 @@
 // states instead of erroring):
 //   - HRV ratio: latest SDNN sample vs its 30-day average baseline;
 //   - resting-HR delta: latest resting HR vs its 30-day average baseline;
-//   - sleep hours + efficiency: last night's asleep-stage total (same
-//     6 pm-yesterday window and `AsleepTime` merge as the metric provider,
-//     overlaps counted once) and asleep ÷ in-bed span (`sleepSummary`);
+//   - sleep hours + efficiency: `LastNightSleep` -- the same window and
+//     summary the Today sleep row uses (6 pm yesterday to noon, overlaps
+//     counted once, efficiency = asleep ÷ in-bed span);
 //   - prior-day strain: yesterday's workout energy, mapped to 0...1 at
 //     800 kcal = maximal (a documented heuristic, not physiology — the
 //     engine treats it as recovery demand, and the mapping is the one
-//     place to wire a real load model in).
+//     place to wire a real load model in). A day without workouts is
+//     strain 0 (full rest) for someone who logged any in the past 30
+//     days; with none in 30 days there's no signal (`priorDayKcal`).
 //
 // `assemble(_:)` is pure so `TodayReadinessTests` pins the math without
 // HealthKit; `ReadinessScoreHistory` (UserDefaults, last-30 ring) feeds
@@ -170,15 +172,11 @@ final class ReadinessInputsProvider {
         }
     }
 
-    private func lastNightSleep(now: Date) async -> (asleep: Double, efficiency: Double?)? {
-        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return nil }
-        let startOfDay = calendar.startOfDay(for: now)
-        let windowStart = startOfDay.addingTimeInterval(-6 * 3600)
-        // Window ends at noon (L3), not now: a 2pm nap is not "last
-        // night". Morning wake-ups still fall inside 6pm..noon, so only
-        // post-noon samples — naps — are excluded.
-        let noon = startOfDay.addingTimeInterval(12 * 3600)
-        let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: min(now, noon), options: [])
+    private func lastNightSleep(now: Date) async -> LastNightSleep.Summary? {
+        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis),
+              let window = LastNightSleep.window(now: now, calendar: calendar)
+        else { return nil }
+        let predicate = HKQuery.predicateForSamples(withStart: window.start, end: window.end, options: [])
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -186,62 +184,54 @@ final class ReadinessInputsProvider {
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                let nightSamples = (samples ?? [])
-                    .compactMap { $0 as? HKCategorySample }
-                    .map { (value: $0.value, interval: DateInterval(start: $0.startDate, end: $0.endDate)) }
-                continuation.resume(returning: Self.sleepSummary(of: nightSamples))
+                continuation.resume(returning: LastNightSleep.summary(of: SleepStageSample.from(samples), in: window))
             }
             healthStore.execute(query)
         }
     }
 
-    /// Last night's asleep seconds and efficiency (asleep ÷ the span from
-    /// the first to the last sample, in-bed and awake included), or `nil`
-    /// with no asleep time. Asleep time counts overlaps once (WP-57): a
-    /// night both an Apple Watch and a Fitbit recorded used to count twice,
-    /// inflating the readiness score's sleep hours and pinning efficiency
-    /// at 100%. `nonisolated`: it runs inside HealthKit's result handler.
-    nonisolated static func sleepSummary(
-        of samples: [(value: Int, interval: DateInterval)]
-    ) -> (asleep: Double, efficiency: Double?)? {
-        let asleep = AsleepTime.total(
-            samples.filter { AsleepTime.categoryValues.contains($0.value) }.map(\.interval)
-        )
-        // In-bed span: first sample start to last sample end across all
-        // stages (in-bed/awake included).
-        guard asleep > 0,
-              let spanStart = samples.map(\.interval.start).min(),
-              let spanEnd = samples.map(\.interval.end).max()
-        else { return nil }
-        let span = spanEnd.timeIntervalSince(spanStart)
-        let efficiency = span > 0 ? min(max(asleep / span, 0), 1) : nil
-        return (asleep, efficiency)
-    }
-
+    /// Reads 30 days of workouts, not just yesterday's, to tell a rest day
+    /// from no signal (`priorDayKcal`). A failed query is no signal.
     private func yesterdayWorkoutKcal(now: Date) async -> Double? {
         let startOfDay = calendar.startOfDay(for: now)
-        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: startOfDay) else { return nil }
-        let predicate = HKQuery.predicateForSamples(withStart: yesterday, end: startOfDay, options: [])
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: startOfDay),
+              let monthAgo = calendar.date(byAdding: .day, value: -30, to: startOfDay)
+        else { return nil }
+        let predicate = HKQuery.predicateForSamples(withStart: monthAgo, end: startOfDay, options: [])
+        let priorDay = DateInterval(start: yesterday, end: startOfDay)
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: HKObjectType.workoutType(),
                 predicate: predicate,
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
-            ) { _, samples, _ in
-                let workouts = (samples ?? []).compactMap { $0 as? HKWorkout }
-                guard !workouts.isEmpty else {
+            ) { _, samples, error in
+                guard error == nil else {
                     continuation.resume(returning: nil)
                     return
                 }
                 let energyType = HKQuantityType(.activeEnergyBurned)
-                let total = workouts.reduce(0.0) {
-                    $0 + ($1.statistics(for: energyType)?.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0)
+                let workouts = (samples ?? []).compactMap { $0 as? HKWorkout }.map { workout in
+                    (start: workout.startDate,
+                     kcal: workout.statistics(for: energyType)?.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0)
                 }
-                continuation.resume(returning: total)
+                continuation.resume(returning: Self.priorDayKcal(workouts: workouts, priorDay: priorDay))
             }
             healthStore.execute(query)
         }
+    }
+
+    /// Yesterday's workout energy from the past 30 days' workouts. No
+    /// workouts yesterday is a rest day, 0 kcal (strain 0, the engine's
+    /// full-rest subscore) -- it used to read as a missing signal, so a
+    /// rest day could score below a light workout day. No workouts in 30
+    /// days is nil: HealthKit hides a denied read as an empty result, and
+    /// scoring that as rest every day would invent a signal.
+    nonisolated static func priorDayKcal(workouts: [(start: Date, kcal: Double)], priorDay: DateInterval) -> Double? {
+        guard !workouts.isEmpty else { return nil }
+        return workouts
+            .filter { $0.start >= priorDay.start && $0.start < priorDay.end }
+            .reduce(0) { $0 + $1.kcal }
     }
 }
 
@@ -252,7 +242,12 @@ final class ReadinessInputsProvider {
 /// (DI'd defaults, pure load/record logic testable without them).
 @MainActor
 struct ReadinessScoreHistory {
-    private static let defaultsKey = "com.healthloom.settings.readinessScores"
+    /// `.v2` (WP-59): scores recorded before WP-57 counted a night two
+    /// devices recorded twice, so their sleep subscore -- and the score --
+    /// differs from today's math. Comparing against them inflated the
+    /// "vs 30-day average" caption for a month; the history restarts.
+    private static let defaultsKey = "com.healthloom.settings.readinessScores.v2"
+    static let retiredDefaultsKey = "com.healthloom.settings.readinessScores"
     // Round-4-sync item 13: fixed format DEMANDS `en_US_POSIX` (a
     // fixed-format formatter under a non-POSIX locale U-turns digits
     // and separators) AND an explicit Gregorian calendar (under a
@@ -271,6 +266,7 @@ struct ReadinessScoreHistory {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        defaults.removeObject(forKey: Self.retiredDefaultsKey)
     }
 
     /// 30-day WINDOW, not just 30 entries (round-8 item 14): the delta

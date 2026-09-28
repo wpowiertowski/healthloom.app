@@ -59,6 +59,16 @@ struct ReadinessScoreHistoryTests {
         Calendar.current.date(byAdding: .day, value: offset, to: Date())!
     }
 
+    // catches: pre-WP-57 scores (sleep double-counted) feeding the
+    // "vs 30-day average" caption for a month after the fix.
+    @Test func scoresFromTheRetiredKeyAreDropped() throws {
+        let ephemeral = try makeDefaults()
+        ephemeral.defaults.set([[ReadinessScoreHistory.dayString(day(-1)), "95"]], forKey: ReadinessScoreHistory.retiredDefaultsKey)
+        let history = ReadinessScoreHistory(defaults: ephemeral.defaults)
+        #expect(history.recentScores(today: day(0)).isEmpty)
+        #expect(ephemeral.defaults.object(forKey: ReadinessScoreHistory.retiredDefaultsKey) == nil)
+    }
+
     @Test func emptyHistoryYieldsNoRecentScores() throws {
         let ephemeral1 = try makeDefaults()
         #expect(ReadinessScoreHistory(defaults: ephemeral1.defaults).recentScores().isEmpty)
@@ -264,9 +274,12 @@ struct SignalIndexFieldTests {
     }
 }
 
-@Suite("ReadinessInputsProvider.sleepSummary")
-struct ReadinessSleepSummaryTests {
-    static let bedtime = Date(timeIntervalSince1970: 1_790_470_800) // an evening, 23:00 UTC
+@Suite("LastNightSleep")
+struct LastNightSleepTests {
+    static let bedtime = Date(timeIntervalSince1970: 1_790_463_600) // an evening, 23:00 UTC
+    /// Wide enough to hold every fixture night below.
+    static let wholeNight = DateInterval(start: bedtime.addingTimeInterval(-6 * 3600), duration: 20 * 3600)
+
     static func interval(_ startHours: Double, _ endHours: Double) -> DateInterval {
         DateInterval(
             start: bedtime.addingTimeInterval(startHours * 3600),
@@ -274,38 +287,124 @@ struct ReadinessSleepSummaryTests {
         )
     }
 
+    static func stage(_ value: Int, _ startHours: Double, _ endHours: Double) -> SleepStageSample {
+        SleepStageSample(value: value, interval: interval(startHours, endHours))
+    }
+
+    static var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        return calendar
+    }
+
     // catches: a night recorded by both an Apple Watch and a Fitbit counting
-    // twice in the readiness score's sleep hours (14 h instead of 7) and
-    // pinning efficiency at 100% (WP-57).
+    // twice (14 h instead of 7), in hours or in efficiency. The in-bed
+    // sample makes the span 8 h: the double count (13.5 h ÷ 8) would clamp
+    // to 100%, the right answer is 7/8.
     @Test func aNightRecordedTwiceCountsOnce() throws {
-        let watch = (value: 3, interval: Self.interval(0, 7))      // asleepCore
-        let fitbit = (value: 1, interval: Self.interval(0.5, 7))   // asleepUnspecified
-        let summary = try #require(ReadinessInputsProvider.sleepSummary(of: [watch, fitbit]))
-        #expect(summary.asleep == 7 * 3600)
-        #expect(summary.efficiency == 1)
+        let samples = [
+            Self.stage(0, -1, 0),     // inBed
+            Self.stage(3, 0, 7),      // watch asleepCore
+            Self.stage(1, 0.5, 7),    // fitbit asleepUnspecified
+        ]
+        let summary = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight))
+        #expect(summary.asleep == 7.0 * 3600)
+        #expect(summary.efficiency == 7.0 / 8.0)
+        #expect(summary.wokeAt == Self.interval(0, 7).end)
     }
 
     // catches: awake and in-bed time counted as sleep, or left out of the
     // span efficiency divides by.
     @Test func awakeTimeWidensTheSpanButIsNotSleep() throws {
         let samples = [
-            (value: 0, interval: Self.interval(-0.5, 0)),   // inBed
-            (value: 4, interval: Self.interval(0, 3)),      // asleepDeep
-            (value: 2, interval: Self.interval(3, 3.5)),    // awake
-            (value: 5, interval: Self.interval(3.5, 7.5)),  // asleepREM
+            Self.stage(0, -0.5, 0),   // inBed
+            Self.stage(4, 0, 3),      // asleepDeep
+            Self.stage(2, 3, 3.5),    // awake
+            Self.stage(5, 3.5, 7.5),  // asleepREM
         ]
-        let summary = try #require(ReadinessInputsProvider.sleepSummary(of: samples))
-        #expect(summary.asleep == 7 * 3600)
+        let summary = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight))
+        #expect(summary.asleep == 7.0 * 3600)
         #expect(summary.efficiency == 7.0 / 8.0)
-        #expect(ReadinessInputsProvider.sleepSummary(of: [(value: 2, interval: Self.interval(0, 1))]) == nil)
+        #expect(LastNightSleep.summary(of: [Self.stage(2, 0, 1)], in: Self.wholeNight) == nil)
+    }
+
+    // catches: a sample straddling the window edge adding its full length --
+    // an evening nap from 4:30 pm counted 2 h toward last night and dragged
+    // efficiency down by stretching the span back to 4:30 pm.
+    @Test func samplesAreClippedToTheWindow() throws {
+        let window = DateInterval(start: Self.bedtime.addingTimeInterval(-5 * 3600), end: Self.bedtime.addingTimeInterval(8 * 3600))
+        let samples = [
+            Self.stage(3, -6.5, -4.5),  // nap 4:30-6:30 pm; the window opens at 6 pm
+            Self.stage(3, 0, 7),
+        ]
+        let summary = try #require(LastNightSleep.summary(of: samples, in: window))
+        #expect(summary.asleep == 7.5 * 3600)
+        #expect(summary.efficiency == 7.5 / 12)
+    }
+
+    // catches: the Today row and the readiness score reading different
+    // nights (the row ran to now and took in an afternoon nap), and a
+    // window edge built by adding hours, which lands an hour off on a
+    // daylight-saving night.
+    @Test func theWindowRunsFromSixPMToNoon() throws {
+        let calendar = Self.utc
+        let afternoon = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 27, hour: 16)))
+        let window = try #require(LastNightSleep.window(now: afternoon, calendar: calendar))
+        #expect(window.start == calendar.date(from: DateComponents(year: 2026, month: 9, day: 26, hour: 18)))
+        #expect(window.end == calendar.date(from: DateComponents(year: 2026, month: 9, day: 27, hour: 12)))
+
+        let morning = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 27, hour: 7)))
+        #expect(LastNightSleep.window(now: morning, calendar: calendar)?.end == morning)
+
+        var london = Calendar(identifier: .gregorian)
+        london.timeZone = try #require(TimeZone(identifier: "Europe/London"))
+        let fallBackAfternoon = try #require(london.date(from: DateComponents(year: 2026, month: 10, day: 25, hour: 15)))
+        let fallBack = try #require(LastNightSleep.window(now: fallBackAfternoon, calendar: london))
+        #expect(london.component(.hour, from: fallBack.start) == 18)
+        #expect(london.component(.hour, from: fallBack.end) == 12)
     }
 
     // catches: the build-21 crash shape -- this runs inside HealthKit's
-    // result handler, off the main actor; with main-actor isolation this
-    // call no longer compiles.
+    // result handler, off the main actor; with main-actor isolation these
+    // calls no longer compile.
     @Test func runsOffTheMainActor() async {
-        let samples = [(value: 3, interval: Self.interval(0, 7)), (value: 1, interval: Self.interval(1, 8))]
-        let asleep = await Task.detached { ReadinessInputsProvider.sleepSummary(of: samples)?.asleep }.value
+        let samples = [Self.stage(3, 0, 7), Self.stage(1, 1, 8)]
+        let window = Self.wholeNight
+        let asleep = await Task.detached { LastNightSleep.summary(of: samples, in: window)?.asleep }.value
         #expect(asleep == 8.0 * 3600)
+        let calendar = Self.utc
+        let now = Self.bedtime
+        #expect(await Task.detached { LastNightSleep.window(now: now, calendar: calendar) }.value != nil)
+    }
+}
+
+@Suite("Readiness prior-day strain")
+struct ReadinessStrainTests {
+    static let today = Date(timeIntervalSince1970: 1_790_467_200) // midnight UTC
+    static let priorDay = DateInterval(start: today.addingTimeInterval(-86_400), end: today)
+
+    // catches: a rest day reading as a missing signal ("3 of 4 signals",
+    // no rest credit) for someone who does log workouts.
+    @Test func aRestDayIsZeroStrain() throws {
+        let lastWeek = (start: Self.today.addingTimeInterval(-5 * 86_400), kcal: 600.0)
+        let kcal = try #require(ReadinessInputsProvider.priorDayKcal(workouts: [lastWeek], priorDay: Self.priorDay))
+        #expect(kcal == 0)
+        #expect(ReadinessInputsProvider.assemble(ReadinessAggregates(priorDayWorkoutKcal: kcal)).priorDayStrain == 0)
+    }
+
+    // catches: inventing a daily rest signal when HealthKit returns nothing
+    // at all (a denied read looks exactly like no workouts).
+    @Test func noWorkoutsInThirtyDaysIsNoSignal() {
+        #expect(ReadinessInputsProvider.priorDayKcal(workouts: [], priorDay: Self.priorDay) == nil)
+    }
+
+    // catches: summing workouts outside yesterday into its strain.
+    @Test func onlyYesterdaysWorkoutsCount() {
+        let workouts = [
+            (start: Self.priorDay.start.addingTimeInterval(8 * 3600), kcal: 300.0),
+            (start: Self.priorDay.start.addingTimeInterval(18 * 3600), kcal: 150.0),
+            (start: Self.priorDay.start.addingTimeInterval(-3600), kcal: 900.0),
+        ]
+        #expect(ReadinessInputsProvider.priorDayKcal(workouts: workouts, priorDay: Self.priorDay) == 450)
     }
 }
