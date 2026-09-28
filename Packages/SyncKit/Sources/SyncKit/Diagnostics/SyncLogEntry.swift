@@ -40,6 +40,11 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
     /// files (which lack the key entirely) still decode -- a count, never a
     /// health value, same as `itemCount`.
     public var suppressedCount: Int?
+    /// WP-64: points the run skipped as implausible or incomplete
+    /// (`SyncOutcome.skippedCount`). Optional for the same reasons as
+    /// `suppressedCount`: `nil` when nothing was skipped, and older log
+    /// files without the key still decode.
+    public var skippedCount: Int?
     /// Already redacted (never the raw error text) by the time an entry
     /// reaches this initializer in production -- see this file's header and
     /// `SyncLogRedactor.swift`.
@@ -54,6 +59,13 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
         return "\(suppressedCount) deferred to Apple Health"
     }
 
+    /// "‹n› skipped", or `nil` when nothing was: the wording for the Sync
+    /// Log screen and its export (WP-64).
+    public var skippedText: String? {
+        guard let skippedCount, skippedCount > 0 else { return nil }
+        return "\(skippedCount) skipped"
+    }
+
     public init(
         id: UUID = UUID(),
         timestamp: Date,
@@ -61,6 +73,7 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
         status: SyncStatus,
         itemCount: Int,
         suppressedCount: Int? = nil,
+        skippedCount: Int? = nil,
         errorMessage: String? = nil
     ) {
         self.id = id
@@ -69,6 +82,7 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
         self.status = status
         self.itemCount = itemCount
         self.suppressedCount = suppressedCount
+        self.skippedCount = skippedCount
         self.errorMessage = errorMessage
     }
 }

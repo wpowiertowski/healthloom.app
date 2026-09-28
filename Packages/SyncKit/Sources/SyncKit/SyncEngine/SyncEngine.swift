@@ -308,6 +308,7 @@ public actor SyncEngine {
         let writability = await type.writability
 
         var totalItemCount = 0
+        var totalSkipped = 0
         do {
             var hkSampleType: HKSampleType?
             if case .healthKit(let identifier) = writability {
@@ -384,6 +385,7 @@ public actor SyncEngine {
                     try PagePipeline.upsertLocalSample(for: point, context: context)
                 }
                 totalItemCount += walked.total
+                totalSkipped += walked.skipped
                 // WP-58: this span's writes are known to the next span (see
                 // `PagePipeline.processPages`).
                 knownExternalIDs = walked.known
@@ -427,7 +429,8 @@ public actor SyncEngine {
             }
             let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
             let outcome = SyncOutcome(
-                dataType: type, status: .ok, itemCount: totalItemCount, suppressedCount: suppressedCount
+                dataType: type, status: .ok, itemCount: totalItemCount, suppressedCount: suppressedCount,
+                skippedCount: totalSkipped
             )
             await runRecorder?.record(outcome) // WP-18: additive diagnostics hook, see this actor's `runRecorder` doc comment.
             return outcome
@@ -469,6 +472,7 @@ public actor SyncEngine {
             let effective = (error as? PageWalkPartial)?.underlying ?? error
             if let walk = error as? PageWalkPartial {
                 totalItemCount += walk.total
+                totalSkipped += walk.skipped
                 var upsertFailures = 0
                 for point in walk.localOnly {
                     do {
@@ -514,7 +518,7 @@ public actor SyncEngine {
                 try? context.save()
                 let stopped = SyncOutcome(
                     dataType: type, status: .cancelled, itemCount: totalItemCount,
-                    suppressedCount: suppressedCount
+                    suppressedCount: suppressedCount, skippedCount: totalSkipped
                 )
                 await runRecorder?.record(stopped)
                 return stopped
@@ -540,6 +544,7 @@ public actor SyncEngine {
                 status: .error,
                 itemCount: totalItemCount,
                 suppressedCount: suppressedCount,
+                skippedCount: totalSkipped,
                 errorMessage: message
             )
             await runRecorder?.record(outcome) // WP-18: additive diagnostics hook, see this actor's `runRecorder` doc comment.

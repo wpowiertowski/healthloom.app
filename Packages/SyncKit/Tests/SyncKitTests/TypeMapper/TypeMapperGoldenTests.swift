@@ -192,6 +192,18 @@ import Testing
         #expect(sample.metadata.hrvStatistic == .sdnn)
     }
 
+    // catches: a present-but-zero SDNN (an optional field Google may fill
+    // with 0) "winning" and skipping the point -- Fitbit HRV then never
+    // reached Apple Health although a valid RMSSD sat beside it.
+    @Test func aZeroSDNNFallsThroughToRMSSD() {
+        let decision = TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 38.2, sdnn: 0))
+        guard case .quantity(let sample) = decision else {
+            Issue.record("expected .quantity, got \(decision)"); return
+        }
+        #expect(sample.value == 38.2)
+        #expect(sample.metadata.hrvStatistic == .rmssd)
+    }
+
     // catches: writing a missing, zero or unit-error value as HRV.
     @Test func implausibleHRVIsSkipped() {
         #expect(TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: nil)) == .skip)

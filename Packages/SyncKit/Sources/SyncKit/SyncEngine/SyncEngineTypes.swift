@@ -263,6 +263,10 @@ nonisolated public struct SyncOutcome: Sendable, Equatable {
     /// Defaults to 0 so every pre-WP-12b construction site compiles and
     /// behaves identically.
     public var suppressedCount: Int
+    /// WP-64: of `itemCount`, the points the mapper skipped -- implausible
+    /// or incomplete, never written. Counted in `itemCount` too, so without
+    /// this a run that wrote nothing read as "ok, 244 items" (Fitbit HRV).
+    public var skippedCount: Int
     public var errorMessage: String?
 
     public init(
@@ -270,12 +274,14 @@ nonisolated public struct SyncOutcome: Sendable, Equatable {
         status: SyncStatus,
         itemCount: Int,
         suppressedCount: Int = 0,
+        skippedCount: Int = 0,
         errorMessage: String? = nil
     ) {
         self.dataType = dataType
         self.status = status
         self.itemCount = itemCount
         self.suppressedCount = suppressedCount
+        self.skippedCount = skippedCount
         self.errorMessage = errorMessage
     }
 }

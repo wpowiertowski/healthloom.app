@@ -40,6 +40,9 @@ nonisolated public enum SyncLogTextExporter {
             // never a value -- same D11 posture as every other field here.
             line += "  \u{00B7} \(deferred)"
         }
+        if let skipped = entry.skippedText {
+            line += "  \u{00B7} \(skipped)"
+        }
         if let errorMessage = entry.errorMessage {
             line += "  \u{2014} \(errorMessage)"
         }
