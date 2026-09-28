@@ -1,7 +1,9 @@
 // YouView.swift
 //
 // WP-30 (implementation-plan.md): the You tab — knowledge transparency.
-// Three sections over the persisted `KnowledgeProfile`:
+// Three sections over the persisted `KnowledgeProfile`, below WP-61's
+// "About you" (goals, injuries and limits, activity preferences in the
+// user's words; `AboutYouSection`):
 //
 //   - Profile: every field (display text, source, as-of) with its AI-context
 //     toggle. Clinical fields carry a "Clinical" badge and start excluded
@@ -40,6 +42,8 @@ struct YouView: View {
     @State private var correctionDraft = ""
     @State private var confirmReset = false
     @State private var confirmWipe = false
+    /// About-you text being edited (WP-61); seeded from the saved entries.
+    @State private var aboutYouDrafts: [AboutYouField: String] = [:]
     /// Drives the one-line/stacked switch in each fact card (see below).
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -49,6 +53,13 @@ struct YouView: View {
 
     var body: some View {
         ThemedScreen(title: "You") {
+            AboutYouSection(drafts: $aboutYouDrafts, saved: viewModel.aboutYou) {
+                viewModel.saveAboutYou(aboutYouDrafts)
+                // Keep what was typed if the save failed.
+                if viewModel.errorMessage == nil {
+                    aboutYouDrafts = viewModel.aboutYou
+                }
+            }
             profileSection
             forgetSection
             if let notice = viewModel.notice {
@@ -66,6 +77,7 @@ struct YouView: View {
         .accessibilityIdentifier("you.screen")
         .task {
             viewModel.load()
+            aboutYouDrafts = viewModel.aboutYou
         }
         .sheet(isPresented: Binding(
             get: { editingKey != nil },

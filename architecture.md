@@ -161,6 +161,11 @@ source-tagged, timestamped `KnowledgeProfile`, honoring the user's per-field exc
 The model pulls specifics on demand through typed tools (`getRecentSleep`, `getSteps`, …)
 that also route through `KnowledgeStore`. Every AI turn stores a `ContextSnapshot` of the
 exact context sent, powering the "What did the coach see?" trace UI.
+The user can add what the data can't say (WP-61): goals, injuries and limits, activity
+preferences, typed on the You tab and stored as correction-sourced profile fields under
+fixed keys (`AboutYouField`, capped at 300 characters each). They survive every
+re-derivation, are the last fields trimmed from the context, and reach the model inside
+the health-context block framed as data, not instructions. Device-local, like the profile.
 
 **D8 — Clinical signals are excluded from AI context by default.**
 ECG, AFib / Irregular Rhythm Notifications are stored (`LocalSample`) and shown in-app

@@ -35,8 +35,12 @@ final class YouViewModel {
     private let deps: Dependencies
 
     /// The persisted profile's fields in stored order (empty when no
-    /// profile exists yet — the view renders the empty state).
+    /// profile exists yet — the view renders the empty state). The
+    /// About-you entries are left out: they have their own section.
     var fields: [ProfileField] = []
+    /// What the user wrote about themselves (WP-61), by field; a missing
+    /// key is an empty entry.
+    var aboutYou: [AboutYouField: String] = [:]
     var updatedAt: Date?
     /// Write/delete failures with no sheet to host them.
     var errorMessage: String?
@@ -68,10 +72,15 @@ final class YouViewModel {
             )
             descriptor.fetchLimit = 1
             if let profile = try context.fetch(descriptor).first {
-                fields = profile.sections
+                fields = profile.sections.filter { !AboutYouField.isAboutYou($0.key) }
+                aboutYou = Dictionary(
+                    profile.sections.compactMap { field in AboutYouField(rawValue: field.key).map { ($0, field.displayText) } },
+                    uniquingKeysWith: { first, _ in first }
+                )
                 updatedAt = profile.updatedAt
             } else {
                 fields = []
+                aboutYou = [:]
                 updatedAt = nil
             }
         } catch {
@@ -108,6 +117,25 @@ final class YouViewModel {
             load()
         } catch {
             errorMessage = "Couldn't save the correction: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - About you (WP-61)
+
+    /// Saves every entry in `drafts` that differs from what's stored; an
+    /// empty draft clears its entry. Confirms with a one-line notice.
+    func saveAboutYou(_ drafts: [AboutYouField: String]) {
+        errorMessage = nil
+        do {
+            for field in AboutYouField.allCases {
+                let draft = (drafts[field] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard draft != (aboutYou[field] ?? "") else { continue }
+                try deps.store.setAboutYou(draft, for: field)
+            }
+            load()
+            notice = "Saved. The coach uses this from your next message."
+        } catch {
+            errorMessage = "Couldn't save: \(error.localizedDescription)"
         }
     }
 

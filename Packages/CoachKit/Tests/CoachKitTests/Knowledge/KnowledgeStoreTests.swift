@@ -397,6 +397,48 @@ struct KnowledgeStoreExclusionDurabilityTests {
     }
 }
 
+@Suite("KnowledgeStore about-you fields")
+struct KnowledgeStoreAboutYouTests {
+    // catches: the next refresh() wiping what the user wrote (it rebuilds
+    // every derived field), or the entry never reaching the coach.
+    @Test("an entry survives refresh and reaches the coach's context")
+    func survivesRefreshAndReachesContext() async throws {
+        let readStore = MockHealthReadStore()
+        readStore.steps = [DailyQuantityValue(day: .now, value: 8000)]
+        let (store, container) = try makeStore(readStore: readStore)
+        try store.setAboutYou("  Left knee: no long downhills  ", for: .injuries)
+        let profile = try await store.refresh(now: .now)
+        let field = try #require(profile.sections.first { $0.key == AboutYouField.injuries.key })
+        #expect(field.displayText == "Left knee: no long downhills")
+        #expect(field.excludedFromAI == false)
+        let assembled = try ContextAssembler(modelContainer: container).assemble(for: .chat, promptTokens: 10)
+        #expect(assembled.context.fields.contains { $0.key == AboutYouField.injuries.key })
+    }
+
+    // catches: an unbounded entry crowding the health data out of the
+    // context (user fields are the last trimmed).
+    @Test("an entry is capped at maxLength")
+    func capped() throws {
+        let (store, container) = try makeStore()
+        try store.setAboutYou(String(repeating: "a", count: AboutYouField.maxLength + 50), for: .goals)
+        let profile = try #require(try ModelContext(container).fetch(FetchDescriptor<KnowledgeProfile>()).first)
+        #expect(profile.sections.first { $0.key == AboutYouField.goals.key }?.displayText.count == AboutYouField.maxLength)
+    }
+
+    // catches: clearing a field leaving the old text with the coach, or
+    // clearing one field touching the others.
+    @Test("empty text removes only that entry")
+    func emptyRemoves() throws {
+        let (store, container) = try makeStore()
+        try store.setAboutYou("Half marathon in May", for: .goals)
+        try store.setAboutYou("Rowing, mornings", for: .activityPreferences)
+        try store.setAboutYou("   ", for: .goals)
+        let profile = try #require(try ModelContext(container).fetch(FetchDescriptor<KnowledgeProfile>()).first)
+        #expect(!profile.sections.contains { $0.key == AboutYouField.goals.key })
+        #expect(profile.sections.contains { $0.key == AboutYouField.activityPreferences.key })
+    }
+}
+
 @Suite("KnowledgeStore exclusion errors")
 @MainActor
 struct KnowledgeStoreExclusionErrorTests {

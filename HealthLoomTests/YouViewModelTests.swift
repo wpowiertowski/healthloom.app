@@ -46,6 +46,48 @@ struct YouViewModelTests {
         try context.save()
     }
 
+    // catches: the About-you entries showing twice (in their own section
+    // and again as "Your correction" facts), or not loading back.
+    @Test("About-you entries load into their own section only")
+    func aboutYouLoadsSeparately() throws {
+        let (viewModel, container, store, _) = try makeViewModel()
+        try seedProfile(in: container)
+        try store.setAboutYou("Half marathon in May", for: .goals)
+        viewModel.load()
+        #expect(viewModel.aboutYou == [.goals: "Half marathon in May"])
+        #expect(!viewModel.fields.contains { AboutYouField.isAboutYou($0.key) })
+        #expect(viewModel.fields.count == 2)
+    }
+
+    // catches: Save rewriting unchanged entries (re-stamping them) or
+    // failing to clear an emptied one.
+    @Test("saving writes changed entries and clears emptied ones")
+    func aboutYouSaves() throws {
+        let (viewModel, container, store, _) = try makeViewModel()
+        try store.setAboutYou("Rowing, mornings", for: .activityPreferences)
+        try store.setAboutYou("Half marathon in May", for: .goals)
+        viewModel.load()
+        let untouchedStamp = try #require(
+            try ModelContext(container).fetch(FetchDescriptor<KnowledgeProfile>()).first?
+                .sections.first { $0.key == AboutYouField.activityPreferences.key }?.asOf
+        )
+
+        viewModel.saveAboutYou([
+            .goals: "",
+            .injuries: " Left knee, no long downhills ",
+            .activityPreferences: "Rowing, mornings",
+        ])
+
+        #expect(viewModel.errorMessage == nil)
+        #expect(viewModel.aboutYou == [
+            .injuries: "Left knee, no long downhills",
+            .activityPreferences: "Rowing, mornings",
+        ])
+        let stored = try #require(try ModelContext(container).fetch(FetchDescriptor<KnowledgeProfile>()).first)
+        #expect(stored.sections.first { $0.key == AboutYouField.activityPreferences.key }?.asOf == untouchedStamp)
+        #expect(viewModel.notice != nil)
+    }
+
     @Test("load renders every field with source and clinical posture")
     func loadRendersFields() throws {
         let (viewModel, container, _, _) = try makeViewModel()
