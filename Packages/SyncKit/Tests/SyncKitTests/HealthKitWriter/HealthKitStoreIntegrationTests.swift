@@ -83,7 +83,7 @@ struct HealthKitStoreIntegrationTests {
             quantity: HKQuantity(unit: .count(), doubleValue: 42),
             start: start,
             end: end,
-            metadata: [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
+            metadata: [HKMetadataKeyExternalUUID: externalID, MappedMetadata.externalIDKey: externalID]
         )
         let window = (start: start.addingTimeInterval(-60), end: end.addingTimeInterval(60))
 

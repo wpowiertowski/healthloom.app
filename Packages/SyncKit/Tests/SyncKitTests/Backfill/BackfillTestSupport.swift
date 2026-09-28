@@ -57,13 +57,22 @@ final class StubBusyProbe: BackfillBusyProbe, @unchecked Sendable {
         lock.unlock()
     }
 
-    nonisolated func isBusy(for type: GoogleDataType) async -> Bool {
-        // `NSLock.lock()`/`.unlock()` are unavailable from `async` contexts
-        // on this toolchain -- same finding WP-09's own
-        // `MockGoogleReconcileClient.reconcile` documents; `withLock` is a
-        // synchronous closure, used here purely to protect the shared
-        // mutable state.
-        lock.withLock { busyTypes.contains(type) }
+    /// Every type released, in order -- a claim that isn't released would
+    /// block that type's incremental sync forever.
+    private nonisolated(unsafe) var releasedTypes: [GoogleDataType] = []
+    var released: [GoogleDataType] { lock.withLock { releasedTypes } }
+
+    // `NSLock.lock()`/`.unlock()` are unavailable from `async` contexts on
+    // this toolchain -- same finding WP-09's own
+    // `MockGoogleReconcileClient.reconcile` documents; `withLock` is a
+    // synchronous closure, used here purely to protect the shared mutable
+    // state.
+    nonisolated func claimForBackfill(_ type: GoogleDataType) async -> Bool {
+        lock.withLock { !busyTypes.contains(type) }
+    }
+
+    nonisolated func releaseBackfillClaim(_ type: GoogleDataType) async {
+        lock.withLock { releasedTypes.append(type) }
     }
 }
 

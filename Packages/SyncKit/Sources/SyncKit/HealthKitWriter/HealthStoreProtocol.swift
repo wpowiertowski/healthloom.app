@@ -97,6 +97,17 @@ public protocol HealthStoreProtocol: Sendable {
         externalIDs: Set<String>
     ) async throws(HealthKitWriterError) -> Int
 
+    /// Delete every app-written, `healthloom`-stamped sample of `sampleType`
+    /// whose external ID another such sample already carries, keeping one
+    /// copy per ID. Returns the number deleted. One query, one delete call.
+    /// WP-58: repairs the second copies WP-52's span loop wrote (each span
+    /// diffed against the run's opening existence snapshot, so a day
+    /// returned by two spans was written by both).
+    @discardableResult
+    func deleteDuplicateAppWrites(
+        ofType sampleType: HKSampleType
+    ) async throws(HealthKitWriterError) -> Int
+
     /// Delete every object of `objectType` this app itself wrote — "delete-
     /// by-source" (architecture.md D4 / WP-35's disconnect-and-wipe flow).
     /// The real adapter scopes this to `HKSource.default()` (the running
@@ -214,6 +225,37 @@ public final class HealthKitStore: HealthStoreProtocol, Sendable {
             return try await healthStore.deleteObjects(of: objectType, predicate: predicate)
         } catch {
             throw HealthKitWriterError(wrapping: error)
+        }
+    }
+
+    /// Same predicate scope as `existingExternalIDs` minus the date window.
+    /// Copies of one ID are interchangeable (one Google point mapped the
+    /// same way), so which one survives doesn't matter.
+    @discardableResult
+    public func deleteDuplicateAppWrites(
+        ofType sampleType: HKSampleType
+    ) async throws(HealthKitWriterError) -> Int {
+        let metadataPredicate = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeyExternalUUID)
+        let sourcePredicate = HKQuery.predicateForObjects(from: .default())
+        let compound = NSCompoundPredicate(andPredicateWithSubpredicates: [metadataPredicate, sourcePredicate])
+        let samples = try await querySamples(ofType: sampleType, matching: compound)
+        let extras = Self.duplicateCopies(in: samples)
+        guard !extras.isEmpty else { return 0 }
+        do {
+            try await healthStore.delete(extras)
+        } catch {
+            throw HealthKitWriterError(wrapping: error)
+        }
+        return extras.count
+    }
+
+    /// Every sample after the first that carries an already-seen external
+    /// ID. Shared with the test double so both keep the same copy.
+    static func duplicateCopies<Sample: HKObject>(in samples: [Sample]) -> [Sample] {
+        var seen: Set<String> = []
+        return samples.filter { sample in
+            guard let externalID = sample.metadata?[HKMetadataKeyExternalUUID] as? String else { return false }
+            return !seen.insert(externalID).inserted
         }
     }
 

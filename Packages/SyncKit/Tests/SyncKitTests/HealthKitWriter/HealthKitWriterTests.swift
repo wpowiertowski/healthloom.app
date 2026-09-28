@@ -49,7 +49,7 @@ import Testing
             start: start,
             end: end,
             metadata: stampExternalID
-                ? [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
+                ? [HKMetadataKeyExternalUUID: externalID, MappedMetadata.externalIDKey: externalID]
                 : nil
         )
     }
@@ -64,7 +64,7 @@ import Testing
             quantity: HKQuantity(unit: HKUnit.count().unitDivided(by: .minute()), doubleValue: 60),
             start: start,
             end: end,
-            metadata: [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
+            metadata: [HKMetadataKeyExternalUUID: externalID, MappedMetadata.externalIDKey: externalID]
         )
     }
 

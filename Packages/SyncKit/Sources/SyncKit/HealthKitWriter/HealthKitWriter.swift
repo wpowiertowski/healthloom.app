@@ -202,6 +202,13 @@ public final class HealthKitWriter: Sendable {
         return total
     }
 
+    /// Deletes the extra copies of any external ID this app wrote more than
+    /// once as `type` (`HealthStoreProtocol.deleteDuplicateAppWrites`).
+    @discardableResult
+    public func deleteDuplicateWrites(type: HKSampleType) async throws(HealthKitWriterError) -> Int {
+        try await store.deleteDuplicateAppWrites(ofType: type)
+    }
+
     /// Delete-by-source: every object of every type in `types` this app
     /// itself wrote (architecture.md D4 / WP-35's "disconnect & wipe").
     /// Takes the type list as a parameter rather than hardcoding today's P0

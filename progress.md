@@ -6070,3 +6070,50 @@ are gone.
 awake time widens the span but isn't sleep, and the summary runs off the main actor.
 Mutants: raw sum fails the double-count test; dropping `nonisolated` fails the build
 ("main actor-isolated static method … cannot be called from outside of the actor").
+
+## WP-58 — Sync integrity: duplicate daily summaries, background expiry, backfill overlap
+
+Source: whole-repo code review after WP-57 (findings 1, 2, 3, 7; I verified 1 and 2
+against the code before fixing).
+
+**Duplicate resting heart rate (high, shipped in WP-52).** The span loop handed every
+24 h span the run's opening existence snapshot, and `processPages` never returned the
+set it grew. A `.date` filter truncates `since` to its civil day, so consecutive spans
+both return the day between them; each multi-day run wrote that day's resting heart
+rate twice. `processPages` now returns `known`, and the loop carries it into the next
+span. Backfill wasn't affected (a day summary spans its civil day, so each chunk's
+existence query overlaps its neighbour's writes).
+
+**Repair.** `HealthStoreProtocol.deleteDuplicateAppWrites(ofType:)` deletes every
+app-written copy of an external ID after the first (one query, one delete call;
+`HealthKitStore.duplicateCopies` is the keep-the-first rule the mock shares).
+`SyncEngine.removeDuplicateWrites(of:)` resolves the type; the app's
+`DuplicateWriteRepair` runs it once per install for `.dailyRestingHeartRate` (the only
+`.date` row in `GoogleDataTypeSchema`) on foreground, and marks it done only after it
+succeeds, so a locked phone retries next time.
+
+**Background expiry (high).** `sync(type:)` ran the pipeline in an unstructured task,
+so the BG expiration handler's cancel never reached it and the loop went on to start
+more types. `sync(type:)` now forwards the starting caller's cancellation into the run
+(`withTaskCancellationHandler`); the span loop checks cancellation per span, and the BG
+loop starts no type once cancelled. A coalesced caller's cancellation isn't forwarded:
+the run belongs to its starter.
+
+**Backfill vs incremental overlap.** The WP-15 `isBusy` probe was checked once before
+a minutes-long chunk. It's now a claim on `SyncEngine` (`claimForBackfill` /
+`releaseBackfillClaim`), atomic on the actor: refused while an incremental run of the
+type is in flight, and `sync(type:)` waits out a held claim (cancellable; the waiter
+re-checks `Task.isCancelled` at registration so the cancel hop can't strand it).
+`BackfillCoordinator.runNextChunk` claims, runs `runClaimedChunk`, releases.
+
+**One key.** `MappedMetadata.externalIDKey` / `sourceDeviceKey` replace the literal in
+the writer, the coverage provider, the Activities tab and every test; one test pins the
+stored spellings. Activities now uses `ProductTypeWorkoutSourceClassifier` instead of a
+copy kept "in lockstep by eye".
+
+**Tests.** SyncKit 335 (6 new in `SyncEngineSpanClaimTests`, 1 pin, 1 backfill release
+assertion); app 2 new (`DuplicateWriteRepairTests`). Mutants, each caught: known set
+not carried; cancellation not forwarded; claim ignores in-flight runs; sync ignores
+claims; repair deletes every copy; repair without its once-guard; repair marked done
+before running. The mock reconcile client gained `leadingOverlap` to model the `.date`
+filter's civil-day truncation.

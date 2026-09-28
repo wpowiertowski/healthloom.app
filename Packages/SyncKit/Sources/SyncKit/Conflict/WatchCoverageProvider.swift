@@ -92,7 +92,7 @@ public final class HealthKitWatchCoverageProvider: WatchCoverageProviding, Senda
             // workout now covers as `.otherApp`, so without this check an
             // imported session would defer to itself and retroactive cleanup
             // would delete it.
-            guard workout.metadata?["healthloom.externalID"] == nil else { return nil }
+            guard workout.metadata?[MappedMetadata.externalIDKey] == nil else { return nil }
             // WP-55: every other workout covers too. One saved straight to
             // Apple Health by another app (a Hydrow rower) already records
             // the session the Fitbit logged alongside it, so it wins the

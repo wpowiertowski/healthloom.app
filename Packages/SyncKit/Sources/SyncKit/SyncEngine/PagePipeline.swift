@@ -138,10 +138,17 @@ nonisolated struct PagePipeline: Sendable {
     /// upsert those rows on their own executor (committing completed
     /// pages even on failure) and unwrap `partial.underlying` for the
     /// cancellation identity the stop-not-failure branches need.
+    ///
+    /// WP-58: a completed walk returns the grown set as `known`, so a
+    /// caller walking one window in several spans carries it into the
+    /// next span. Spans overlap for day-keyed types (a `.date` filter
+    /// truncates `since` to its civil day, so two consecutive 24 h spans
+    /// both return the day between them); handing every span the run's
+    /// opening snapshot wrote that day's summary twice.
     func processPages(
         knownExternalIDs: Set<String>,
         fetch: @Sendable (String?) async throws -> Page
-    ) async throws -> (total: Int, localOnly: [GoogleDataPoint], hitPageCap: Bool) {
+    ) async throws -> (total: Int, localOnly: [GoogleDataPoint], hitPageCap: Bool, known: Set<String>) {
         // Round-7 fix F1: base IDs with STORED split parts, derived
         // once from the queried set (in-page inserts are base IDs,
         // already covered by the base leg — see `isKnown`).
@@ -172,7 +179,7 @@ nonisolated struct PagePipeline: Sendable {
                 throw PageWalkPartial(total: total, localOnly: localOnly, underlying: error)
             }
         }
-        return (total, localOnly, hitPageCap)
+        return (total, localOnly, hitPageCap, known)
     }
 
     /// Maps, conflict-filters, batches, and writes/upserts every point in

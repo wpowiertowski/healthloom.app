@@ -252,7 +252,7 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
             end: point.end,
             metadata: [
                 HKMetadataKeyExternalUUID: point.id,
-                "healthloom.externalID": point.id,
+                MappedMetadata.externalIDKey: point.id,
             ]
         )
     }

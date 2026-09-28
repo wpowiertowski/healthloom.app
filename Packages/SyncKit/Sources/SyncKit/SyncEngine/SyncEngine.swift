@@ -111,6 +111,11 @@ public actor SyncEngine {
     /// rather than interleave", not merely "drop").
     private var inFlight: [GoogleDataType: InFlightRun] = [:]
 
+    /// Types a backfill chunk holds (`claimForBackfill(_:)`), and the
+    /// `sync(type:)` callers waiting for each to be released.
+    private var backfillClaims: Set<GoogleDataType> = []
+    private var claimWaiters: [GoogleDataType: [UUID: CheckedContinuation<Void, Never>]] = [:]
+
     /// A running sync plus the token identifying it. `Task` itself isn't
     /// `Equatable`, so the token is what `clearInFlight` compares: a
     /// completing run only clears the entry it created, never a newer run
@@ -160,6 +165,20 @@ public actor SyncEngine {
         if let running = inFlight[type] {
             return await running.task.value
         }
+        // WP-58: a backfill chunk claimed this type -- wait for it to
+        // finish instead of writing the same overlap window alongside it
+        // (each pipeline diffs against its own existence snapshot, so both
+        // would write the shared points). Re-checked after every wait: the
+        // actor is reentrant, so another caller may have started the run.
+        while backfillClaims.contains(type) {
+            await waitForBackfillRelease(of: type)
+            if Task.isCancelled || isQuiesced() {
+                return SyncOutcome(dataType: type, status: .cancelled, itemCount: 0)
+            }
+            if let running = inFlight[type] {
+                return await running.task.value
+            }
+        }
         let runID = UUID()
         let task = Task { [self] in
             let outcome = await performSync(type: type)
@@ -171,7 +190,17 @@ public actor SyncEngine {
             return outcome
         }
         inFlight[type] = InFlightRun(task: task, runID: runID)
-        return await task.value
+        // WP-58: the run is an unstructured task (so coalesced callers can
+        // share it), which cancellation does not reach on its own. Forward
+        // the starting caller's cancellation -- the background expiration
+        // handler's -- so the walk stops at its next span or page instead
+        // of running past the system's deadline. A coalesced caller's
+        // cancellation isn't forwarded: the run belongs to its starter.
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     /// Runs every type in `types` **sequentially** (WP-09 step 3:
@@ -187,18 +216,61 @@ public actor SyncEngine {
         return results
     }
 
-    /// **WP-15 coordination point** (implementation-plan.md WP-15 step 2:
-    /// "SyncEngine exposes an `isBusy` signal"): read-only probe over the
-    /// existing `inFlight` bookkeeping above -- no new state, no
-    /// restructuring, just a public accessor for a fact this actor already
-    /// tracks. `BackfillCoordinator` (`Backfill/BackfillCoordinator.swift`)
-    /// polls this before pulling a chunk for `type` so a historical backfill
-    /// never races a foreground/background incremental sync of the same
-    /// type. Flagged here since WP-16 (background sync) may also want to
-    /// read `SyncEngine`'s in-flight state for its own scheduling decisions --
-    /// this method is additive and safe for either WP to call.
-    public func isBusy(for type: GoogleDataType) -> Bool {
-        inFlight[type] != nil
+    /// WP-58: deletes the extra copies of `type`'s samples this app wrote
+    /// more than once, across all time, and returns how many it deleted
+    /// (0 for a type that doesn't write to HealthKit). A one-time repair
+    /// for the day-keyed summaries the pre-WP-58 span loop wrote twice;
+    /// the app runs it once per install.
+    public func removeDuplicateWrites(of type: GoogleDataType) async throws -> Int {
+        guard case .healthKit(let identifier) = await type.writability else { return 0 }
+        let sampleType = try await sampleTypeResolver(identifier)
+        return try await writer.deleteDuplicateWrites(type: sampleType)
+    }
+
+    /// **WP-15 coordination point, made a claim in WP-58.**
+    /// `BackfillCoordinator` claims `type` before pulling a chunk and
+    /// releases it after. The claim is atomic on this actor: it fails while
+    /// an incremental run of `type` is in flight, and while it's held
+    /// `sync(type:)` waits instead of starting. (The WP-15 read-only
+    /// `isBusy` probe was checked once before a minutes-long chunk; an
+    /// incremental run starting after the check wrote the same overlap
+    /// window concurrently.)
+    public func claimForBackfill(_ type: GoogleDataType) -> Bool {
+        guard inFlight[type] == nil, !backfillClaims.contains(type) else { return false }
+        backfillClaims.insert(type)
+        return true
+    }
+
+    /// Ends a `claimForBackfill(_:)` claim and wakes every `sync(type:)`
+    /// waiting on it.
+    public func releaseBackfillClaim(_ type: GoogleDataType) {
+        backfillClaims.remove(type)
+        for waiter in (claimWaiters.removeValue(forKey: type) ?? [:]).values {
+            waiter.resume()
+        }
+    }
+
+    /// Suspends until `type`'s backfill claim is released or the caller is
+    /// cancelled. The cancellation hop may land before the waiter is
+    /// registered; the registration re-checks `Task.isCancelled`, so the
+    /// waiter can't be stranded.
+    private func waitForBackfillRelease(of type: GoogleDataType) async {
+        let waiterID = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                if Task.isCancelled || !backfillClaims.contains(type) {
+                    continuation.resume()
+                } else {
+                    claimWaiters[type, default: [:]][waiterID] = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.resumeClaimWaiter(waiterID, of: type) }
+        }
+    }
+
+    private func resumeClaimWaiter(_ waiterID: UUID, of type: GoogleDataType) {
+        claimWaiters[type]?.removeValue(forKey: waiterID)?.resume()
     }
 
     /// Task-side completion of the `inFlight` entry (see `sync(type:)`).
@@ -206,7 +278,7 @@ public actor SyncEngine {
     /// run's, so a newer run stored concurrently is never wiped. (Without
     /// the check, a `performSync` tail gaining an `await` -- or a detached
     /// task -- would let a completing run A clear run B's entry, and
-    /// `isBusy(for:)` would lie to `BackfillCoordinator` mid-flight.)
+    /// `claimForBackfill(_:)` would admit a chunk mid-flight.)
     private func clearInFlight(_ type: GoogleDataType, runID: UUID) {
         guard inFlight[type]?.runID == runID else { return }
         inFlight[type] = nil
@@ -288,6 +360,9 @@ public actor SyncEngine {
                 // Thrown as a cancellation -- the stop-not-failure branch
                 // below, cursor at the last committed span.
                 if isQuiesced() { throw CancellationError() }
+                // WP-58: a cancelled caller (background expiry) stops at the
+                // span boundary too, not only at the next page fetch.
+                try Task.checkCancellation()
                 // Round-6 item 8: the bounded shared walk (same-token
                 // break, page cap, cancellation probe — see PagePipeline).
                 // `.localOnly` upserts stay on this executor (round-10 item
@@ -311,6 +386,9 @@ public actor SyncEngine {
                     try PagePipeline.upsertLocalSample(for: point, context: context)
                 }
                 totalItemCount += walked.total
+                // WP-58: this span's writes are known to the next span (see
+                // `PagePipeline.processPages`).
+                knownExternalIDs = walked.known
                 // A span past the cap (100 pages in one day) is
                 // pathological; its remainder is recovered only through
                 // lookback overlap on later runs, so say so loudly.

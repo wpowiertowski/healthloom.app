@@ -16,6 +16,7 @@
 
 import Foundation
 import HealthKit
+import SyncKit
 
 @MainActor
 final class ActivitiesProvider {
@@ -53,13 +54,11 @@ final class ActivitiesProvider {
 
         return samples.compactMap { sample in
             guard let workout = sample as? HKWorkout else { return nil }
-            let isHealthLoomImport = workout.metadata?["healthloom.externalID"] != nil
-            // Same device-not-app classification rule as SyncKit's
-            // `ProductTypeWorkoutSourceClassifier` (Conflict/
-            // WatchCoverageProvider.swift) -- kept in lockstep by eye; the
-            // resolver's copy is the load-bearing one.
-            let isAppleWatch = (workout.sourceRevision.productType?.hasPrefix("Watch") ?? false)
-                || (workout.device?.model.map { $0.contains("Watch") } ?? false)
+            // The writer's key and the resolver's watch rule, not copies
+            // (WP-58): the Activities tab must classify a workout exactly
+            // as the conflict resolver does.
+            let isHealthLoomImport = workout.metadata?[MappedMetadata.externalIDKey] != nil
+            let isAppleWatch = ProductTypeWorkoutSourceClassifier().isAppleWatchWorkout(workout)
             let kind = Self.kind(workout.workoutActivityType)
             return WorkoutSummary(
                 uuid: workout.uuid,

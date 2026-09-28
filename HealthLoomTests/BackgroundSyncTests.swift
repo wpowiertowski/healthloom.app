@@ -67,6 +67,10 @@ private final class BGRecordingHealthStore: HealthStoreProtocol, @unchecked Send
         externalIDs: Set<String>
     ) async throws(HealthKitWriterError) -> Int { 0 }
 
+    func deleteDuplicateAppWrites(
+        ofType sampleType: HKSampleType
+    ) async throws(HealthKitWriterError) -> Int { 0 }
+
     func deleteAllAppData(
         ofType objectType: HKObjectType
     ) async throws(HealthKitWriterError) -> Int { 0 }

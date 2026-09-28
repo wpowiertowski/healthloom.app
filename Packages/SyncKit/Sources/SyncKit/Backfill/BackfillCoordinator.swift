@@ -356,7 +356,18 @@ public actor BackfillCoordinator {
         // path through this choke point (loop, round, or direct call).
         if await disabledTypes().contains(type) { return .suspendedDisabled }
         if isPaused { return .suspendedPaused }
-        if await busyProbe.isBusy(for: type) { return .suspendedBusy }
+        // WP-58: claimed, not probed -- the claim holds for the whole chunk,
+        // so an incremental sync of `type` can't start mid-chunk and write
+        // the same overlap window (`SyncEngine.claimForBackfill(_:)`).
+        guard await busyProbe.claimForBackfill(type) else { return .suspendedBusy }
+        let outcome = await runClaimedChunk(for: type)
+        await busyProbe.releaseBackfillClaim(type)
+        return outcome
+    }
+
+    /// `runNextChunk(for:)`'s body once `type` is claimed; every return
+    /// path goes back through the release there.
+    private func runClaimedChunk(for type: GoogleDataType) async -> BackfillChunkOutcome {
         // Third-party r9: the documented per-chunk choke point enforces the wipe
         // latch like every other writer trigger (CloudSyncEngine, MorningInsightRunner,
         // HealthLoomApp BG handler). A round already in progress that latches mid-walk

@@ -132,6 +132,12 @@ struct HealthLoomApp: App {
             // (`CloudSyncEngine.foregroundMinInterval`), and local changes
             // sync on their own via the change monitor.
             if !appEnvironment.launchConfiguration.isUITest {
+                let syncEngine = appEnvironment.syncEngine
+                Task {
+                    await DuplicateWriteRepair.runIfNeeded { type in
+                        try await syncEngine.removeDuplicateWrites(of: type)
+                    }
+                }
                 appEnvironment.cloudSyncMonitor.start()
                 if appEnvironment.foregroundReconcileIfDue() {
                     Task {
@@ -221,14 +227,15 @@ struct HealthLoomApp: App {
 //      its `Task.sleep`-based retry/backoff waits (both cancellation-aware),
 //      so an in-flight type's fetch fails promptly instead of running to
 //      completion.
-// Neither path preempts a single type's in-flight network call mid-flight
-// on its own (that would require editing `SyncEngine.swift`, out of this
-// WP's file scope) -- but `SyncEngine.sync(type:)` never throws, so any
-// cancellation-triggered failure just becomes an ordinary `.error`
-// `SyncOutcome`, and architecture.md D3's cursor semantics mean none of
-// this can corrupt state: a type that didn't finish (or wasn't reached
-// before budget/deadline) simply keeps its previous `lastSyncedAt`, safely
-// re-pulling the same window on the next attempt.
+// WP-58: the cancellation reaches the running type's walk
+// (`SyncEngine.sync(type:)` forwards it into its run task, which stops at
+// the next span or page), and the loop starts no further type once
+// cancelled. `SyncEngine.sync(type:)` never throws: a cancelled type
+// reports a `.cancelled` outcome (a stop, not a failure), and
+// architecture.md D3's cursor semantics mean none of this can corrupt
+// state: a type that didn't finish (or wasn't reached before
+// budget/deadline) keeps its cursor at the last committed span, and the
+// next attempt resumes from there.
 //
 // **What's automated vs. manual (WP-16's "Tests" line):** the pure
 // "due types + budget" planner (`dueTypes`, `BackgroundSyncBudget`,
@@ -476,6 +483,9 @@ enum HealthLoomBackgroundSync {
         var outcomes: [SyncOutcome] = []
         outcomes.reserveCapacity(enabledDue.count)
         for type in enabledDue {
+            // WP-58: expired -- the handler cancelled this task. Starting the
+            // next type would run past the deadline the system just set.
+            if Task.isCancelled { break }
             let elapsed = Date().timeIntervalSince(runStart)
             guard configuration.budget.hasRemainingBudget(elapsed: elapsed) else {
                 logger.notice(

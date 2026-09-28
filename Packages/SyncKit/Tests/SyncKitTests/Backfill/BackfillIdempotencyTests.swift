@@ -58,6 +58,9 @@ import Testing
             Issue.record("expected the chunk to process once no longer busy, got \(secondOutcome)"); return
         }
         #expect(mock.calls.count == 1)
+        // Catches: a claim never released (the suspended round claimed
+        // nothing; the processed one must hand its claim back).
+        #expect(busyProbe.released == [.steps])
     }
 
     // MARK: - Real dedupe across SyncEngine + BackfillCoordinator

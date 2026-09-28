@@ -66,6 +66,12 @@ final class MockGoogleReconcileClient: GoogleReconcileClient, @unchecked Sendabl
     /// change the world mid-run (e.g. latch a wipe during the first span).
     nonisolated(unsafe) var onReconcile: (@Sendable () -> Void)?
 
+    /// How far before `since` a point may start and still be returned --
+    /// a `.date` filter truncates `since` to its civil day, so the real API
+    /// returns the day a span starts in to that span AND the one before it
+    /// (WP-58). Zero (the default) is the strict start-in-window filter.
+    nonisolated(unsafe) var leadingOverlap: TimeInterval = 0
+
     init() {}
 
     var calls: [RecordedCall] {
@@ -122,7 +128,8 @@ final class MockGoogleReconcileClient: GoogleReconcileClient, @unchecked Sendabl
 
         switch result {
         case .success(let page):
-            let inWindow = page.points.filter { $0.start >= since && $0.start < until }
+            let from = since.addingTimeInterval(-leadingOverlap)
+            let inWindow = page.points.filter { $0.start >= from && $0.start < until }
             return Page(points: inWindow, nextPageToken: page.nextPageToken)
         case .failure(let error):
             throw error
