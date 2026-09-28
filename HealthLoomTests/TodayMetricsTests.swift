@@ -327,6 +327,19 @@ struct TodayHRVRowTests {
         #expect(display.name == "HRV")
     }
 
+    @Test("names the night, not a clock time")
+    // catches: the tile reading "Latest · 5:50 AM" over a nightly average
+    // (WP-65), or calling an older night "last night".
+    func namesTheNight() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 28, hour: 7)))
+        let yesterday = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 27)))
+        let older = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 25)))
+        #expect(TodayMetricFormatter.nightSub(yesterday, now: now, calendar: calendar) == "Last night")
+        #expect(TodayMetricFormatter.nightSub(older, now: now, calendar: calendar).hasPrefix("Night of"))
+    }
+
     @Test("speaks milliseconds, not the neighbouring heart row's bpm")
     // catches: WP-37's rule that spoken units match displayed ones, broken
     // by HRV falling into the `.heart` branch it sits beside.

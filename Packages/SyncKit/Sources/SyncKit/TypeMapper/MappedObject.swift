@@ -131,6 +131,9 @@ extension MappedMetadata {
         if let hrvStatistic {
             result[Self.hrvStatisticKey] = hrvStatistic.rawValue
         }
+        if let timeZoneIdentifier {
+            result[HKMetadataKeyTimeZone] = timeZoneIdentifier
+        }
         return result
     }
 }

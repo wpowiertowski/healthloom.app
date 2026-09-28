@@ -183,13 +183,13 @@ enum TodayMetricFormatter {
                 unitSystem: unitSystem
             )
         case .hrv:
-            // Canonical reading is milliseconds (SDNN), the same unit the
-            // readiness engine baselines against. Whole milliseconds: the
-            // decimals HealthKit carries are below the noise floor of the
-            // measurement and only add width.
+            // A night's average in milliseconds (WP-65), dated by the night's
+            // evening: "Last night", or the night it's from when last night
+            // had no readings. Whole milliseconds: the decimals are below the
+            // measurement's noise floor and only add width.
             return TodayMetricDisplay(
                 kind: kind,
-                sub: timestampSub(reading.date, prefix: "Latest"),
+                sub: nightSub(reading.date),
                 value: groupedCount(reading.value.rounded(), locale: locale),
                 unit: "ms",
                 progress: nil,
@@ -264,6 +264,17 @@ enum TodayMetricFormatter {
     private static func timestampSub(_ date: Date?, prefix: String) -> String {
         guard let date else { return "\(prefix) reading" }
         return "\(prefix) \u{00B7} \(date.formatted(date: .omitted, time: .shortened))"
+    }
+
+    /// "Last night" for the night whose evening was yesterday, else "Night
+    /// of" that evening's date (WP-65).
+    static func nightSub(_ evening: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard let evening else { return "Last night" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(evening, inSameDayAs: yesterday) {
+            return "Last night"
+        }
+        return "Night of \(evening.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))"
     }
 }
 

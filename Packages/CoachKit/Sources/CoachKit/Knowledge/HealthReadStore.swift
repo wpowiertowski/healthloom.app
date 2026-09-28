@@ -112,14 +112,15 @@ nonisolated public final class HealthKitReadStore: HealthReadStore, Sendable {
         ).map { QuantityReading(date: $0.day, value: $0.value) }
     }
 
+    /// One reading per night: the 8 pm-6 am average (WP-65, `NightlyHRV`),
+    /// dated by the night's evening -- the Today tile's and readiness's
+    /// number, not a calendar-day average that mixed daytime spot checks in.
     public func dailyHeartRateVariability(from start: Date, to end: Date) async -> [QuantityReading] {
-        await dailyCollection(
-            .heartRateVariabilitySDNN,
-            unit: .secondUnit(with: .milli),
-            options: .discreteAverage,
-            from: start,
-            to: end
-        ).map { QuantityReading(date: $0.day, value: $0.value) }
+        let readings = await NightlyHRV.fetchReadings(from: healthStore, start: start, end: end)
+        let averages = NightlyHRV.averages(readings, preference: sleepSource(), fallbackTimeZone: calendar.timeZone)
+        return averages.keys.sorted().compactMap { night in
+            averages[night].map { QuantityReading(date: night.startOfEveningDate(in: calendar), value: $0) }
+        }
     }
 
     public func sleepStageSegments(from start: Date, to end: Date) async -> [SleepStageSegment] {

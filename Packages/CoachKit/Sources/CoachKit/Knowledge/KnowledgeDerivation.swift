@@ -88,7 +88,9 @@ public enum KnowledgeDerivation {
         )
     }
 
-    /// "HRV (SDNN) ~42 ms (30-day baseline); latest 47 ms, higher than your baseline."
+    /// "Overnight HRV ~42 ms (30-day baseline); latest 47 ms, higher than your baseline."
+    /// "Overnight", not "(SDNN)" (WP-65): the readings are nightly averages,
+    /// and a Fitbit's are RMSSD.
     public static func heartRateVariabilityField(
         readings: [QuantityReading],
         windowDays: Int,
@@ -98,7 +100,7 @@ public enum KnowledgeDerivation {
     ) -> ProfileField? {
         vitalsField(
             key: heartRateVariabilityFieldKey,
-            label: "HRV (SDNN)",
+            label: "Overnight HRV",
             unit: "ms",
             readings: readings,
             windowDays: windowDays,

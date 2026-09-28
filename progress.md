@@ -6321,3 +6321,37 @@ log from a device says whether HRV points are written, skipped, or failing.
 **Tests.** SyncKit 351: zero SDNN falls through to RMSSD; skipped count reaches the outcome,
 log entry and export. Mutants, each caught: first present value wins; engine drops skips;
 recorder drops skips; export omits skips.
+
+## WP-65 — Nightly HRV, 8 pm–6 am local
+
+Owner report: HRV reaches Apple Health since WP-64, but HealthLoom's 88 ms didn't match
+Google Health's 65 ms. They measured different things: the Today tile showed the latest
+single reading (5:50 am); Google shows the night's average. Readiness also scored that one
+reading against a 30-day average of every reading, so a high dawn reading filled the HRV
+bar. Owner chose (option 1 of 2): average 8 pm–6 am readings, local time, robust to travel.
+
+**`NightlyHRV` (SyncKit).** `night(of:in:)` places a reading on its night (20:00–23:59 that
+date, 00:00–05:59 the previous; daytime belongs to none); `averages` groups readings by night
+on the clock each was recorded by, keeps the preferred sleep source's readings
+(`SleepSourceSelection`), and averages them; `lastCompletedNight` (a night ends at 06:00),
+`latestNight` (7-night freshness), `baseline` (mean of the 30 nights before, excluding the
+night itself); `fetchReadings` is the one HealthKit query. `NightKey` is a civil-date day
+number. All `nonisolated`.
+
+**Travel.** Google's `sampleTime.utcOffset` is decoded (`GoogleDataPoint.utcOffset`, bounded
+to ±14 h) and written as `HKMetadataKeyTimeZone` on every sample that has it
+(`MappedMetadata.timeZoneIdentifier`), so a night slept in New York stays a New York night
+after flying to London. Readings without a zone (older HRV, some Watch readings) use the
+phone's current zone.
+
+**Consumers.** Today tile: last night's average, "Last night" / "Night of ‹date›"
+(`nightSub`). Readiness: last night vs the 30 nights before. Coach:
+`HealthKitReadStore.dailyHeartRateVariability` returns nightly averages; the profile label
+is "Overnight HRV" (was "HRV (SDNN)" — a Fitbit's is RMSSD).
+
+**Tests.** SyncKit 359 (`NightlyHRVTests` 7: window edges, recorded clock vs fallback,
+preferred source average, 06:00 completion, 30-night baseline, freshness, off-main-actor;
+zone stamped on the sample); GoogleHealthClient 59 (offset decoded, bad/absurd rejected);
+app: tile names the night. Mutants, each caught: reading's zone ignored; daytime counted;
+all sources blended; in-progress night taken; baseline includes the night; stale night
+taken; zone not stamped; offset bounds dropped; label always "Last night".

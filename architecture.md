@@ -157,6 +157,10 @@ WWDC 26 while Apple hardened the underlying biometrics — the same data-first s
 this decision encodes.) iOS 27's HealthKit newly exposes the user's heart-rate zone
 configuration to third-party apps; zones become a `KnowledgeProfile` field and a
 candidate prior-day-strain input — behind the same deterministic formula, never the LLM.
+HRV is a nightly number (WP-65, `NightlyHRV`): the average of the readings between 8 pm
+and 6 am on the clock each was recorded by (`HKMetadataKeyTimeZone`, stamped from Google's
+UTC offset; the phone's zone otherwise), the preferred sleep source's only. The Today tile,
+readiness (last night vs the mean of the 30 nights before it) and the coach all use it.
 Last night is one window for the score and the Today sleep row (`LastNightSleep`, WP-59):
 6 pm yesterday to noon, samples clipped to it, overlaps counted once. A day without
 workouts is strain 0 (full rest) for anyone who logged a workout in the past 30 days; with

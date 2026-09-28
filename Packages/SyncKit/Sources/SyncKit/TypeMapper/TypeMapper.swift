@@ -835,7 +835,8 @@ public enum TypeMapper {
         MappedMetadata(
             externalUUID: point.id,
             externalID: point.id,
-            sourceDevice: point.source.deviceDisplayName
+            sourceDevice: point.source.deviceDisplayName,
+            timeZoneIdentifier: point.utcOffset.flatMap { TimeZone(secondsFromGMT: Int($0))?.identifier }
         )
     }
 }

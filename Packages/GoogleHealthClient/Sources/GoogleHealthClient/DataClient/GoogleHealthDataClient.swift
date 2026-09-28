@@ -230,8 +230,23 @@ nonisolated public struct GoogleHealthClient: Sendable {
             end: end,
             source: Self.source(from: raw),
             values: values,
-            sessionPayload: sessionPayload
+            sessionPayload: sessionPayload,
+            utcOffset: Self.utcOffset(of: body, schema: schema)
         )
+    }
+
+    /// `sampleTime.utcOffset` in seconds (a protobuf Duration, e.g.
+    /// "-25200s"), or `nil` when the type has no sample time, the field is
+    /// absent, or it isn't a plausible offset (beyond ±14 h).
+    static func utcOffset(of body: [String: Any], schema: GoogleDataTypeSchema) -> TimeInterval? {
+        guard schema.time == .sampleTime,
+              let sample = body["sampleTime"] as? [String: Any],
+              let text = sample["utcOffset"] as? String,
+              text.hasSuffix("s"),
+              let seconds = Double(text.dropLast()),
+              seconds.isFinite, abs(seconds) <= 14 * 3600
+        else { return nil }
+        return seconds
     }
 
     private func times(of body: [String: Any], schema: GoogleDataTypeSchema) throws(GoogleHealthClientError) -> (Date, Date) {

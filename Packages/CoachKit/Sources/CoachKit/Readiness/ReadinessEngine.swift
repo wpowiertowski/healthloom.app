@@ -23,7 +23,7 @@ import Foundation
 /// this type is safe in sets, as dictionary keys, and in SwiftUI identity
 /// positions once WP-33 wires real HealthKit ratios through it.
 public struct ReadinessInputs: Sendable, Hashable {
-    /// Latest HRV (SDNN) divided by its 30-day baseline. Above 1 is better.
+    /// Last night's average HRV divided by the 30 nights before it (WP-65). Above 1 is better.
     public var hrvRatio: Double?
 
     /// Latest resting HR minus its 30-day baseline, in bpm. Negative (below

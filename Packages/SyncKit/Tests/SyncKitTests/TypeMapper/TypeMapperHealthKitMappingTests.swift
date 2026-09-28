@@ -196,6 +196,23 @@ import Testing
         #expect(hkSample.metadata?[MappedMetadata.hrvStatisticKey] as? String == "RMSSD")
     }
 
+    // catches: Google's UTC offset dropped on the way to Apple Health -- the
+    // nightly HRV window would then judge a night slept abroad on the
+    // phone's current clock.
+    @Test func theRecordedTimeZoneIsStampedOnTheSample() {
+        var point = TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 38.2)
+        point.utcOffset = -4 * 3600
+        guard case .quantity(let hkSample) = TypeMapper.map(point) else {
+            Issue.record("expected .quantity"); return
+        }
+        let identifier = try? #require(hkSample.metadata?[HKMetadataKeyTimeZone] as? String)
+        #expect(identifier.flatMap(TimeZone.init(identifier:))?.secondsFromGMT() == -4 * 3600)
+        guard case .quantity(let unstamped) = TypeMapper.map(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 38.2)) else {
+            Issue.record("expected .quantity"); return
+        }
+        #expect(unstamped.metadata?[HKMetadataKeyTimeZone] == nil)
+    }
+
     @Test func oxygenSaturationMapsToRealQuantitySampleAsFraction() {
         guard case .quantity(let hkSample) = TypeMapper.map(TypeMapperFixtures.oxygenSaturationPoint(percentage: 97)) else {
             Issue.record("expected .quantity")

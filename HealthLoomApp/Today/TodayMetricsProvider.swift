@@ -59,12 +59,9 @@ final class TodayMetricsProvider {
         case .heart:
             return await latestSample(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), now: now)
         case .hrv:
-            // SDNN in milliseconds — the same quantity and unit the
-            // readiness engine baselines against, so the panel row and the
-            // hero's HRV bar can never describe different numbers.
-            return await latestSample(
-                .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), now: now
-            )
+            // WP-65: last night's average (8 pm-6 am, `NightlyHRV`) -- the
+            // number the readiness score uses, not the latest single reading.
+            return await lastNightHRV(now: now)
         case .bloodOxygen:
             return await latestSample(.oxygenSaturation, unit: .percent(), now: now)
         case .weight:
@@ -208,6 +205,23 @@ final class TodayMetricsProvider {
             }
             healthStore.execute(query)
         }
+    }
+
+    /// The latest completed night's average HRV (or the most recent within
+    /// a week), dated by the night's evening; the preferred sleep source's
+    /// readings, each on the clock it was recorded by.
+    private func lastNightHRV(now: Date) async -> TodayMetricReading? {
+        let readings = await NightlyHRV.fetchReadings(
+            from: healthStore, start: now.addingTimeInterval(-TimeInterval(NightlyHRV.freshNights + 1) * 86_400), end: now
+        )
+        let averages = NightlyHRV.averages(
+            readings, preference: SleepSourcePreference.current(), fallbackTimeZone: calendar.timeZone
+        )
+        let lastCompleted = NightlyHRV.lastCompletedNight(before: now, in: calendar.timeZone)
+        guard let night = NightlyHRV.latestNight(in: averages, lastCompleted: lastCompleted),
+              let average = averages[night]
+        else { return nil }
+        return TodayMetricReading(value: average, date: night.startOfEveningDate(in: calendar))
     }
 
     private func lastNightAsleepSeconds(now: Date) async -> TodayMetricReading? {
