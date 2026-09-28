@@ -639,12 +639,10 @@ public actor BackfillCoordinator {
             .processPages(knownExternalIDs: knownExternalIDs) { token in
                 try await client.reconcile(type: type, since: start, until: end, pageToken: token)
             }
-        for point in walked.localOnly {
-            // Round-8 item 13: throws on unencodable payloads (no
-            // silent zero-byte rows) — into the run's existing
-            // failure path (cursor unmoved, error surfaced).
-            try PagePipeline.upsertLocalSample(for: point, context: context)
-        }
+        // Round-8 item 13: throws on unencodable payloads (no silent
+        // zero-byte rows) — into the run's existing failure path (cursor
+        // unmoved, error surfaced). One batch per chunk (WP-68).
+        try PagePipeline.upsertLocalSamples(walked.localOnly, context: context)
         totalItemCount += walked.total
         // Third-party r9: a cap-hit FAILS the chunk (cursor held) — it must never
         // advance `backfillCursor` past the whole window. Unlike incremental sync

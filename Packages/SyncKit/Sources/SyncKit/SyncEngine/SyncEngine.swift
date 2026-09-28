@@ -377,13 +377,11 @@ public actor SyncEngine {
                             type: type, since: chunk.start, until: chunk.end, pageToken: token
                         )
                     }
-                for point in walked.localOnly {
-                    // Round-8 item 13: throws on unencodable payloads (no
-                    // silent zero-byte rows) — into the run's existing
-                    // failure path (cursor at the last committed span,
-                    // error surfaced).
-                    try PagePipeline.upsertLocalSample(for: point, context: context)
-                }
+                // Round-8 item 13: throws on unencodable payloads (no
+                // silent zero-byte rows) — into the run's existing failure
+                // path (cursor at the last committed span, error surfaced).
+                // One batch per span (WP-68).
+                try PagePipeline.upsertLocalSamples(walked.localOnly, context: context)
                 totalItemCount += walked.total
                 totalSkipped += walked.skipped
                 // WP-58: this span's writes are known to the next span (see

@@ -307,50 +307,72 @@ nonisolated struct PagePipeline: Sendable {
     /// `nil` by a routine re-sync re-touching the same point. `sync`: call
     /// on the executor that owns `context`.
     static func upsertLocalSample(for point: GoogleDataPoint, context: ModelContext) throws {
-        let externalID = point.id
-        let payload = SharedLocalPayload(point: point)
-        // Round-8 item 13: encode failure (non-finite doubles) throws
-        // LOUDLY — the old `(try? ...) ?? Data()` wrote a zero-byte
-        // payload row that downstream readers choke on, while counting
-        // the point and committing the cursor past it (never re-pulled:
-        // unrecoverable). A throw fails the page → the run → the cursor
-        // stays unmoved and the window retries (loud every run until
-        // the data ages out or is fixed).
-        let payloadJSON: Data
-        do {
-            payloadJSON = try JSONEncoder().encode(payload)
-        } catch {
-            throw UnencodableLocalPayload(pointID: point.id)
-        }
-        let sourceLabel = point.source.deviceDisplayName ?? point.source.platform ?? "unknown"
-        let dataTypeKey = point.dataType.rawValue
+        try upsertLocalSamples([point], context: context)
+    }
 
-        let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
-        // Third-party r9: a fetch failure must FAIL LOUDLY, never fall through to
-        // insert. The old `try?` turned a busy/locked-store fetch error into `nil`
-        // and minted a duplicate row for the same externalID — defeating this
-        // method's own "never a blind reinsert" contract and splitting
-        // `linkedWatchWorkoutUUID` across duplicates. Catches: a throwing fetch
-        // must surface, not duplicate.
-        if let existing = try context.fetch(descriptor).first {
-            existing.dataType = dataTypeKey
-            existing.payloadJSON = payloadJSON
-            existing.start = point.start
-            existing.end = point.end
-            existing.source = sourceLabel
-        } else {
-            context.insert(
-                LocalSample(
-                    externalID: externalID,
+    /// Upserts `points` keyed on external ID (WP-67 follow-up): one fetch
+    /// for the batch's existing rows (in slices of `upsertFetchSlice` IDs)
+    /// instead of one per point, and an existing row is touched only where
+    /// a field actually changed. Each sync re-pulls 72 h of per-minute
+    /// Active Minutes -- ~4,300 rows, almost all unchanged -- and the old
+    /// per-point fetch plus unconditional reassignment re-read and rewrote
+    /// every one through the store the app's screens read from, holding
+    /// their fetches up mid-sync. A repeated ID within the batch updates
+    /// the row inserted for its first occurrence (never a second insert).
+    ///
+    /// Round-8 item 13: an encode failure (non-finite doubles) throws
+    /// LOUDLY -- a zero-byte payload row would choke readers while the
+    /// cursor committed past the point. The throw fails the page and the
+    /// run, the cursor stays, the window retries. Third-party r9: a fetch
+    /// failure throws too, never falling through to a duplicate insert.
+    static func upsertLocalSamples(_ points: [GoogleDataPoint], context: ModelContext) throws {
+        guard !points.isEmpty else { return }
+        var rows: [String: LocalSample] = [:]
+        let ids = Array(Set(points.map(\.id)))
+        for start in stride(from: 0, to: ids.count, by: upsertFetchSlice) {
+            let slice = Array(ids[start ..< min(start + upsertFetchSlice, ids.count)])
+            let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { slice.contains($0.externalID) })
+            for row in try context.fetch(descriptor) where rows[row.externalID] == nil {
+                rows[row.externalID] = row
+            }
+        }
+        // Sorted keys: the payload holds dictionaries, and two encodings of
+        // equal dictionaries can list their keys in different orders --
+        // unsorted, an unchanged point read as changed and was rewritten.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        for point in points {
+            let payloadJSON: Data
+            do {
+                payloadJSON = try encoder.encode(SharedLocalPayload(point: point))
+            } catch {
+                throw UnencodableLocalPayload(pointID: point.id)
+            }
+            let sourceLabel = point.source.deviceDisplayName ?? point.source.platform ?? "unknown"
+            let dataTypeKey = point.dataType.rawValue
+            if let existing = rows[point.id] {
+                if existing.dataType != dataTypeKey { existing.dataType = dataTypeKey }
+                if existing.payloadJSON != payloadJSON { existing.payloadJSON = payloadJSON }
+                if existing.start != point.start { existing.start = point.start }
+                if existing.end != point.end { existing.end = point.end }
+                if existing.source != sourceLabel { existing.source = sourceLabel }
+            } else {
+                let row = LocalSample(
+                    externalID: point.id,
                     dataType: dataTypeKey,
                     payloadJSON: payloadJSON,
                     start: point.start,
                     end: point.end,
                     source: sourceLabel
                 )
-            )
+                context.insert(row)
+                rows[point.id] = row
+            }
         }
     }
+
+    /// IDs per existence fetch: well under SQLite's bound-variable limit.
+    static let upsertFetchSlice = 500
 
     /// Stamps `LocalSample.linkedWatchWorkoutUUID` for every session the
     /// run's conflict filter deferred to a watch workout. Fetch-by-

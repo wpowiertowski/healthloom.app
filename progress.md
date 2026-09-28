@@ -6403,3 +6403,34 @@ next main-thread load to move if the crash report points there.
 summarizer runs on its actor against an in-memory store (recent window, newest sample, event
 count, empty type); Today's header query is pinned to one row. Mutants caught: unbounded header
 fetch; newest sample not read.
+
+## WP-68 — In-app sample upserts: one fetch per batch, unchanged rows untouched
+
+Owner report after WP-67: tab switches were smooth at first, but later in the sync switching
+to Today still hung. Candidates checked: the hourly knowledge refresh (timed on the simulator:
+0.4 s for a month of per-minute Active Minutes rows — a stutter, not a watchdog hang) and
+Today's appear-time work (all asynchronous HealthKit queries). The remaining load on the
+shared store is the sync's own in-app sample writes: SwiftData serializes contexts through
+one store, so a long background fetch or save holds up the main thread's queries — and
+Today runs fresh ones on every switch (the tab rebuilds).
+
+`PagePipeline.upsertLocalSample` fetched once per point (~4,300 per-minute Active Minutes
+rows per sync, the 72 h lookback) and reassigned every field of existing rows. A test proves
+SwiftData marks an equal-value assignment as a change, so every re-pulled row was rewritten
+each sync. Worse, the payload was encoded without sorted keys: equal content serialized in a
+different key order and compared as changed, at random (the new no-change test failed 4 of
+5 clean runs until the encoder sorted keys).
+
+`upsertLocalSamples` (one batch per span/chunk): existing rows fetched in slices of 500 IDs,
+fields assigned only when they differ, payloads encoded with `.sortedKeys` by one encoder,
+in-batch repeats update the row inserted for the first occurrence. The single-point entry
+delegates to it (failure paths still count per point). Rows written before this re-encode
+once with sorted keys on their next re-pull.
+
+Not confirmed as the hang's cause: the owner will share the device's watchdog report
+(Settings → Privacy & Security → Analytics & Improvements → Analytics Data).
+
+**Tests.** SyncKit 362 (`LocalSampleUpsertTests` 3: re-upserting unchanged points changes
+nothing; a changed point updates its one row; repeats and slice boundaries insert once and
+re-insert nothing). Mutants, each caught: unconditional reassignment; unsorted keys; in-batch
+inserts untracked; first slice only; a changed payload ignored.
