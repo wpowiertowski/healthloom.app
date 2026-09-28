@@ -54,6 +54,7 @@
 		37FBAE93A2A28E11618F4BED /* Probe.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCDFE9C4F5859021C2D1D089 /* Probe.swift */; };
 		38ADC180AA40558DE2917987 /* Secrets in Frameworks */ = {isa = PBXBuildFile; productRef = 3706F0C755F852E30433C795 /* Secrets */; };
 		3D79AE39C3F880AF2B813D31 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DBAAD9B6B994ED31E586A28 /* DashboardView.swift */; };
+		425D08E85F38DCDAA2E73E44 /* SyncStressUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ED713BC783706DF76B2BE31 /* SyncStressUITests.swift */; };
 		4374162EE066433416AD131E /* TierSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17481EE947A762C743BC47F9 /* TierSettingsStore.swift */; };
 		4531702CCBBCF51A21FE6102 /* scoredHero-dark-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = F8EEEB995E72237FA11FEC29 /* scoredHero-dark-XS.png */; };
 		45CB0941013E0E3556A536FB /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EB217EC5A5F8145917821FE /* HomeView.swift */; };
@@ -375,6 +376,7 @@
 		9C757C1A9219A4BB6DA975B7 /* HealthLoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthLoomTests.swift; sourceTree = "<group>"; };
 		9E36FBA184B5FAAE1009174A /* ThemedHeaderLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemedHeaderLayoutTests.swift; sourceTree = "<group>"; };
 		9E381DBA043CB6A38E879E72 /* InsightNotificationContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightNotificationContent.swift; sourceTree = "<group>"; };
+		9ED713BC783706DF76B2BE31 /* SyncStressUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStressUITests.swift; sourceTree = "<group>"; };
 		9EF17EA63843B91DDD68835B /* firstScoreHero-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "firstScoreHero-light-AXXXL.png"; sourceTree = "<group>"; };
 		9F5DF9FC9F80B869F93B48FB /* workoutSourceRow-dark-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "workoutSourceRow-dark-XS.png"; sourceTree = "<group>"; };
 		A03FB573C3AA54B936C4A2CB /* CloudKeyValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKeyValidatorTests.swift; sourceTree = "<group>"; };
@@ -486,6 +488,7 @@
 				637DD16861BBF3A0D3EEEA5B /* PromptEditorUITests.swift */,
 				E1D02BC2579827262BEC1FCC /* ScrollUntilExists.swift */,
 				0EB650B5B13D21F6EAB2C731 /* SettingsUITests.swift */,
+				9ED713BC783706DF76B2BE31 /* SyncStressUITests.swift */,
 				7B34DDA73518EFD159707DA9 /* TodayUITests.swift */,
 				E43357139C6C2B709DDF0337 /* WipeUITests.swift */,
 				FEC9086118C3847CC40732CD /* YouTabUITests.swift */,
@@ -1172,6 +1175,7 @@
 				A80B59742A3BA02EFAB0FB5D /* PromptEditorUITests.swift in Sources */,
 				E0C105F4899C2A3C9602D85B /* ScrollUntilExists.swift in Sources */,
 				BA4EA49A44EC75BD09BF65F9 /* SettingsUITests.swift in Sources */,
+				425D08E85F38DCDAA2E73E44 /* SyncStressUITests.swift in Sources */,
 				9DF2C3675FE498D32A2081E0 /* TodayUITests.swift in Sources */,
 				4E89DF8037A1767E402F0C80 /* WipeUITests.swift in Sources */,
 				DF414370AE7F5BBCFA0AA7E4 /* YouTabUITests.swift in Sources */,

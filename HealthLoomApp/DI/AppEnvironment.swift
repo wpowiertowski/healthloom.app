@@ -320,7 +320,7 @@ final class AppEnvironment {
 
         let reconcileClient: any GoogleReconcileClient
         if launchConfiguration.stubGoogle {
-            reconcileClient = StubGoogleReconcileClient()
+            reconcileClient = StubGoogleReconcileClient(volume: launchConfiguration.stubGoogleVolume)
             self.consentCoordinator = StubGoogleConsentCoordinator()
         } else {
             reconcileClient = GoogleHealthClient(httpSession: URLSessionHTTPSession(), auth: authManager)
@@ -398,6 +398,9 @@ final class AppEnvironment {
             isQuiesced: { WipeQuiesce.isLatched }
         )
 
+        if launchConfiguration.stubGoogleVolume {
+            StubGoogleReconcileClient.seedHistory(in: container)
+        }
         if launchConfiguration.seedDashboardData {
             Self.seedDashboardFixtures(in: container)
         }

@@ -281,9 +281,19 @@ struct ReadinessScoreHistory {
 
     private let defaults: UserDefaults
 
+    /// Side-effect free (WP-69): `TodayView` builds one on every render,
+    /// and a defaults write here posted a change notification mid-render --
+    /// the iCloud monitor's handler then fed a render loop that hung the app
+    /// until the watchdog killed it. The retired key is removed once, at
+    /// launch (`removeRetiredHistory`).
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.removeObject(forKey: Self.retiredDefaultsKey)
+    }
+
+    /// Deletes the pre-WP-59 history (`retiredDefaultsKey`). A one-time
+    /// launch task; never from a view.
+    static func removeRetiredHistory(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: retiredDefaultsKey)
     }
 
     /// 30-day WINDOW, not just 30 entries (round-8 item 14): the delta

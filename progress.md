@@ -6434,3 +6434,48 @@ Not confirmed as the hang's cause: the owner will share the device's watchdog re
 nothing; a changed point updates its one row; repeats and slice boundaries insert once and
 re-insert nothing). Mutants, each caught: unconditional reassignment; unsorted keys; in-batch
 inserts untracked; first slice only; a changed payload ignored.
+
+## WP-69 — The tab-switch hang: a render loop through UserDefaults (reproduced, fixed)
+
+Owner report: still hanging after WP-67/68; two watchdog reports (`0x8BADF00D`, scene-update,
+~10 s of main-thread CPU in each). Symbolicating build 33's offsets against a local Release
+build (identical `__TEXT` size, coherent frames) put the main thread in `TodayView.body` →
+`syncStatus`. The main thread was busy, not blocked — so something re-rendered Today over
+and over.
+
+**Reproduction.** A new `-HLStressVolume` launch flag: a volume stub (per-minute Active
+Minutes, 5-minute Zone Minutes, 150 ms per request, `StubGoogleReconcileClient(volume:)`), a
+seeded 60-day history, and — crucially — no `-UITest` prefix, so the production-only
+behaviours stay on. `SyncStressUITests` taps Sync Now and cycles Data → Settings → Data → Today,
+timing each arrival. Under `-UITest*` flags it never hung (the iCloud change monitor and the
+knowledge trigger don't start there — which is how this escaped every test); with
+`-HLStressVolume` the app stopped answering UI queries. An `xctrace` Time Profiler recording
+of the hung app: main thread 100% running for 25 s.
+
+**The loop, from the recorded stacks, all synchronous inside one render.**
+1. `HomeView.body` builds `TodayView`; `TodayView.init` built a `ReadinessScoreHistory`.
+2. `ReadinessScoreHistory.init` removed the retired history key (WP-59) — a defaults write,
+   posting `UserDefaults.didChangeNotification` synchronously, mid-render.
+3. `CloudSyncChangeMonitor` handled it on the spot (`queue: .main` from the main thread):
+   `noteLocalPreferencesChange()` read and wrote the iCloud engine's observable state
+   inside `HomeView.body`'s observation tracking, and a write invalidated HomeView → back
+   to step 1. (Which property closed the cycle wasn't pinned down: not the settings
+   reloads — `@Observable` skips notifying on an equal `Equatable` assignment, which a
+   mutant confirmed.)
+
+**Fixes (the loop needs both a write in the init and the handler running inside the
+render; each fix removes one).**
+- `ReadinessScoreHistory.init` is side-effect free; the retired key goes in a one-time launch
+  task (`removeRetiredHistory`, `OneTimeTask`). TodayView's providers are shared statics (each
+  struct instance built its own `HKHealthStore`).
+- `CloudSyncChangeMonitor` defers `noteLocalPreferencesChange` to its own main-actor turn
+  (`Task { @MainActor … }`), so a defaults write can never run it inside a render.
+
+With the fix the stress test's Today arrivals match the no-sync baseline (~1.4 s, the UI
+test's own overhead).
+
+**Tests.** `SyncStressUITests` is the regression test (fails with the fixes undone: timed
+out evaluating UI queries). `buildingAHistoryWritesNothing` (no defaults notification from
+the init). Mutants caught: the init writing again; the fixes undone (stress test). A
+reload-guard fix was tried and dropped: its mutants survived because `@Observable` already
+skips equal assignments.

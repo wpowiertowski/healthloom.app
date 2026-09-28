@@ -37,10 +37,16 @@ final class CloudSyncChangeMonitor {
         // Fires for every defaults write in the process, the engine's own
         // watermarks included; the engine compares the synced fields
         // before requesting anything.
+        // Deferred to its own main-actor turn (WP-69), never run inside the
+        // code that wrote the default: a write during a SwiftUI render
+        // (TodayView's history init did one) ran this handler mid-render,
+        // its reads registered as the rendering view's dependencies, its
+        // reload invalidated them, and the render looped until the watchdog
+        // killed the app.
         observers.append(center.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.engine.noteLocalPreferencesChange() }
+            Task { @MainActor [weak self] in self?.engine.noteLocalPreferencesChange() }
         })
         // Cheap check first: most saves are Google sync writing samples
         // and cursors. Only a save that touched a `ChatTurn` asks the
