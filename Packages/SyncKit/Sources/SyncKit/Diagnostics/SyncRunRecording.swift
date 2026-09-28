@@ -50,6 +50,7 @@ nonisolated public struct SyncEngineLogRecorder: SyncRunRecording {
             // pre-existing entries and runs without watch conflicts render
             // identically to before.
             suppressedCount: outcome.suppressedCount > 0 ? outcome.suppressedCount : nil,
+            skippedCount: outcome.skippedCount > 0 ? outcome.skippedCount : nil,
             errorMessage: outcome.errorMessage.map(SyncLogRedactor.redact)
         )
         await store.append(entry)

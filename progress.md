@@ -6297,3 +6297,27 @@ is now unmoved, and `syncAll`'s call-order check is one call per type in any ord
 ForegroundSync reports every type in flight; progress text names them all. Mutants, each
 caught: sequential; `shouldStart` ignored; results in finish order; every type spanned;
 in-flight not recorded; progress names one type.
+
+## WP-64 — HRV still not in Apple Health: zero-SDNN fallthrough, skip counts in the Sync Log
+
+Owner report after the WP-62 build: full HealthKit access, but no HealthLoom HRV in Apple
+Health. What the evidence rules out: the decoder throws when a point has none of its value
+fields (no HRV error in the log), so points carry a value; the owner's daily HRV is 47–73 ms,
+inside `hrvValidRange`; the conflict filter never touches HRV; routing reaches
+`decideHeartRateVariability`. What's left is a silent skip after decoding, and the log
+couldn't show one: skipped points count in `itemCount`, so "ok, 244 items" said nothing
+about writes.
+
+**Zero SDNN.** The mapper preferred `sdnn_ms` whenever present. If Google fills the optional
+SDNN field with 0 for Fitbit, SDNN "won", failed the range check, and every point skipped with
+a valid RMSSD beside it. Now the first *plausible* value wins (SDNN, then RMSSD). Unconfirmed
+as the cause: no raw response has been seen.
+
+**Skip counts.** `PagePipeline.processPages` returns `skipped`; `SyncOutcome.skippedCount`,
+`SyncLogEntry.skippedCount` (optional, old log files decode) and `skippedText` ("N skipped")
+carry it to the Sync Log screen and the export, beside "deferred to Apple Health". The next
+log from a device says whether HRV points are written, skipped, or failing.
+
+**Tests.** SyncKit 351: zero SDNN falls through to RMSSD; skipped count reaches the outcome,
+log entry and export. Mutants, each caught: first present value wins; engine drops skips;
+recorder drops skips; export omits skips.

@@ -351,16 +351,19 @@ public enum TypeMapper {
     /// one. Either way `hrvStatistic` records which it is, so the sample
     /// never claims to be something it isn't.
     private static func decideHeartRateVariability(_ point: GoogleDataPoint) -> MappedDecision {
-        let reading: (milliseconds: Double, statistic: HRVStatistic)
-        if let sdnn = point.values["sdnn_ms"] {
-            reading = (sdnn, .sdnn)
-        } else if let rmssd = point.values["rmssd_ms"] {
-            reading = (rmssd, .rmssd)
-        } else {
-            return .skip
-        }
+        // The first *plausible* value wins, SDNN first (WP-64): a present
+        // but zero SDNN -- an optional field Google may fill with 0 for
+        // Fitbit -- must fall through to the RMSSD beside it, not skip the
+        // point.
+        let candidates: [(milliseconds: Double?, statistic: HRVStatistic)] = [
+            (point.values["sdnn_ms"], .sdnn),
+            (point.values["rmssd_ms"], .rmssd),
+        ]
+        guard let chosen = candidates.first(where: { $0.milliseconds.map(hrvValidRange.contains) ?? false }),
+              let milliseconds = chosen.milliseconds
+        else { return .skip }
+        let reading = (milliseconds: milliseconds, statistic: chosen.statistic)
         guard point.end >= point.start else { return .skip }
-        guard hrvValidRange.contains(reading.milliseconds) else { return .skip }
         var metadata = metadata(for: point)
         metadata.hrvStatistic = reading.statistic
         return .quantity(
@@ -377,7 +380,8 @@ public enum TypeMapper {
 
     /// Plausible HRV in ms, either statistic: resting adult RMSSD/SDNN runs
     /// roughly 10-150 ms; the bounds only reject a zero, a negative or a
-    /// unit error (seconds or microseconds).
+    /// unit error (seconds or microseconds). A candidate outside them is
+    /// passed over for the next one.
     static let hrvValidRange: ClosedRange<Double> = 1...500
 
     // MARK: - Oxygen Saturation / SpO2 (oxygenSaturation / fraction) -- WP-11

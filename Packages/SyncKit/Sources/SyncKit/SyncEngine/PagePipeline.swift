@@ -148,7 +148,7 @@ nonisolated struct PagePipeline: Sendable {
     func processPages(
         knownExternalIDs: Set<String>,
         fetch: @Sendable (String?) async throws -> Page
-    ) async throws -> (total: Int, localOnly: [GoogleDataPoint], hitPageCap: Bool, known: Set<String>) {
+    ) async throws -> (total: Int, skipped: Int, localOnly: [GoogleDataPoint], hitPageCap: Bool, known: Set<String>) {
         // Round-7 fix F1: base IDs with STORED split parts, derived
         // once from the queried set (in-page inserts are base IDs,
         // already covered by the base leg — see `isKnown`).
@@ -157,6 +157,7 @@ nonisolated struct PagePipeline: Sendable {
             uuid.firstIndex(of: "#").map { String(uuid[..<$0]) }
         })
         var total = 0
+        var skipped = 0
         var localOnly: [GoogleDataPoint] = []
         var token: String? = nil
         var pages = 0
@@ -171,15 +172,16 @@ nonisolated struct PagePipeline: Sendable {
                 let page = try await fetch(token)
                 let processed = try await processPage(page.points, knownExternalIDs: &known, splitBases: splitBases)
                 total += processed.itemCount
+                skipped += processed.skipCount
                 localOnly += processed.localOnlyPoints
                 pages += 1
                 guard let next = page.nextPageToken, next != token else { break }
                 token = next
             } catch {
-                throw PageWalkPartial(total: total, localOnly: localOnly, underlying: error)
+                throw PageWalkPartial(total: total, skipped: skipped, localOnly: localOnly, underlying: error)
             }
         }
-        return (total, localOnly, hitPageCap, known)
+        return (total, skipped, localOnly, hitPageCap, known)
     }
 
     /// Maps, conflict-filters, batches, and writes/upserts every point in
@@ -380,6 +382,8 @@ nonisolated struct PagePipeline: Sendable {
 /// wrapper itself would misclassify every cancelled walk as failed).
 struct PageWalkPartial: Error {
     var total: Int
+    /// Of `total`, the points the mapper skipped (WP-64).
+    var skipped: Int = 0
     var localOnly: [GoogleDataPoint]
     var underlying: any Error
 }

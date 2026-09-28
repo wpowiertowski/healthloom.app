@@ -60,6 +60,14 @@ struct SyncLogRow: View {
                         .foregroundStyle(Theme.tertiary)
                         .accessibilityIdentifier("synclog.row.\(entry.id).suppressed")
                 }
+                // WP-64: points never written (implausible or incomplete),
+                // otherwise hidden inside the item count.
+                if let skipped = entry.skippedText {
+                    Text(skipped)
+                        .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption2))
+                        .foregroundStyle(Theme.tertiary)
+                        .accessibilityIdentifier("synclog.row.\(entry.id).skipped")
+                }
                 if let errorMessage = entry.errorMessage {
                     ThemedErrorText(
                         message: errorMessage,

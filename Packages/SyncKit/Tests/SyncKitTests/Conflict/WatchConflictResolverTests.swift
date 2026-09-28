@@ -544,6 +544,30 @@ nonisolated struct StubWatchPriorityPreference: WatchPriorityPreferenceReading {
         #expect(export.contains(deferred))
     }
 
+    // catches: skipped points hidden inside the item count -- a run that
+    // wrote nothing read "ok, 244 items" (Fitbit HRV) with no way to tell.
+    @Test func skippedCountReachesTheSyncLogEntryAndExport() async throws {
+        let logStore = SyncLogStore(persistence: NullSyncLogPersistence())
+        let recorder = SyncEngineLogRecorder(store: logStore, clock: TestSyncClock(Self.fixedNow))
+        let harness = try Self.makeHarness(windows: [], runRecorder: recorder)
+        let implausible = TypeMapperFixtures.heartRatePoint(
+            id: "hr-skipped-1", start: Self.at("10:15:00"), end: Self.at("10:15:00"), bpm: 0
+        )
+        let fine = TypeMapperFixtures.heartRatePoint(
+            id: "hr-written-1", start: Self.at("10:16:00"), end: Self.at("10:16:00"), bpm: 70
+        )
+        harness.mock.setPage(type: .heartRate, pageToken: nil, page: Page(points: [implausible, fine], nextPageToken: nil))
+
+        let outcome = await harness.engine.sync(type: .heartRate)
+
+        #expect(outcome.itemCount == 2)
+        #expect(outcome.skippedCount == 1)
+        let entry = try #require(await logStore.recentEntries().first)
+        #expect(entry.skippedCount == 1)
+        let skipped = try #require(entry.skippedText)
+        #expect(SyncLogTextExporter.export([entry], generatedAt: Self.fixedNow).contains(skipped))
+    }
+
     // MARK: - Concurrent types share one resolver without sharing runs
 
     @Test func secondTypeBeginRunDoesNotWipeFirstTypesInFlightRun() async throws {
