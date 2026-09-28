@@ -23,15 +23,19 @@ struct ActivitiesView: View {
     /// navigation chrome -- see ThemedChrome.swift's "Navigation chrome".
     var chrome: ScreenChrome = .tabRoot
 
-    @Query(sort: \LocalSample.start, order: .reverse) private var localSamples: [LocalSample]
+    /// Fitbit exercise sessions only (WP-67: this fetched every
+    /// `LocalSample`, per-minute Active Minutes included, on the main thread
+    /// and filtered them here).
+    @Query(
+        filter: #Predicate<LocalSample> { $0.dataType == "exercise" },
+        sort: \LocalSample.start, order: .reverse
+    ) private var localSamples: [LocalSample]
     @State private var workouts: [WorkoutSummary] = []
     @State private var hasLoaded = false
     private let provider = ActivitiesProvider()
 
     private var entries: [ActivityEntry] {
-        let supplements = localSamples
-            .filter { $0.dataType == GoogleDataType.exercise.rawValue }
-            .map(FitbitActivitySupplement.init(sample:))
+        let supplements = localSamples.map(FitbitActivitySupplement.init(sample:))
         return ActivityConsolidator.consolidate(workouts: workouts, supplements: supplements)
     }
 

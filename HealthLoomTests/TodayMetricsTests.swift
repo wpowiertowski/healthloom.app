@@ -327,6 +327,14 @@ struct TodayHRVRowTests {
         #expect(display.name == "HRV")
     }
 
+    @Test("the header reads one in-app sample, not all of them")
+    // catches: Today fetching every LocalSample on the main thread again --
+    // tens of thousands of per-minute rows, refetched after each sync save;
+    // opening Today mid-sync hung the app until the watchdog killed it.
+    func headerFetchesOneSample() {
+        #expect(TodayView.newestLocalSample.fetchLimit == 1)
+    }
+
     @Test("names the night, not a clock time")
     // catches: the tile reading "Latest · 5:50 AM" over a nightly average
     // (WP-65), or calling an older night "last night".

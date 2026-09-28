@@ -6373,3 +6373,33 @@ keeps its horizontal layout.
 
 Tests: 4 new workout-row snapshots (light/dark × XS/AXXXL), inspected; the sleep-row
 snapshots are unchanged.
+
+## WP-67 — Tab switches mid-sync hung the app (unbounded LocalSample queries)
+
+Owner report (twice, crash report pending): while a sync runs, Data → Settings → Data →
+Today hangs on the last step and the app dies. A hang then death is the watchdog killing a
+blocked main thread, not a code crash.
+
+**Cause (pending the crash report to confirm).** Three tabs `@Query`-ed every `LocalSample`
+on the main thread. Active Minutes arrive per minute (~1,400 rows a sync), so the table holds
+tens of thousands of rows, and SwiftData re-runs a `@Query` after every store save. Since
+WP-52 a sync saves after every day's span, and since WP-63 three types sync at once. So a
+mid-sync tab refetched the whole table on the main thread again and again.
+- **Today** fetched them all to read `first?.source` (the header's device name). Now a
+  `fetchLimit = 1` descriptor.
+- **Data** fetched them all and recomputed each in-app row's 30-day trend on every render,
+  decoding every payload's JSON. Now `LocalRowSummarizer` (a `@ModelActor`) fetches each type's
+  last 31 days plus its newest sample on a background context and returns a `LocalRowSummary`
+  (trend or event count, last sample); the tab reloads summaries on appear and when a Sync Now
+  starts or finishes, like the Apple Health trends. `DataTrendText.local` formats a summary.
+- **Activities** fetched them all to keep exercise sessions. Now the query filters to
+  `exercise`.
+
+**Not changed, flagged.** `KnowledgeStore.refresh` (main actor) also reads 30 days of local
+samples; its trigger is throttled to once an hour, so it's not the per-save cost, but it's the
+next main-thread load to move if the crash report points there.
+
+**Tests.** Trend tests moved to `LocalRowSummary.make` + `DataTrendText.local(summary:)`; the
+summarizer runs on its actor against an in-memory store (recent window, newest sample, event
+count, empty type); Today's header query is pinned to one row. Mutants caught: unbounded header
+fetch; newest sample not read.

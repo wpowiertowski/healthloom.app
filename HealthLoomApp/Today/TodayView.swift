@@ -36,7 +36,17 @@ struct TodayView: View {
     var onOpenCoach: (() -> Void)?
 
     @Query private var syncStates: [SyncState]
-    @Query(sort: \LocalSample.end, order: .reverse) private var localSamples: [LocalSample]
+    /// The newest in-app sample only -- its source names the device in the
+    /// header. WP-67: this fetched every `LocalSample` (tens of thousands of
+    /// per-minute Active Minutes rows) on the main thread, again after each
+    /// sync save; opening Today mid-sync hung the app until the watchdog
+    /// killed it.
+    @Query(TodayView.newestLocalSample) private var localSamples: [LocalSample]
+    static var newestLocalSample: FetchDescriptor<LocalSample> {
+        var descriptor = FetchDescriptor<LocalSample>(sortBy: [SortDescriptor(\.end, order: .reverse)])
+        descriptor.fetchLimit = 1
+        return descriptor
+    }
     // WP-34: the coach panel binds the latest generated morning insight
     // (persisted by `MorningInsightRunner`); nil until the first run.
     // Unfiltered query + in-code prefix match: `#Predicate` supports no
