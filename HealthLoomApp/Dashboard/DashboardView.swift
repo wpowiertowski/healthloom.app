@@ -141,19 +141,26 @@ struct DashboardView: View {
         }
     }
 
-    /// Names the type in flight during Sync Now (WP-53): a first heart-rate
+    /// Names the types in flight during Sync Now (WP-53): a first heart-rate
     /// sync runs for minutes and logs nothing until it finishes, so without
     /// this the tab looks done while it's still working.
     @ViewBuilder
     private var syncProgress: some View {
-        if let type = appEnvironment.foregroundSync.current {
-            Text("Syncing \(type.displayName)…")
+        if let text = Self.syncProgressText(appEnvironment.foregroundSync.inFlight) {
+            Text(text)
                 .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                 .foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 12)
                 .accessibilityIdentifier("dashboard.syncProgress")
         }
+    }
+
+    /// "Syncing Steps, Sleep and Weight…" -- several types run at once
+    /// since WP-63; nil when none is in flight.
+    static func syncProgressText(_ inFlight: [GoogleDataType]) -> String? {
+        guard !inFlight.isEmpty else { return nil }
+        return "Syncing \(inFlight.map(\.displayName).formatted(.list(type: .and)))…"
     }
 
     private func trendText(for type: GoogleDataType) -> DataTrendText {

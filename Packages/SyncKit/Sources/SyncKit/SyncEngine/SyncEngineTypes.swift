@@ -40,17 +40,42 @@ nonisolated public struct SyncConfiguration: Sendable, Equatable {
     /// each run, and a page-cap hit advanced the cursor past the unwalked
     /// rest of the window.
     public var chunkSpan: TimeInterval
+    /// WP-63: the types walked in `chunkSpan` pieces -- the dense streams,
+    /// thousands of points a day. Every other type (weight, sleep, HRV,
+    /// VO2 max, ...) fetches its whole window in one request: a handful of
+    /// points needs no day-by-day checkpoint, and one request per day cost
+    /// three or four round trips per type for nothing.
+    public var spannedTypes: Set<GoogleDataType>
+
+    /// The dense streams by volume in real sync logs: heart rate runs to
+    /// tens of thousands of points a day, the activity streams and SpO2 to
+    /// thousands. The next densest, HRV, is a few hundred a day.
+    public static let denseTypes: Set<GoogleDataType> = [
+        .heartRate, .steps, .distance, .activeEnergyBurned,
+        .activeMinutes, .activeZoneMinutes, .oxygenSaturation,
+    ]
 
     public init(
         initialWindow: TimeInterval = 7 * 24 * 3600,
         defaultLookback: TimeInterval = 72 * 3600,
         sleepLookback: TimeInterval = 7 * 24 * 3600,
-        chunkSpan: TimeInterval = 24 * 3600
+        chunkSpan: TimeInterval = 24 * 3600,
+        spannedTypes: Set<GoogleDataType> = SyncConfiguration.denseTypes
     ) {
         self.initialWindow = initialWindow
         self.defaultLookback = defaultLookback
         self.sleepLookback = sleepLookback
         self.chunkSpan = chunkSpan
+        self.spannedTypes = spannedTypes
+    }
+
+    /// The pieces `type`'s window is walked in: `chunkSpan` pieces for a
+    /// spanned type, the whole window as one piece for any other.
+    public nonisolated func chunks(for type: GoogleDataType, from start: Date, to end: Date) -> [DateInterval] {
+        guard spannedTypes.contains(type) else {
+            return end > start ? [DateInterval(start: start, end: end)] : []
+        }
+        return chunks(from: start, to: end)
     }
 
     /// `start ..< end` cut into consecutive `chunkSpan` pieces, oldest

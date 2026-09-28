@@ -6262,3 +6262,38 @@ restart 1); app 3 (only HRV rows deleted; runs until it succeeds; syncable list 
 unreadable types and is the backfill list). Mutants, each caught: RMSSD preferred over SDNN;
 no statistic tag; tag not written to HealthKit metadata; no range check; restart keeps the
 completed record; deletion not filtered to HRV; syncable list not filtered by readability.
+
+## WP-63 — Faster sync: types in parallel, one request for sparse types
+
+Owner question: why is the Google sync slow, is Google throttling? No 429s in the logs (the
+client's backoff would log `rateLimited`); the time was the app's own shape. Owner chose
+the first two of four speedups.
+
+**Parallel types.** `SyncSchedule.run` (SyncKit) runs `work` for each type, at most
+`maxConcurrentTypes` (3) at a time, starting them in order, and returns results in input
+order. `shouldStart` is asked before each start (the background budget and WP-58's expiry
+check); `didStart`/`didFinish` let `ForegroundSync` show every type in flight ("Syncing
+Steps, Sleep and Weight…"). `SyncEngine.syncAll`, Sync Now and the background path all use
+it. Safe per type: `SyncEngine` and `WatchConflictResolver` key their run state by type,
+and each run has its own `ModelContext`.
+
+The first cut took an `isolated (any Actor)? = #isolation` parameter so the callbacks could
+be caller-isolated. A task group's body closure doesn't inherit an isolated parameter it
+doesn't capture, so ForegroundSync's main-actor callbacks ran on a background thread and
+trapped — the build-21 crash class. `ForegroundSyncTests` caught it in the simulator. The
+callbacks are now `@Sendable` async closures, and ForegroundSync marks them `@MainActor`;
+`callbacksCanHopToTheCallersActor` pins it.
+
+**Sparse types in one request.** `SyncConfiguration.spannedTypes` (default `denseTypes`:
+heart rate, steps, distance, active energy, active minutes, active zone minutes, SpO2) walk
+day by day; every other type fetches its whole window in one request
+(`chunks(for:from:to:)`). A handful of points needs no daily checkpoint, and one request per
+day cost three or four round trips per type (eight for sleep's 7-day lookback).
+
+**Tests.** SyncKit 349: `SyncScheduleTests` 4 (bound reached, input order, no start after
+refusal, callbacks on the caller's actor), dense-only spans; the WP-52 checkpoint test moved
+from ECG to active zone minutes (ECG is whole-window now), the non-finite ECG test's cursor
+is now unmoved, and `syncAll`'s call-order check is one call per type in any order. App:
+ForegroundSync reports every type in flight; progress text names them all. Mutants, each
+caught: sequential; `shouldStart` ignored; results in finish order; every type spanned;
+in-flight not recorded; progress names one type.

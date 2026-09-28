@@ -489,13 +489,15 @@ import Testing
         let clock = TestSyncClock(Self.fixedNow)
         let mock = MockGoogleReconcileClient()
         let windowStart = Self.fixedNow.addingTimeInterval(-(Self.initialWindow + Self.defaultLookback))
-        let dayOne = Self.ecgPoint(
-            id: "ecg-day-1", start: windowStart.addingTimeInterval(3600), end: windowStart.addingTimeInterval(3630)
+        // A dense (day-by-day) type, local-only so rows are countable.
+        let dayOne = Self.localOnlyPoint(
+            id: "azm-day-1", dataType: .activeZoneMinutes,
+            start: windowStart.addingTimeInterval(3600), end: windowStart.addingTimeInterval(3630)
         )
         // One result per span, in order: day 1 carries the point (the
         // window-aware mock drops it from every other span), day 2 is
         // empty, day 3 fails.
-        mock.setScript(type: .electrocardiogram, pageToken: nil, results: [
+        mock.setScript(type: .activeZoneMinutes, pageToken: nil, results: [
             .success(Page(points: [dayOne], nextPageToken: nil)),
             .success(Page(points: [], nextPageToken: nil)),
             .failure(failure),
@@ -504,19 +506,19 @@ import Testing
             client: mock, writer: HealthKitWriter(store: MockHealthStore()), modelContainer: container, clock: clock
         )
 
-        let outcome = await engine.sync(type: .electrocardiogram)
+        let outcome = await engine.sync(type: .activeZoneMinutes)
 
         #expect(outcome.status == status)
         #expect(outcome.itemCount == 1)
         let committed = windowStart.addingTimeInterval(2 * 24 * 3600)
-        let state = try #require(try Self.syncState(container, type: .electrocardiogram))
+        let state = try #require(try Self.syncState(container, type: .activeZoneMinutes))
         #expect(state.lastSyncedAt == committed)
         #expect(state.itemCount == 1)
-        #expect(try Self.allLocalSamples(container).map(\.externalID) == ["ecg-day-1"])
+        #expect(try Self.allLocalSamples(container).map(\.externalID) == ["azm-day-1"])
 
         let firstRunCalls = mock.calls.count
-        mock.setPage(type: .electrocardiogram, pageToken: nil, page: Page(points: [], nextPageToken: nil))
-        _ = await engine.sync(type: .electrocardiogram)
+        mock.setPage(type: .activeZoneMinutes, pageToken: nil, page: Page(points: [], nextPageToken: nil))
+        _ = await engine.sync(type: .activeZoneMinutes)
         let resumed = try #require(mock.calls.dropFirst(firstRunCalls).first)
         #expect(resumed.since == committed.addingTimeInterval(-Self.defaultLookback))
     }
@@ -717,7 +719,7 @@ import Testing
 
     // MARK: - syncAll continues past one failing type and reports per-type results
 
-    @Test func syncAllRunsSequentiallyContinuesPastFailureAndReportsPerTypeResults() async throws {
+    @Test func syncAllContinuesPastFailureAndReportsPerTypeResultsInOrder() async throws {
         let container = try CoreModel.makeContainer(inMemory: true)
         let clock = TestSyncClock(Self.fixedNow)
         let mock = MockGoogleReconcileClient()
@@ -742,8 +744,29 @@ import Testing
         #expect(results[2].dataType == .weight)
         #expect(results[2].status == .ok) // continues past the failing type
 
-        // Sequential, not concurrent: exactly one call per type, in order.
-        #expect(mock.calls.map(\.type) == [.steps, .heartRate, .weight])
+        // One call per type (types overlap since WP-63, so in any order).
+        #expect(mock.calls.count == 3)
+        #expect(Set(mock.calls.map(\.type)) == [.steps, .heartRate, .weight])
+    }
+
+    // catches: a sparse type still fetched one day at a time (three or four
+    // round trips for a handful of points), or a dense one fetched in a
+    // single piece (a first heart-rate sync that can never checkpoint).
+    @Test func onlyDenseTypesWalkTheirWindowDayByDay() async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        let engine = SyncEngine(
+            client: mock, writer: HealthKitWriter(store: MockHealthStore()),
+            modelContainer: container, clock: TestSyncClock(Self.fixedNow)
+        )
+        _ = await engine.sync(type: .weight)
+        _ = await engine.sync(type: .steps)
+
+        #expect(mock.calls.filter { $0.type == .weight }.count == 1)
+        #expect(mock.calls.filter { $0.type == .steps }.count > 1)
+        let weight = try #require(mock.calls.first { $0.type == .weight })
+        #expect(weight.until == Self.fixedNow)
+        #expect(SyncConfiguration.denseTypes.contains(.heartRate))
     }
 
     // MARK: - ConflictFiltering hook: identity by default, overridable
