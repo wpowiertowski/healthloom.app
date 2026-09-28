@@ -6355,3 +6355,21 @@ zone stamped on the sample); GoogleHealthClient 59 (offset decoded, bad/absurd r
 app: tile names the night. Mutants, each caught: reading's zone ignored; daytime counted;
 all sources blended; in-progress night taken; baseline includes the night; stale night
 taken; zone not stamped; offset bounds dropped; label always "Last night".
+
+## WP-66 — One style for the either/or settings
+
+Owner request: make "Prefer workouts already in Apple Health" match the Sleep source selector.
+
+`ThemedSegmentedRow` (ThemedChrome) is now the one either/or settings row: title beside a
+`ThemedSegmentedControl`, stacking under the title at large sizes. Sleep source uses it
+(snapshots re-recorded pixel-identical), and the workout toggle became **Workout source:
+Apple Health | Keep both** (`WatchPriorityPreferences.options`, still the same stored Bool;
+Apple Health = on, the default). The explanation below it is rewritten for the new labels.
+
+At AXXXL "Apple Health | Keep both" was wider than a phone, so the segments ran off the
+screen and clipped the title. `ThemedSegmentedControl` now stacks its segments vertically,
+full width, when they don't fit side by side (`ViewThatFits`); Sleep source still fits and
+keeps its horizontal layout.
+
+Tests: 4 new workout-row snapshots (light/dark × XS/AXXXL), inspected; the sleep-row
+snapshots are unchanged.

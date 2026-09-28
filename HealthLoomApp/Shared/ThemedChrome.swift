@@ -468,7 +468,24 @@ struct ThemedSegmentedControl<Value: Hashable>: View {
     var accessibilityIdentifier: String
 
     var body: some View {
-        HStack(spacing: 0) {
+        // Side by side when the segments fit; at the largest text sizes
+        // they stack, full width, instead of running off the screen (WP-66:
+        // "Apple Health | Keep both" outgrew a phone at AXXXL).
+        ViewThatFits(in: .horizontal) {
+            segments(in: AnyLayout(HStackLayout(spacing: 0)), fillWidth: false)
+                .fixedSize()
+            segments(in: AnyLayout(VStackLayout(alignment: .leading, spacing: 0)), fillWidth: true)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Theme.border, lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private func segments(in layout: AnyLayout, fillWidth: Bool) -> some View {
+        layout {
             ForEach(options, id: \.value) { option in
                 let isSelected = option.value == selection
                 Button {
@@ -479,7 +496,7 @@ struct ThemedSegmentedControl<Value: Hashable>: View {
                         .foregroundStyle(isSelected ? Theme.accentDeep : Theme.secondary)
                         .lineLimit(1)
                         .padding(.horizontal, 12)
-                        .frame(minHeight: 44)
+                        .frame(maxWidth: fillWidth ? .infinity : nil, minHeight: 44, alignment: fillWidth ? .leading : .center)
                         .background(
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
                                 .fill(isSelected ? Theme.accentTint : Color.clear)
@@ -491,12 +508,42 @@ struct ThemedSegmentedControl<Value: Hashable>: View {
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Theme.border, lineWidth: 1)
-        )
-        .fixedSize()
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+/// A settings row choosing one of a few options (WP-66): its title beside a
+/// `ThemedSegmentedControl`, side by side when they fit and stacked at large
+/// text sizes. The one shape for every either/or setting (Sleep source,
+/// Workout source), so they can't drift apart.
+struct ThemedSegmentedRow<Value: Hashable>: View {
+    let title: String
+    let options: [(value: Value, title: String)]
+    @Binding var selection: Value
+    var accessibilityIdentifier: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                label
+                Spacer(minLength: 8)
+                control
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                label
+                control
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 11)
+    }
+
+    private var label: some View {
+        Text(title)
+            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
+            .foregroundStyle(Theme.ink)
+    }
+
+    private var control: some View {
+        ThemedSegmentedControl(options: options, selection: $selection, accessibilityIdentifier: accessibilityIdentifier)
+            .accessibilityLabel(title)
     }
 }

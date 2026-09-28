@@ -491,23 +491,25 @@ struct SettingsView: View {
             .padding(.top, 20)
 
             // WP-12b (architecture.md D13.5): watch-priority conflict
-            // resolution toggle, default ON. The callout copy documents the
-            // one asymmetry D13.5 mandates: OFF is forward-only (previously
-            // skipped data isn't restored), ON cleans up duplicates on the
-            // next sync (D13.4's retroactive pass).
+            // resolution, default Apple Health (a toggle until WP-66). The
+            // callout copy documents the one asymmetry D13.5 mandates: Keep
+            // both is forward-only (previously skipped data isn't restored),
+            // Apple Health cleans up duplicates on the next sync (D13.4's
+            // retroactive pass).
             ThemedPanel {
-                ThemedToggleRow(
-                    title: "Prefer workouts already in Apple Health",
-                    accessibilityIdentifier: "settings.watchPriority.toggle",
-                    isOn: Binding(
+                ThemedSegmentedRow(
+                    title: "Workout source",
+                    options: WatchPriorityPreferences.options,
+                    selection: Binding(
                         get: { watchPriority.isEnabled },
                         set: { watchPriority.setEnabled($0) }
-                    )
+                    ),
+                    accessibilityIdentifier: "settings.watchPriority.picker"
                 )
             }
             .padding(.top, 20)
 
-            Text("When on, workouts already in Apple Health win over the Fitbit's copy: an overlapping Fitbit session isn't added again -- it's kept in HealthLoom as a supplement instead. An Apple Watch workout also wins its heart rate, steps, energy, and distance. A workout another app saved, like a rower's, wins only the session, so Fitbit's heart rate still fills in. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
+            Text("Apple Health: a workout already in Apple Health wins over the Fitbit's copy, and the overlapping Fitbit session is kept in HealthLoom as a supplement instead of added again. An Apple Watch workout also wins its heart rate, steps, energy and distance; a workout another app saved, like a rower's, wins only the session, so the Fitbit's heart rate still fills in. Keep both: every Fitbit workout imports too. Switching to Keep both doesn't restore what was already skipped; switching back removes duplicates on the next sync.")
                 .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.tertiary)
                 .lineSpacing(3)
@@ -516,10 +518,15 @@ struct SettingsView: View {
                 .padding(.top, 10)
 
             ThemedPanel {
-                SleepSourceRow(source: Binding(
-                    get: { sleepSource.source },
-                    set: { sleepSource.setSource($0) }
-                ))
+                ThemedSegmentedRow(
+                    title: "Sleep source",
+                    options: SleepSourcePreferences.options,
+                    selection: Binding(
+                        get: { sleepSource.source },
+                        set: { sleepSource.setSource($0) }
+                    ),
+                    accessibilityIdentifier: "settings.sleepSource.picker"
+                )
             }
             .padding(.top, 20)
 
