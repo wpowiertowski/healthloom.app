@@ -6170,3 +6170,32 @@ comment's "23:00 UTC" is now true (1_790_463_600). Mutants, each caught: no clip
 noon cap; noon as midnight + 12 h (the DST bug); rest day as nil; retired history key kept;
 no merge; local wins a same-field conflict; pull re-walks turns; efficiency from the raw
 sum.
+
+## WP-60 — Sleep source preference
+
+Owner decision (after WP-59): prioritize the Fitbit for sleep, with a user switch.
+
+**Rule (SyncKit `SleepSource.swift`).** `SleepSourcePreference` (`.fitbit` default,
+`.appleWatch`) with its defaults key beside the rule; `SleepSourceSelection.winningSource`
+keeps one night's samples from the highest-priority source that recorded any asleep time
+(preferred device, the other device, then other apps), and `winningSources` does it per
+night (`night(of:)`, start − 12 h, now also the Data tab's night key). `origin(of:)`: the
+HealthLoom external-ID stamp is the Fitbit; otherwise the resolver's watch rule, now
+`ProductTypeWorkoutSourceClassifier.isAppleWatch(_:)` for any HealthKit object. All
+`nonisolated`: it runs in HealthKit handlers (pinned by a detached-task test).
+
+**Readers.** `LastNightSleep.summary` (Today row + readiness) clips to the window, then picks
+the winner. `DataTrendProvider` picks per night before bucketing. CoachKit's
+`HealthKitReadStore.sleepStageSegments` picks per night (preference read per query through an
+injected closure). `SleepStageSample` carries `origin`. This replaces the WP-57 union across
+devices — the open "awake vs asleep" question from WP-59.
+
+**Settings.** "Sleep source" row with a new `ThemedSegmentedControl` (the system segmented
+picker ignores the palette and the snapshot renderer draws it as a placeholder), stacking
+under its label at large sizes; explanatory footer. Device-local: adding it to iCloud's
+settings record needs a CloudKit schema change.
+
+**Tests.** SyncKit 6 (`SleepSourceTests`); app: one-source-per-night, picker ↔ reader key,
+4 snapshots (light/dark × XS/AXXXL). Mutants, each caught: winner ignores asleep time; one
+winner for the whole range; default Apple Watch; union instead of winner; summary skips the
+selection; picker writes another key.

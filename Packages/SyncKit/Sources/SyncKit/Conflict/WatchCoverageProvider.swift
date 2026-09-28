@@ -36,10 +36,17 @@ nonisolated public struct ProductTypeWorkoutSourceClassifier: WorkoutSourceClass
     public init() {}
 
     public nonisolated func isAppleWatchWorkout(_ workout: HKWorkout) -> Bool {
-        if let productType = workout.sourceRevision.productType, productType.hasPrefix("Watch") {
+        Self.isAppleWatch(workout)
+    }
+
+    /// The rule for any HealthKit object: recorded by an Apple Watch
+    /// (source product type or device model), whichever app saved it.
+    /// Sleep's source priority (`SleepSourcePreference`) uses it too.
+    public nonisolated static func isAppleWatch(_ object: HKObject) -> Bool {
+        if let productType = object.sourceRevision.productType, productType.hasPrefix("Watch") {
             return true
         }
-        if let model = workout.device?.model, model.contains("Watch") {
+        if let model = object.device?.model, model.contains("Watch") {
             return true
         }
         return false

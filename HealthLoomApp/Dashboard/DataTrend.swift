@@ -11,6 +11,7 @@
 
 import CoreModel
 import Foundation
+import SyncKit
 
 /// The last 7 days' average against the last 30 days'.
 ///
@@ -56,12 +57,11 @@ nonisolated struct RollingTrend: Equatable {
     /// Asleep time per night, keyed by the day the night began: a sample is
     /// filed 12 hours earlier, so 23:00 and 02:00 land on the same evening
     /// and last night counts as a completed day. Overlapping intervals are
-    /// merged first -- an Apple Watch and a Fitbit both recording the same
-    /// night must not count it twice.
+    /// merged first, so overlaps within the night's winning source count once
+    /// (`DataTrendProvider` picks that source per night, WP-60).
     static func nightlyAsleep(_ intervals: [DateInterval], calendar: Calendar) -> [Date: Double] {
         AsleepTime.merged(intervals).reduce(into: [:]) { nights, interval in
-            let night = calendar.startOfDay(for: interval.start.addingTimeInterval(-12 * 3600))
-            nights[night, default: 0] += interval.duration
+            nights[SleepSourceSelection.night(of: interval.start, calendar: calendar), default: 0] += interval.duration
         }
     }
 }

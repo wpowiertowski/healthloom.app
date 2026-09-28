@@ -260,6 +260,13 @@ dense HR), so it is the priority source wherever it exists; Fitbit fills everyth
 6. **Coach:** no special casing needed — `KnowledgeStore` reads HealthKit, so watch
    workouts are first-class inputs; Fitbit-only supplements come via `LocalSample`.
    The profile describes activities from the consolidated view, never both copies.
+7. **Sleep (WP-60):** read-side source priority, one source per night. Every Fitbit night
+   is still written to Apple Health; what HealthLoom reads back (Today, readiness, the Data
+   tab, the coach) is the preferred device's night when it recorded one, else the other
+   device's, else another app's (`SleepSourceSelection`). Settings → Sleep source, default
+   Fitbit (the Fitbit is the night-time wear). A merged union counted one device's awake
+   stretch as sleep whenever the other called it asleep. Device-local, not in iCloud's
+   settings record.
 
 **D14 — Coach model ladder: on-device → Private Cloud Compute → BYO-key cloud.**
 The default is the on-device model (private, offline, free) — unchanged posture. New in

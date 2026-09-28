@@ -455,3 +455,48 @@ struct ThemedToggleRow: View {
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
+
+/// Two-or-more option segmented control in the app's palette (WP-60). The
+/// system segmented picker is UIKit-backed: it ignores the theme and the
+/// snapshot renderer draws it as a placeholder. Selected segment: accent
+/// tint with accent-deep text, the palette's verified pair for labels on
+/// tint; the rest secondary on the panel. Each segment is a 44 pt button
+/// that VoiceOver reads with the selected trait.
+struct ThemedSegmentedControl<Value: Hashable>: View {
+    let options: [(value: Value, title: String)]
+    @Binding var selection: Value
+    var accessibilityIdentifier: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.value) { option in
+                let isSelected = option.value == selection
+                Button {
+                    selection = option.value
+                } label: {
+                    Text(option.title)
+                        .font(Theme.font(Theme.Step.caption, isSelected ? .semibold : .medium, relativeTo: .subheadline))
+                        .foregroundStyle(isSelected ? Theme.accentDeep : Theme.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 44)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(isSelected ? Theme.accentTint : Color.clear)
+                                .padding(3)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Theme.border, lineWidth: 1)
+        )
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
