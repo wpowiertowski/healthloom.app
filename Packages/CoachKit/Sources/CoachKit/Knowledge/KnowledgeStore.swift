@@ -488,6 +488,23 @@ public final class KnowledgeStore {
         cachedExcludedKeys = profile.sections.excludedKeys
     }
 
+    /// Saves what the user wrote for `field` on the You tab (WP-61): trimmed
+    /// and capped at `AboutYouField.maxLength`, stored as a correction-
+    /// sourced field so it survives every `refresh()` and is the last thing
+    /// trimmed from the coach's context. Empty text removes the field.
+    public func setAboutYou(_ text: String, for field: AboutYouField) throws {
+        let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(AboutYouField.maxLength))
+        guard trimmed.isEmpty else {
+            try pinCorrection(displayText: trimmed, forKey: field.key)
+            return
+        }
+        let context = ModelContext(modelContainer)
+        let profile = try fetchOrCreateProfile(context: context)
+        profile.sections.removeAll { $0.key == field.key }
+        try context.save()
+        cachedExcludedKeys = profile.sections.excludedKeys
+    }
+
     private func fetchOrCreateProfile(context: ModelContext) throws -> KnowledgeProfile {
         // Code review (2026-09-01): propagate a real fetch failure instead of
         // swallowing it via `try?` -- treating "fetch threw" the same as "no

@@ -6199,3 +6199,29 @@ settings record needs a CloudKit schema change.
 4 snapshots (light/dark × XS/AXXXL). Mutants, each caught: winner ignores asleep time; one
 winner for the whole range; default Apple Watch; union instead of winner; summary skips the
 selection; picker writes another key.
+
+## WP-61 — About you: goals, injuries, activity preferences
+
+Owner request: fields on the You page for goals, injuries and activity preferences.
+
+**Storage (CoachKit).** `AboutYouField` (`user.goals`, `user.injuries`,
+`user.activityPreferences`) and `KnowledgeStore.setAboutYou(_:for:)`: trimmed, capped at
+`maxLength` (300), stored as a correction-sourced field; empty text removes the entry. This
+reuses what WP-19/30 already had for user goals: correction fields survive `refresh()`, sort
+ahead of every derived rank when the context is trimmed, and reach the model inside
+`HealthContext`'s "data, not instructions" block. The cap is structural (in the store)
+because user fields are the last trimmed and could otherwise crowd out health data.
+
+**You tab.** New "About you" section above "What the coach knows": three multi-line fields
+with examples in the palette's placeholder colour, one Save (enabled only with changes),
+a notice on save, and typed text kept if a save fails. The entries are filtered out of the
+facts list below so they don't appear twice. At accessibility sizes the example moves out
+of the field into a wrapping hint (a placeholder can't wrap) and the footer stacks under
+Save. Checked in the simulator at default and AXXXL text sizes. Each field reserves two
+lines: the You screen's hit-region audit (a UI test) measures the text view itself, and a
+one-line field (17 pt) failed it — a `.frame(minHeight:)` around it doesn't count.
+
+**Tests.** CoachKit 3 (survives refresh and reaches the context; cap; empty removes only
+that entry); app 2 (entries load into their own section only; Save writes changed entries
+and clears emptied ones without re-stamping untouched ones). Mutants, each caught: no cap;
+empty text not removed; not filtered from the facts list; unchanged entries rewritten.
