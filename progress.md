@@ -6479,3 +6479,9 @@ out evaluating UI queries). `buildingAHistoryWritesNothing` (no defaults notific
 the init). Mutants caught: the init writing again; the fixes undone (stress test). A
 reload-guard fix was tried and dropped: its mutants survived because `@Observable` already
 skips equal assignments.
+
+**Follow-up (owner: keep suite runs from growing).** `SyncStressUITests` costs ~30 s+ per
+run, so it skips unless `HL_RUN_STRESS=1`; `make stress` sets it (through xcodebuild's
+`TEST_RUNNER_` prefix) and runs only that test. The pinned-simulator lookup moved to
+`scripts/pinned-simulator-udid.sh`, shared by `make test` and `make stress`. Every other test
+these WPs added is a unit test measured in milliseconds.

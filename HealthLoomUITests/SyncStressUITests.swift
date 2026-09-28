@@ -5,7 +5,8 @@
 // per-minute Active Minutes / Zone Minutes volume and seeds 60 days of that
 // history, with the production-only monitors left on (no `-UITest`
 // prefix); this drives Data -> Settings -> Data -> Today during the sync
-// and times each arrival on Today.
+// and times each arrival on Today. Skipped unless `HL_RUN_STRESS=1`
+// (`make stress` sets it through xcodebuild's TEST_RUNNER_ prefix).
 
 import XCTest
 
@@ -16,6 +17,12 @@ final class SyncStressUITests: XCTestCase {
 
     @MainActor
     func testTodayStaysResponsiveWhileSyncing() throws {
+        // On demand only (`make stress`): ~30 s+ per run, kept out of the
+        // default suite so every commit and CI run doesn't pay for it.
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["HL_RUN_STRESS"] == "1",
+            "Stress test: run with `make stress`"
+        )
         let app = XCUIApplication()
         app.launchArguments = ["-HLStressVolume"]
         app.launch()

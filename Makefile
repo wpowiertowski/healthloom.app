@@ -1,4 +1,4 @@
-.PHONY: xcode test clean prune-branches check-xcodegen
+.PHONY: xcode test stress clean prune-branches check-xcodegen
 
 # Pinned generator (third-party F1): a bare `xcodegen generate` resolves
 # whatever is on PATH (2.45.4 via brew), but the committed project and
@@ -34,21 +34,7 @@ test: check-xcodegen
 		(cd Packages/$$pkg && DEVELOPER_DIR="$(XCODE_BETA)" swift test -Xswiftc -warnings-as-errors) || exit 1; \
 	done
 	xcodegen generate
-	@avail=$$(DEVELOPER_DIR="$(XCODE_BETA)" xcrun simctl list devices available \
-		| awk '/-- iOS 27\.0 --/{flag=1; next} /^--/{flag=0} flag'); \
-	udid=""; \
-	for name in "iPhone 18 Pro" "iPhone 18 Pro Max" "iPhone 17 Pro" "iPhone 17 Pro Max"; do \
-		udid=$$(printf '%s\n' "$$avail" \
-			| grep -E "^[[:space:]]*$$name \(" \
-			| grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' \
-			| head -n1 || true); \
-		if [ -n "$$udid" ]; then echo "==> simulator model: $$name"; break; fi; \
-	done; \
-	if [ -z "$$udid" ]; then \
-		echo "error: none of the pinned iPhone models is available on the iOS 27.0 runtime. Snapshot references are recorded on one model (HealthLoomTests/SnapshotAssert.swift), so this must not fall back to whatever simctl lists first -- CI pins the same list. Install one, or add the model here AND in ci.yml and re-record. Available:" >&2; \
-		printf '%s\n' "$$avail" >&2; \
-		exit 1; \
-	fi; \
+	@udid=$$(DEVELOPER_DIR="$(XCODE_BETA)" scripts/pinned-simulator-udid.sh) || exit 1; \
 	echo "==> xcodebuild build test (destination iOS Simulator $$udid)"; \
 	DEVELOPER_DIR="$(XCODE_BETA)" xcodebuild build test \
 		-project HealthLoom.xcodeproj \
@@ -65,6 +51,19 @@ test: check-xcodegen
 	# package dependencies left to break this (WP-33's snapshot tests use a
 	# local helper for exactly this reason); adding one requires it to
 	# build warning-free under this SDK first.
+
+# WP-69: the sync stress UI test (SyncStressUITests) -- on demand only, it
+# skips in `make test` and CI. Reproduces a sync's load while switching tabs
+# and fails if Today stops responding. Same pinned simulator as `test`.
+stress: check-xcodegen
+	@udid=$$(DEVELOPER_DIR="$(XCODE_BETA)" scripts/pinned-simulator-udid.sh) || exit 1; \
+	TEST_RUNNER_HL_RUN_STRESS=1 DEVELOPER_DIR="$(XCODE_BETA)" xcodebuild build test \
+		-project HealthLoom.xcodeproj \
+		-scheme HealthLoom \
+		-destination "platform=iOS Simulator,id=$$udid" \
+		-only-testing:HealthLoomUITests/SyncStressUITests \
+		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+		GCC_TREAT_WARNINGS_AS_ERRORS=YES
 
 # NOTE: clean must NOT delete HealthLoom.xcodeproj — it is tracked since
 # the Xcode Cloud repo-prep (cloud builds compile the committed project).
