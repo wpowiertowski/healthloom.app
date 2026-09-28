@@ -34,7 +34,8 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
     @Query(sort: \SyncState.dataType) private var syncStates: [SyncState]
-    @Query(sort: \LocalSample.dataType) private var localSamples: [LocalSample]
+    /// WP-67: the in-app rows' summaries, built off the main thread.
+    @State private var localSummaries: [GoogleDataType: LocalRowSummary] = [:]
     @State private var isConnectingGoogle = false
     /// WP-56: 7-day vs 30-day trends from Apple Health, per P0 row.
     @State private var trends: [GoogleDataType: RollingTrend] = [:]
@@ -55,10 +56,8 @@ struct DashboardView: View {
         }
     }
 
-    private var localOnlyRows: [(GoogleDataType, [LocalSample])] {
-        AppEnvironment.p1LocalOnlyTypes.map { type in
-            (type, localSamples.filter { $0.dataType == type.rawValue })
-        }
+    private var localOnlyRows: [(GoogleDataType, LocalRowSummary)] {
+        AppEnvironment.p1LocalOnlyTypes.map { type in (type, localSummaries[type] ?? .empty) }
     }
 
     // WP-33 follow-on: the stock `List` this screen shipped with is replaced
@@ -111,7 +110,7 @@ struct DashboardView: View {
             ThemedPanel {
                 ForEach(Array(localOnlyRows.enumerated()), id: \.element.0) { index, row in
                     if index > 0 { ThemedRowDivider() }
-                    LocalOnlyTypeRow(type: row.0, samples: row.1)
+                    LocalOnlyTypeRow(type: row.0, summary: row.1)
                 }
             }
 
@@ -138,6 +137,8 @@ struct DashboardView: View {
         // or finishes (the run's end brings new days into Apple Health).
         .task(id: appEnvironment.foregroundSync.isRunning) {
             trends = await DataTrendProvider().trends(for: AppEnvironment.p0Types)
+            localSummaries = await LocalRowSummarizer(modelContainer: appEnvironment.modelContainer)
+                .summaries(for: AppEnvironment.p1LocalOnlyTypes, now: Date(), calendar: .current)
         }
     }
 

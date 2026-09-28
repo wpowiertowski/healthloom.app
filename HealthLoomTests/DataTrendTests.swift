@@ -6,6 +6,7 @@
 
 import CoreModel
 import Foundation
+import SwiftData
 import Testing
 @testable import HealthLoom
 
@@ -129,10 +130,10 @@ import Testing
             Self.localSample(.activeZoneMinutes, start: Self.day(-2), minutes: 40),
             Self.localSample(.activeZoneMinutes, start: Self.day(-3), minutes: nil), // no value: skipped
         ]
-        let text = DataTrendText.local(
-            type: .activeZoneMinutes, samples: samples, now: Self.now,
-            calendar: Self.calendar, locale: Self.locale, unitSystem: .metric
+        let summary = LocalRowSummary.make(
+            type: .activeZoneMinutes, recent: samples, lastSample: nil, now: Self.now, calendar: Self.calendar
         )
+        let text = DataTrendText.local(type: .activeZoneMinutes, summary: summary, locale: Self.locale, unitSystem: .metric)
         #expect(text.value == "35 min")
     }
 
@@ -143,15 +144,34 @@ import Testing
             Self.localSample(.electrocardiogram, start: Self.day(-2), minutes: nil),
             Self.localSample(.electrocardiogram, start: Self.day(-45), minutes: nil),
         ]
-        let text = DataTrendText.local(
-            type: .electrocardiogram, samples: samples, now: Self.now,
-            calendar: Self.calendar, locale: Self.locale, unitSystem: .metric
+        let summary = LocalRowSummary.make(
+            type: .electrocardiogram, recent: samples, lastSample: nil, now: Self.now, calendar: Self.calendar
         )
+        let text = DataTrendText.local(type: .electrocardiogram, summary: summary, locale: Self.locale, unitSystem: .metric)
         #expect(text == DataTrendText(value: "1 recording", comparison: "last 30 days"))
-        let none = DataTrendText.local(
-            type: .irregularRhythmNotification, samples: [], now: Self.now,
-            calendar: Self.calendar, locale: Self.locale, unitSystem: .metric
-        )
+        let none = DataTrendText.local(type: .irregularRhythmNotification, summary: .empty, locale: Self.locale, unitSystem: .metric)
         #expect(none.value == "None")
+    }
+
+    // catches: the Data tab reading every in-app sample on the main thread
+    // (the WP-67 hang): the summarizer must run on its own actor, read only
+    // the last 30 days per type, and still find the newest sample.
+    @Test func theSummarizerReadsRecentSamplesOffTheMainActor() async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let context = ModelContext(container)
+        context.insert(Self.localSample(.activeZoneMinutes, start: Self.day(-1), minutes: 30))
+        context.insert(Self.localSample(.activeZoneMinutes, start: Self.day(-2), minutes: 30))
+        context.insert(Self.localSample(.activeZoneMinutes, start: Self.day(-60), minutes: 900))
+        context.insert(Self.localSample(.electrocardiogram, start: Self.day(-3), minutes: nil))
+        try context.save()
+
+        let summaries = await LocalRowSummarizer(modelContainer: container)
+            .summaries(for: [.activeZoneMinutes, .electrocardiogram, .activeMinutes], now: Self.now, calendar: Self.calendar)
+
+        let zone = try #require(summaries[.activeZoneMinutes])
+        #expect(DataTrendText.local(type: .activeZoneMinutes, summary: zone, locale: Self.locale, unitSystem: .metric).value == "30 min")
+        #expect(zone.lastSample == Self.day(-1).addingTimeInterval(900))
+        #expect(summaries[.electrocardiogram]?.recentCount == 1)
+        #expect(summaries[.activeMinutes] == LocalRowSummary(trend: nil, recentCount: 0, lastSample: nil))
     }
 }

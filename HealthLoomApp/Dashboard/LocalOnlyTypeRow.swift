@@ -42,7 +42,8 @@ import SyncKit
 
 struct LocalOnlyTypeRow: View {
     let type: GoogleDataType
-    let samples: [LocalSample]
+    /// Computed off the main thread (WP-67, `LocalRowSummarizer`).
+    let summary: LocalRowSummary
     @Environment(\.locale) private var locale
 
     // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
@@ -94,16 +95,14 @@ struct LocalOnlyTypeRow: View {
     private var trend: DataTrendText {
         DataTrendText.local(
             type: type,
-            samples: samples,
-            now: Date(),
-            calendar: .current,
+            summary: summary,
             locale: locale,
             unitSystem: ContextAssembler.defaultUnitSystem(for: locale)
         )
     }
 
     private var lastSampleText: String {
-        guard let last = samples.map(\.end).max() else { return "No data yet" }
+        guard let last = summary.lastSample else { return "No data yet" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return "Last sample \(formatter.localizedString(for: last, relativeTo: Date()))"
@@ -114,17 +113,8 @@ struct LocalOnlyTypeRow: View {
     List {
         LocalOnlyTypeRow(
             type: .electrocardiogram,
-            samples: [
-                LocalSample(
-                    externalID: "preview-ecg-1",
-                    dataType: GoogleDataType.electrocardiogram.rawValue,
-                    payloadJSON: Data(),
-                    start: Date().addingTimeInterval(-3600),
-                    end: Date().addingTimeInterval(-3590),
-                    source: "Apple Watch"
-                ),
-            ]
+            summary: LocalRowSummary(trend: nil, recentCount: 1, lastSample: Date().addingTimeInterval(-3590))
         )
-        LocalOnlyTypeRow(type: .activeZoneMinutes, samples: [])
+        LocalOnlyTypeRow(type: .activeZoneMinutes, summary: .empty)
     }
 }
