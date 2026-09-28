@@ -29,6 +29,10 @@ final class WatchPriorityPreferences {
         self.isEnabled = UserDefaultsWatchPriorityPreference(defaults: defaults).isWatchPriorityEnabled()
     }
 
+    /// The Settings row's options (WP-66: a toggle until then): Apple Health
+    /// = watch priority on, Keep both = off.
+    static let options: [(value: Bool, title: String)] = [(true, "Apple Health"), (false, "Keep both")]
+
     func setEnabled(_ enabled: Bool) {
         defaults.set(enabled, forKey: UserDefaultsWatchPriorityPreference.defaultsKey)
         isEnabled = enabled

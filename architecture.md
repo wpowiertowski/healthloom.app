@@ -270,9 +270,10 @@ dense HR), so it is the priority source wherever it exists; Fitbit fills everyth
    Every sync therefore re-evaluates its lookback window (D3) against the *current*
    coverage index and retroactively deletes app-written samples/workouts that now conflict
    — the same delete-by-external-ID machinery as D4.
-5. **User control:** Settings toggle "Prefer workouts already in Apple Health" (named
-   "Prefer Apple Watch during workouts" before WP-55), default ON.
-   OFF ⇒ everything imports and Apple Health's own source-priority ordering governs.
+5. **User control:** Settings → Workout source: Apple Health | Keep both, default Apple
+   Health (WP-66; a toggle named "Prefer workouts already in Apple Health" until then, and
+   "Prefer Apple Watch during workouts" before WP-55). Keep both ⇒ everything imports and
+   Apple Health's own source-priority ordering governs.
 6. **Coach:** no special casing needed — `KnowledgeStore` reads HealthKit, so watch
    workouts are first-class inputs; Fitbit-only supplements come via `LocalSample`.
    The profile describes activities from the consolidated view, never both copies.

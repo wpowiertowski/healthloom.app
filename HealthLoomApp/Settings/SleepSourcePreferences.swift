@@ -8,7 +8,6 @@
 
 import Foundation
 import Observation
-import SwiftUI
 import SyncKit
 
 @MainActor
@@ -27,47 +26,12 @@ final class SleepSourcePreferences {
         self.source = source
     }
 
-    /// Picker label for each source.
-    static func label(for source: SleepSourcePreference) -> String {
+    /// The Settings row's options (`ThemedSegmentedRow`).
+    static let options: [(value: SleepSourcePreference, title: String)] = SleepSourcePreference.allCases.map { source in
         switch source {
-        case .fitbit: "Fitbit"
-        case .appleWatch: "Apple Watch"
+        case .fitbit: (source, "Fitbit")
+        case .appleWatch: (source, "Apple Watch")
         }
     }
 }
 
-/// The Settings row: label plus a Fitbit / Apple Watch segmented picker,
-/// side by side when they fit and stacked at large text sizes.
-struct SleepSourceRow: View {
-    @Binding var source: SleepSourcePreference
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                label
-                Spacer(minLength: 8)
-                picker
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                label
-                picker
-            }
-        }
-        .padding(.horizontal, 16).padding(.vertical, 11)
-    }
-
-    private var label: some View {
-        Text("Sleep source")
-            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
-            .foregroundStyle(Theme.ink)
-    }
-
-    private var picker: some View {
-        ThemedSegmentedControl(
-            options: SleepSourcePreference.allCases.map { ($0, SleepSourcePreferences.label(for: $0)) },
-            selection: $source,
-            accessibilityIdentifier: "settings.sleepSource.picker"
-        )
-        .accessibilityLabel("Sleep source")
-    }
-}
