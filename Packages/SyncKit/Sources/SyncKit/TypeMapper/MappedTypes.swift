@@ -166,6 +166,10 @@ nonisolated public struct MappedMetadata: Sendable, Hashable {
     /// Set on heart rate variability samples only: the statistic the value
     /// is (WP-62).
     public var hrvStatistic: HRVStatistic?
+    /// The time zone the point was recorded in, when Google says (WP-65):
+    /// written as `HKMetadataKeyTimeZone`, so a night is judged on the clock
+    /// it was slept by, even after travel.
+    public var timeZoneIdentifier: String?
 
     /// The metadata key `externalID` is written under. Its presence marks
     /// an object this app imported: the conflict resolver's coverage query
@@ -176,11 +180,18 @@ nonisolated public struct MappedMetadata: Sendable, Hashable {
     /// Metadata key for `hrvStatistic`, value "RMSSD" or "SDNN" (WP-62).
     public static let hrvStatisticKey = "healthloom.hrvStatistic"
 
-    public init(externalUUID: String, externalID: String, sourceDevice: String?, hrvStatistic: HRVStatistic? = nil) {
+    public init(
+        externalUUID: String,
+        externalID: String,
+        sourceDevice: String?,
+        hrvStatistic: HRVStatistic? = nil,
+        timeZoneIdentifier: String? = nil
+    ) {
         self.externalUUID = externalUUID
         self.externalID = externalID
         self.sourceDevice = sourceDevice
         self.hrvStatistic = hrvStatistic
+        self.timeZoneIdentifier = timeZoneIdentifier
     }
 
     /// Workout-attachment roles `saveWorkout` stamps (round-8 item 2):

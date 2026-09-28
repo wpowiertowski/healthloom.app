@@ -29,6 +29,12 @@ nonisolated public struct GoogleDataPoint: Sendable, Hashable {
     /// type; this package only preserves it verbatim.
     public var sessionPayload: Data?
 
+    /// The wearer's UTC offset in seconds when the point was recorded, for
+    /// types that send one (sample-time points: `sampleTime.utcOffset`);
+    /// `nil` otherwise. Lets a night be judged in the time zone it was slept
+    /// in, not the phone's current one (WP-65).
+    public var utcOffset: TimeInterval?
+
     public init(
         id: String,
         dataType: GoogleDataType,
@@ -36,7 +42,8 @@ nonisolated public struct GoogleDataPoint: Sendable, Hashable {
         end: Date,
         source: DataSource,
         values: [String: Double],
-        sessionPayload: Data? = nil
+        sessionPayload: Data? = nil,
+        utcOffset: TimeInterval? = nil
     ) {
         self.id = id
         self.dataType = dataType
@@ -45,5 +52,6 @@ nonisolated public struct GoogleDataPoint: Sendable, Hashable {
         self.source = source
         self.values = values
         self.sessionPayload = sessionPayload
+        self.utcOffset = utcOffset
     }
 }

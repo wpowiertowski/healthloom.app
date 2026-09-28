@@ -77,6 +77,25 @@ struct GoogleDataPointDecodingTests {
         #expect(first.start == first.end)
     }
 
+    // catches: the wearer's UTC offset dropped (a night slept abroad would be
+    // judged on the phone's current clock), or a malformed or absurd offset
+    // accepted (WP-65).
+    @Test func sampleTimeCarriesItsUTCOffset() throws {
+        let page = try TestClientFactory.inertClient().decodePage(Data("""
+        {"dataPoints": [
+          {"heartRateVariability": {"sampleTime": {"physicalTime": "2026-09-28T07:50:00Z", "utcOffset": "-14400s"},
+            "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 61}},
+          {"heartRateVariability": {"sampleTime": {"physicalTime": "2026-09-28T07:55:00Z", "utcOffset": "banana"},
+            "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 62}},
+          {"heartRateVariability": {"sampleTime": {"physicalTime": "2026-09-28T08:00:00Z", "utcOffset": "90000s"},
+            "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 63}},
+          {"heartRateVariability": {"sampleTime": {"physicalTime": "2026-09-28T08:05:00Z"},
+            "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 64}}
+        ]}
+        """.utf8), type: .heartRateVariability)
+        #expect(page.points.map(\.utcOffset) == [-14_400, nil, nil, nil])
+    }
+
     // catches: a daily summary not spanning its civil day in the user's zone.
     @Test func dailySummarySpansItsCivilDay() async throws {
         var config = GoogleHealthClientConfig()
