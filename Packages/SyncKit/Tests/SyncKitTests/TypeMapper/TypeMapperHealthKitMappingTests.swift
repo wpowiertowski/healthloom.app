@@ -43,6 +43,9 @@ import Testing
     @Test func storedMetadataKeysKeepTheirSpelling() {
         #expect(MappedMetadata.externalIDKey == "healthloom.externalID")
         #expect(MappedMetadata.sourceDeviceKey == "healthloom.sourceDevice")
+        #expect(MappedMetadata.hrvStatisticKey == "healthloom.hrvStatistic")
+        #expect(HRVStatistic.rmssd.rawValue == "RMSSD")
+        #expect(HRVStatistic.sdnn.rawValue == "SDNN")
     }
 
     @Test func heartRateMapsToRealQuantitySample() {
@@ -181,15 +184,16 @@ import Testing
         #expect(hkSample.quantity == HKQuantity(unit: bpmUnit, doubleValue: 52))
     }
 
-    /// Confirms HRV maps to `.localOnly` through the real HK-wrapping
-    /// `map(_:)`, never to a `heartRateVariabilitySDNN` sample -- the
-    /// HealthKit-facing counterpart of `heartRateVariabilityRoutesToLocalOnlyNotSDNN`
-    /// (TypeMapperGoldenTests.swift).
-    @Test func heartRateVariabilityMapsToLocalOnlyThroughRealHealthKitLayer() {
-        guard case .localOnly = TypeMapper.map(TypeMapperFixtures.heartRateVariabilityPoint()) else {
-            Issue.record("expected .localOnly")
+    // catches: the HealthKit layer dropping the statistic tag or building
+    // the sample in the wrong unit.
+    @Test func heartRateVariabilityMapsToARealSDNNTypedSample() {
+        guard case .quantity(let hkSample) = TypeMapper.map(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 38.2)) else {
+            Issue.record("expected .quantity")
             return
         }
+        #expect(hkSample.quantityType == HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN))
+        #expect(hkSample.quantity == HKQuantity(unit: .secondUnit(with: .milli), doubleValue: 38.2))
+        #expect(hkSample.metadata?[MappedMetadata.hrvStatisticKey] as? String == "RMSSD")
     }
 
     @Test func oxygenSaturationMapsToRealQuantitySampleAsFraction() {

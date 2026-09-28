@@ -65,15 +65,10 @@ final class AppEnvironment {
     ]
 
     /// WP-15 (implementation-plan.md): every type the historical-backfill
-    /// walk covers -- deliberately the broad P1 set (every `GoogleDataType`
-    /// with an actual write destination), not just `p0Types`, mirroring
-    /// `HealthLoomApp.swift`'s own `syncableTypes` derivation for WP-16's
-    /// background sync (`GoogleDataType.allCases.filter { $0.writability !=
-    /// .skip }`) -- kept as its own constant here (rather than importing
-    /// that file's private list, which this WP's scope doesn't touch
-    /// anyway) since backfill and background-sync are independent
-    /// consumers of the same underlying fact.
-    static let backfillTypes: [GoogleDataType] = GoogleDataType.allCases.filter { $0.writability != .skip }
+    /// walk covers -- deliberately the broad P1 set, not just `p0Types`:
+    /// `SyncPreferences.syncableTypes`, the one list background sync and
+    /// Settings use too (WP-62; each used to derive its own copy).
+    static let backfillTypes: [GoogleDataType] = SyncPreferences.syncableTypes
 
     let modelContainer: ModelContainer
     /// True when the on-disk store failed to open and the app is running

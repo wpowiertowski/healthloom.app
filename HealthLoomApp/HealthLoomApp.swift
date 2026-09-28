@@ -40,9 +40,9 @@ struct HealthLoomApp: App {
         // `BackgroundSyncLaunchContext` is captured here -- reading
         // `environment.modelContainer` / `environment.syncEngine` (both
         // MainActor-isolated properties of `AppEnvironment`) and
-        // `GoogleDataType.allCases.filter { $0.writability != .skip }`
-        // (`.writability` is itself a MainActor-isolated computed property,
-        // CoreModel's `.defaultIsolation(MainActor.self)`) is a same-actor,
+        // `SyncPreferences.syncableTypes` (`.writability` behind it is a
+        // MainActor-isolated computed property, CoreModel's
+        // `.defaultIsolation(MainActor.self)`) is a same-actor,
         // synchronous read: `init()` runs on `MainActor` (this whole app
         // target's implicit default isolation, `SWIFT_DEFAULT_ACTOR_ISOLATION:
         // MainActor` in project.yml), so no `await` is needed here. Once
@@ -73,7 +73,7 @@ struct HealthLoomApp: App {
             // alongside the P0 four and the four `.localOnly` types, and
             // never drifts from CoreModel's table as future types are
             // added.
-            syncableTypes: GoogleDataType.allCases.filter { $0.writability != .skip },
+            syncableTypes: SyncPreferences.syncableTypes,
             hasGoogleCredentials: { await googleAuthManager.hasStoredRefreshToken() }
         )
         HealthLoomBackgroundSync.registerLaunchHandler(context: backgroundSyncContext)
@@ -133,10 +133,16 @@ struct HealthLoomApp: App {
             // sync on their own via the change monitor.
             if !appEnvironment.launchConfiguration.isUITest {
                 let syncEngine = appEnvironment.syncEngine
+                let backfill = appEnvironment.backfillCoordinator
+                let container = appEnvironment.modelContainer
                 Task {
                     await DuplicateWriteRepair.runIfNeeded { type in
                         try await syncEngine.removeDuplicateWrites(of: type)
                     }
+                    await HRVHealthKitMigration.runIfNeeded(
+                        restartHistory: { try await backfill.restartHistory(for: .heartRateVariability) },
+                        deleteLocalRows: { try HRVHealthKitMigration.deleteLocalRows(in: container) }
+                    )
                 }
                 appEnvironment.cloudSyncMonitor.start()
                 if appEnvironment.foregroundReconcileIfDue() {

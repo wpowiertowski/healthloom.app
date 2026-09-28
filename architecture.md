@@ -107,7 +107,11 @@ daily-summary types because it stitches days correctly across DST/time-zone trav
 **D2 — No local mirror of HealthKit-writable data.**
 Writable types flow Google → HealthKit directly; the app persists only bookkeeping
 (`SyncState`) — not sample values. `LocalSample` exists **only** for types HealthKit can't
-accept (ECG, Active Zone Minutes, Irregular Rhythm Notifications). This keeps the app's
+accept (ECG, Active Zone Minutes, Irregular Rhythm Notifications). HRV was an exception until
+WP-62: Fitbit measures RMSSD and Apple Health's one HRV type is SDNN, so it stayed in-app.
+The owner chose to write it to that type, each sample tagged `healthloom.hrvStatistic`
+(RMSSD, or SDNN when Google sends one); Apple Health's HRV then mixes the two statistics
+when a Watch is also worn. This keeps the app's
 attack/privacy surface minimal and avoids a three-way consistency problem. The
 `KnowledgeStore` reads back from HealthKit (+ `LocalSample`) as the single local source.
 

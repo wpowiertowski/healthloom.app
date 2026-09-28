@@ -84,10 +84,7 @@ import Testing
     }
 
     /// A reversed window is never merely "clamped into shape" -- it must be
-    /// dropped, for every P0 and WP-11 type. (`.heartRateVariabilityPoint`
-    /// is excluded: it always decides `.localOnly` regardless of its
-    /// window, per `decideHeartRateVariability` -- there is no dated sample
-    /// for a reversed window to affect, so it isn't a meaningful case here.)
+    /// dropped, for every P0 and WP-11 type, and HRV since WP-62 wrote it.
     @Test func reversedWindowIsAlwaysDropped() {
         let start = TypeMapperFixtures.date("2026-07-01T01:00:00Z")
         let end = TypeMapperFixtures.date("2026-07-01T00:00:00Z")
@@ -100,6 +97,7 @@ import Testing
         #expect(TypeMapper.decide(TypeMapperFixtures.floorsPoint(start: start, end: end)) == .skip)
         #expect(TypeMapper.decide(TypeMapperFixtures.activeEnergyBurnedPoint(start: start, end: end)) == .skip)
         #expect(TypeMapper.decide(TypeMapperFixtures.restingHeartRatePoint(start: start, end: end)) == .skip)
+        #expect(TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(start: start, end: end)) == .skip)
         #expect(TypeMapper.decide(TypeMapperFixtures.oxygenSaturationPoint(start: start, end: end)) == .skip)
         #expect(TypeMapper.decide(TypeMapperFixtures.respiratoryRatePoint(start: start, end: end)) == .skip)
         #expect(TypeMapper.decide(TypeMapperFixtures.vo2MaxPoint(start: start, end: end)) == .skip)

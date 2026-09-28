@@ -7,12 +7,10 @@
 // day twice. The loop no longer does (`PagePipeline.processPages` carries
 // the set across spans); this clears what it already wrote.
 //
-// Once per install, marked done only after it succeeds: a locked phone or
-// a HealthKit error leaves it to run again on the next foreground.
+// Once per install (`OneTimeTask`).
 
 import CoreModel
 import Foundation
-import os
 
 enum DuplicateWriteRepair {
     static let defaultsKey = "com.healthloom.repair.duplicateDailySummaries"
@@ -21,22 +19,16 @@ enum DuplicateWriteRepair {
     /// `GoogleDataTypeSchema`) -- the only ones the span overlap duplicated.
     static let affectedTypes: [GoogleDataType] = [.dailyRestingHeartRate]
 
-    private static let logger = Logger(subsystem: "app.healthloom", category: "DuplicateRepair")
-
     static func runIfNeeded(
         defaults: UserDefaults = .standard,
         repair: (GoogleDataType) async throws -> Int
     ) async {
-        guard !defaults.bool(forKey: defaultsKey) else { return }
-        do {
+        await OneTimeTask.runIfNeeded(key: defaultsKey, defaults: defaults) {
             var removed = 0
             for type in affectedTypes {
                 removed += try await repair(type)
             }
-            defaults.set(true, forKey: defaultsKey)
-            logger.log("Removed \(removed, privacy: .public) duplicate daily summaries")
-        } catch {
-            logger.notice("Duplicate repair deferred: \(String(describing: error), privacy: .public)")
+            return "removed \(removed) duplicate daily summaries"
         }
     }
 }

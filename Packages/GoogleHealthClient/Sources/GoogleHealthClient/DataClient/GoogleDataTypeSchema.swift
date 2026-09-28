@@ -240,3 +240,14 @@ nonisolated struct GoogleDataTypeSchema: Sendable {
         return String(first) + parts.dropFirst().map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined()
     }
 }
+
+extension GoogleDataType {
+    /// Whether Google returns this type as data points at all (WP-62).
+    /// `food`, `total_calories` and `calories_in_heart_rate_zone` don't;
+    /// asking for them fails with `.notAvailableFromGoogle` every time, so
+    /// the app leaves them out of every sync instead of logging an error
+    /// per run.
+    public var isReadableFromGoogle: Bool {
+        GoogleDataTypeSchema.schema(for: self) != nil
+    }
+}

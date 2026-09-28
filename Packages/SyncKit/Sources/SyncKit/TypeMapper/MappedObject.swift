@@ -128,6 +128,9 @@ extension MappedMetadata {
         if let sourceDevice {
             result[Self.sourceDeviceKey] = sourceDevice
         }
+        if let hrvStatistic {
+            result[Self.hrvStatisticKey] = hrvStatistic.rawValue
+        }
         return result
     }
 }
@@ -191,6 +194,8 @@ extension MappedQuantitySample {
         case .vo2MaxUnit:
             return HKUnit.literUnit(with: .milli)
                 .unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .minute()))
+        case .millisecond:
+            return .secondUnit(with: .milli)
         }
     }
 

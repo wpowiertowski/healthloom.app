@@ -117,9 +117,8 @@ nonisolated public protocol BackfillHorizonRecordStore: Sendable {
     /// blocks satisfying the requirement -- see SyncEngineTypes.swift's
     /// header for the same rationale applied there.
     nonisolated func completedHorizon(for type: GoogleDataType) -> BackfillHorizon?
-    /// Records that `type`'s backfill has fully completed `horizon` (or
-    /// clears the record when `nil` -- not currently used by
-    /// `BackfillCoordinator` but kept for symmetry/testability).
+    /// Records that `type`'s backfill has fully completed `horizon`, or
+    /// clears the record when `nil` (`BackfillCoordinator.restartHistory`).
     nonisolated func setCompletedHorizon(_ horizon: BackfillHorizon?, for type: GoogleDataType)
 }
 

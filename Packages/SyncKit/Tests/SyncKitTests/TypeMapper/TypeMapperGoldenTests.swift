@@ -167,25 +167,36 @@ import Testing
         #expect(sample.end == TypeMapperFixtures.date("2026-07-02T00:00:00Z"))
     }
 
-    /// heart-rate-variability.json's `hrv-0001` -> `.localOnly`, **not**
-    /// `HKQuantityTypeIdentifierHeartRateVariabilitySDNN` -- WP-11's pinned
-    /// decision (base-knowledge.md gives no way to confirm Google's HRV
-    /// metric is SDNN rather than RMSSD; see `decideHeartRateVariability`'s
-    /// doc comment in TypeMapper.swift for the full reasoning). This is the
-    /// one row in this suite where CoreModel's writability table names an
-    /// available HealthKit target (`GoogleDataType.heartRateVariability
-    /// .writability`) that `TypeMapper` deliberately never uses.
-    @Test func heartRateVariabilityRoutesToLocalOnlyNotSDNN() {
-        let point = TypeMapperFixtures.heartRateVariabilityPoint()
-        #expect(TypeMapper.decide(point) == .localOnly)
-        // Confirms the writability table *does* declare an available
-        // target -- this test is asserting TypeMapper's deliberate
-        // override of that availability, not a routing bug upstream.
-        if case .healthKit(let identifier) = GoogleDataType.heartRateVariability.writability {
-            #expect(identifier == "HKQuantityTypeIdentifierHeartRateVariabilitySDNN")
-        } else {
-            Issue.record("expected CoreModel's writability table to still declare a healthKit target")
+    // catches: HRV kept out of Apple Health (the WP-11 routing), a unit
+    // error (seconds for ms), or an RMSSD sample written without saying
+    // it's RMSSD under a type named SDNN.
+    @Test func heartRateVariabilityWritesRMSSDTaggedUnderTheSDNNType() {
+        let decision = TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 38.2))
+        guard case .quantity(let sample) = decision else {
+            Issue.record("expected .quantity, got \(decision)"); return
         }
+        #expect(sample.healthKitIdentifier == "HKQuantityTypeIdentifierHeartRateVariabilitySDNN")
+        #expect(sample.unit == .millisecond)
+        #expect(sample.value == 38.2)
+        #expect(sample.metadata.hrvStatistic == .rmssd)
+    }
+
+    // catches: preferring RMSSD when Google also sends a real SDNN, which
+    // is what the Apple Health type actually means.
+    @Test func aTrueSDNNWinsWhenGoogleSendsOne() {
+        let decision = TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 38.2, sdnn: 52))
+        guard case .quantity(let sample) = decision else {
+            Issue.record("expected .quantity, got \(decision)"); return
+        }
+        #expect(sample.value == 52)
+        #expect(sample.metadata.hrvStatistic == .sdnn)
+    }
+
+    // catches: writing a missing, zero or unit-error value as HRV.
+    @Test func implausibleHRVIsSkipped() {
+        #expect(TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: nil)) == .skip)
+        #expect(TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 0)) == .skip)
+        #expect(TypeMapper.decide(TypeMapperFixtures.heartRateVariabilityPoint(rmssd: 38_200)) == .skip)
     }
 
     /// oxygen-saturation.json's `spo2-0001` -> `HKQuantityTypeIdentifierOxygenSaturation`,

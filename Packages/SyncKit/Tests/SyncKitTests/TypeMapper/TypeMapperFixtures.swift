@@ -201,20 +201,20 @@ enum TypeMapperFixtures {
         )
     }
 
-    /// Mirrors `heart-rate-variability.json`'s `hrv-0001` point. Value field
-    /// is `rmssd` (not `values["rmssd"]` read by any `decide` function --
-    /// see `decideHeartRateVariability`'s doc comment: this type always
-    /// routes to `.localOnly` regardless of its content, so the field name
-    /// only documents this session's belief about what Google's metric
-    /// actually is).
+    /// Mirrors `heart-rate-variability.json`'s point: the schema's out keys
+    /// `rmssd_ms` and, when Google sends one, `sdnn_ms` (WP-62).
     static func heartRateVariabilityPoint(
         id: String = "hrv-0001",
         start: Date = date("2026-07-09T03:00:00Z"),
         end: Date = date("2026-07-09T03:00:00Z"),
-        rmssd: Double = 38.2,
+        rmssd: Double? = 38.2,
+        sdnn: Double? = nil,
         deviceDisplayName: String? = "Fitbit Air"
     ) -> GoogleDataPoint {
-        GoogleDataPoint(
+        var values: [String: Double] = [:]
+        values["rmssd_ms"] = rmssd
+        values["sdnn_ms"] = sdnn
+        return GoogleDataPoint(
             id: id,
             dataType: .heartRateVariability,
             start: start,
@@ -224,7 +224,7 @@ enum TypeMapperFixtures {
                 deviceDisplayName: deviceDisplayName,
                 recordingMethod: "AUTOMATICALLY_RECORDED"
             ),
-            values: ["rmssd": rmssd]
+            values: values
         )
     }
 
