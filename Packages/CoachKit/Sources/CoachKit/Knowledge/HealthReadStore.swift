@@ -58,6 +58,7 @@ public protocol HealthReadStore: Sendable {
 
 #if canImport(HealthKit)
 import HealthKit
+import SyncKit
 
 /// The real `HealthReadStore` adapter. Every method is a thin, direct
 /// translation into `HKStatisticsCollectionQuery`/`HKSampleQuery`, bridged to
@@ -79,14 +80,22 @@ import HealthKit
 nonisolated public final class HealthKitReadStore: HealthReadStore, Sendable {
     private let healthStore: HKHealthStore
     private let calendar: Calendar
+    /// Read at every sleep query, so a Settings change applies to the next
+    /// refresh (WP-60).
+    private let sleepSource: @Sendable () -> SleepSourcePreference
 
     /// `HKHealthStore` is `Sendable`; shared with `HealthKitAuth`'s "one
     /// store per app" posture (HealthKitAuth.swift) is left to the caller --
     /// this type takes its own store by default for standalone testability,
     /// mirroring `HealthKitStore`'s init.
-    public init(healthStore: HKHealthStore = HKHealthStore(), calendar: Calendar = .current) {
+    public init(
+        healthStore: HKHealthStore = HKHealthStore(),
+        calendar: Calendar = .current,
+        sleepSource: @escaping @Sendable () -> SleepSourcePreference = { SleepSourcePreference.current() }
+    ) {
         self.healthStore = healthStore
         self.calendar = calendar
+        self.sleepSource = sleepSource
     }
 
     public func dailySteps(from start: Date, to end: Date) async -> [DailyQuantityValue] {
@@ -124,10 +133,17 @@ nonisolated public final class HealthKitReadStore: HealthReadStore, Sendable {
         // segment that starts before the window but extends into it, which
         // no test built against the mock could ever catch.
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [.strictStartDate])
-        let samples = await querySamples(ofType: type, matching: predicate)
-        return samples.compactMap { sample -> SleepStageSegment? in
-            guard let category = sample as? HKCategorySample,
-                  let stage = Self.sleepStage(forRawValue: category.value) else { return nil }
+        let samples = await querySamples(ofType: type, matching: predicate).compactMap { $0 as? HKCategorySample }
+        // WP-60: each night's preferred source only -- the coach reads the
+        // same nights as Today, readiness and the Data tab.
+        let winners = SleepSourceSelection.winningSources(
+            of: samples, preference: sleepSource(), calendar: calendar,
+            start: \.startDate,
+            origin: { SleepSourceSelection.origin(of: $0) },
+            isAsleep: { Self.sleepStage(forRawValue: $0.value) != nil }
+        )
+        return winners.compactMap { category -> SleepStageSegment? in
+            guard let stage = Self.sleepStage(forRawValue: category.value) else { return nil }
             return SleepStageSegment(start: category.startDate, end: category.endDate, stage: stage)
         }
     }

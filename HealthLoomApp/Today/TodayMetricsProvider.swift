@@ -12,8 +12,8 @@
 //   - the latest sample (heart rate, blood oxygen, weight) via a
 //     limit-1 descending `HKSampleQuery`;
 //   - last night's asleep total (sleep) -- `LastNightSleep`, the readiness
-//     score's night: asleep stages (unspecified/core/deep/REM, never
-//     inBed/awake) between 6 pm yesterday and noon, overlaps counted once.
+//     score's night: the preferred source's asleep stages (unspecified/
+//     core/deep/REM, never inBed/awake) between 6 pm yesterday and noon.
 //
 // Error/empty posture, same as `ActivitiesProvider`: any per-kind query
 // failure (including read authorization never granted -- reads never
@@ -24,6 +24,7 @@
 import CoreModel
 import Foundation
 import HealthKit
+import SyncKit
 
 @MainActor
 final class TodayMetricsProvider {
@@ -216,6 +217,7 @@ final class TodayMetricsProvider {
               let window = LastNightSleep.window(now: now, calendar: calendar)
         else { return nil }
         let predicate = HKQuery.predicateForSamples(withStart: window.start, end: window.end, options: [])
+        let preference = SleepSourcePreference.current()
         return await withCheckedContinuation { (continuation: CheckedContinuation<TodayMetricReading?, Never>) in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -223,7 +225,7 @@ final class TodayMetricsProvider {
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                let night = LastNightSleep.summary(of: SleepStageSample.from(samples), in: window)
+                let night = LastNightSleep.summary(of: SleepStageSample.from(samples), in: window, preference: preference)
                 continuation.resume(returning: night.map { TodayMetricReading(value: $0.asleep, date: $0.wokeAt) })
             }
             healthStore.execute(query)

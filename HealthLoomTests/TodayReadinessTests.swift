@@ -11,6 +11,7 @@ import CoreModel
 import Foundation
 import Testing
 @testable import HealthLoom
+import SyncKit
 
 @Suite("ReadinessInputsProvider.assemble")
 struct ReadinessAssembleTests {
@@ -287,8 +288,8 @@ struct LastNightSleepTests {
         )
     }
 
-    static func stage(_ value: Int, _ startHours: Double, _ endHours: Double) -> SleepStageSample {
-        SleepStageSample(value: value, interval: interval(startHours, endHours))
+    static func stage(_ value: Int, _ startHours: Double, _ endHours: Double, from origin: SleepOrigin = .fitbit) -> SleepStageSample {
+        SleepStageSample(value: value, interval: interval(startHours, endHours), origin: origin)
     }
 
     static var utc: Calendar {
@@ -297,17 +298,18 @@ struct LastNightSleepTests {
         return calendar
     }
 
-    // catches: a night recorded by both an Apple Watch and a Fitbit counting
-    // twice (14 h instead of 7), in hours or in efficiency. The in-bed
-    // sample makes the span 8 h: the double count (13.5 h ÷ 8) would clamp
-    // to 100%, the right answer is 7/8.
+    // catches: overlapping stages counting twice (14 h instead of 7), in
+    // hours or in efficiency. The in-bed sample makes the span 8 h: the
+    // double count (13.5 h ÷ 8) would clamp to 100%, the right answer is
+    // 7/8. (One source here; two devices' nights are a source choice, see
+    // below.)
     @Test func aNightRecordedTwiceCountsOnce() throws {
         let samples = [
             Self.stage(0, -1, 0),     // inBed
-            Self.stage(3, 0, 7),      // watch asleepCore
-            Self.stage(1, 0.5, 7),    // fitbit asleepUnspecified
+            Self.stage(3, 0, 7),      // asleepCore
+            Self.stage(1, 0.5, 7),    // asleepUnspecified, overlapping
         ]
-        let summary = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight))
+        let summary = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight, preference: .fitbit))
         #expect(summary.asleep == 7.0 * 3600)
         #expect(summary.efficiency == 7.0 / 8.0)
         #expect(summary.wokeAt == Self.interval(0, 7).end)
@@ -322,10 +324,27 @@ struct LastNightSleepTests {
             Self.stage(2, 3, 3.5),    // awake
             Self.stage(5, 3.5, 7.5),  // asleepREM
         ]
-        let summary = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight))
+        let summary = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight, preference: .fitbit))
         #expect(summary.asleep == 7.0 * 3600)
         #expect(summary.efficiency == 7.0 / 8.0)
-        #expect(LastNightSleep.summary(of: [Self.stage(2, 0, 1)], in: Self.wholeNight) == nil)
+        #expect(LastNightSleep.summary(of: [Self.stage(2, 0, 1)], in: Self.wholeNight, preference: .fitbit) == nil)
+    }
+
+    // catches: the Fitbit's awake stretch counted as sleep because the
+    // watch called it asleep (the WP-57 union), and the preference not
+    // choosing whose night it is (WP-60).
+    @Test func oneSourceWinsANightBothRecorded() throws {
+        let samples = [
+            Self.stage(3, 0, 3, from: .fitbit),
+            Self.stage(2, 3, 4, from: .fitbit),       // awake 40+ min
+            Self.stage(3, 4, 7, from: .fitbit),
+            Self.stage(3, 0, 7.5, from: .appleWatch), // one long asleep stretch
+        ]
+        let fitbit = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight, preference: .fitbit))
+        #expect(fitbit.asleep == 6.0 * 3600)
+        #expect(fitbit.efficiency == 6.0 / 7.0)
+        let watch = try #require(LastNightSleep.summary(of: samples, in: Self.wholeNight, preference: .appleWatch))
+        #expect(watch.asleep == 7.5 * 3600)
     }
 
     // catches: a sample straddling the window edge adding its full length --
@@ -337,7 +356,7 @@ struct LastNightSleepTests {
             Self.stage(3, -6.5, -4.5),  // nap 4:30-6:30 pm; the window opens at 6 pm
             Self.stage(3, 0, 7),
         ]
-        let summary = try #require(LastNightSleep.summary(of: samples, in: window))
+        let summary = try #require(LastNightSleep.summary(of: samples, in: window, preference: .fitbit))
         #expect(summary.asleep == 7.5 * 3600)
         #expect(summary.efficiency == 7.5 / 12)
     }
@@ -370,7 +389,7 @@ struct LastNightSleepTests {
     @Test func runsOffTheMainActor() async {
         let samples = [Self.stage(3, 0, 7), Self.stage(1, 1, 8)]
         let window = Self.wholeNight
-        let asleep = await Task.detached { LastNightSleep.summary(of: samples, in: window)?.asleep }.value
+        let asleep = await Task.detached { LastNightSleep.summary(of: samples, in: window, preference: .fitbit)?.asleep }.value
         #expect(asleep == 8.0 * 3600)
         let calendar = Self.utc
         let now = Self.bedtime
@@ -406,5 +425,20 @@ struct ReadinessStrainTests {
             (start: Self.priorDay.start.addingTimeInterval(-3600), kcal: 900.0),
         ]
         #expect(ReadinessInputsProvider.priorDayKcal(workouts: workouts, priorDay: Self.priorDay) == 450)
+    }
+}
+
+@Suite("SleepSourcePreferences")
+@MainActor
+struct SleepSourcePreferencesTests {
+    // catches: the picker writing a key the sleep readers don't read (they
+    // call `SleepSourcePreference.current()`), or not persisting at all.
+    @Test func thePickerWritesWhatTheReadersRead() throws {
+        let ephemeral = try EphemeralDefaults(prefix: "sleepsource")
+        let preferences = SleepSourcePreferences(defaults: ephemeral.defaults)
+        #expect(preferences.source == .fitbit)
+        preferences.setSource(.appleWatch)
+        #expect(SleepSourcePreference.current(defaults: ephemeral.defaults) == .appleWatch)
+        #expect(SleepSourcePreferences(defaults: ephemeral.defaults).source == .appleWatch)
     }
 }

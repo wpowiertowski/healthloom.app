@@ -10,8 +10,8 @@
 //   - HRV ratio: latest SDNN sample vs its 30-day average baseline;
 //   - resting-HR delta: latest resting HR vs its 30-day average baseline;
 //   - sleep hours + efficiency: `LastNightSleep` -- the same window and
-//     summary the Today sleep row uses (6 pm yesterday to noon, overlaps
-//     counted once, efficiency = asleep ÷ in-bed span);
+//     summary the Today sleep row uses (6 pm yesterday to noon, the
+//     preferred sleep source's night, efficiency = asleep ÷ in-bed span);
 //   - prior-day strain: yesterday's workout energy, mapped to 0...1 at
 //     800 kcal = maximal (a documented heuristic, not physiology — the
 //     engine treats it as recovery demand, and the mapping is the one
@@ -29,6 +29,7 @@
 import CoachKit
 import Foundation
 import HealthKit
+import SyncKit
 
 /// Fetched aggregates; every field optional, assembled purely below.
 struct ReadinessAggregates: Equatable {
@@ -177,6 +178,7 @@ final class ReadinessInputsProvider {
               let window = LastNightSleep.window(now: now, calendar: calendar)
         else { return nil }
         let predicate = HKQuery.predicateForSamples(withStart: window.start, end: window.end, options: [])
+        let preference = SleepSourcePreference.current()
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -184,7 +186,9 @@ final class ReadinessInputsProvider {
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                continuation.resume(returning: LastNightSleep.summary(of: SleepStageSample.from(samples), in: window))
+                continuation.resume(returning: LastNightSleep.summary(
+                    of: SleepStageSample.from(samples), in: window, preference: preference
+                ))
             }
             healthStore.execute(query)
         }

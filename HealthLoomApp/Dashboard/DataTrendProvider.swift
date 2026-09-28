@@ -15,6 +15,7 @@
 import CoreModel
 import Foundation
 import HealthKit
+import SyncKit
 
 /// `nonisolated` and `Sendable` (WP-59): it holds only the store and a
 /// calendar, both `Sendable`, so the four queries run side by side and the
@@ -112,6 +113,7 @@ nonisolated final class DataTrendProvider: Sendable {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
         let calendar = calendar
+        let preference = SleepSourcePreference.current()
         return await withCheckedContinuation { (continuation: CheckedContinuation<[Date: Double], Never>) in
             let query = HKSampleQuery(
                 sampleType: type,
@@ -119,9 +121,13 @@ nonisolated final class DataTrendProvider: Sendable {
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                let asleep = SleepStageSample.from(samples)
-                    .filter { AsleepTime.categoryValues.contains($0.value) }
-                    .map(\.interval)
+                // WP-60: each night's preferred source, then its asleep time.
+                let asleep = SleepSourceSelection.winningSources(
+                    of: SleepStageSample.from(samples), preference: preference, calendar: calendar,
+                    start: \.interval.start, origin: \.origin, isAsleep: \.isAsleep
+                )
+                .filter(\.isAsleep)
+                .map(\.interval)
                 continuation.resume(returning: RollingTrend.nightlyAsleep(asleep, calendar: calendar))
             }
             healthStore.execute(query)

@@ -49,6 +49,8 @@ struct SettingsView: View {
     // WP-12b: the watch-priority toggle (architecture.md D13.5), titled
     // "Prefer workouts already in Apple Health" since WP-55 widened it.
     @State private var watchPriority = WatchPriorityPreferences()
+    // WP-60: which device's sleep wins a night both recorded.
+    @State private var sleepSource = SleepSourcePreferences()
     // WP-34: morning-insight toggles + live notification posture.
     @State private var insightPrefs = InsightPreferences()
     @State private var insightAuthStatus: InsightAuthStatus = .notDetermined
@@ -506,6 +508,22 @@ struct SettingsView: View {
             .padding(.top, 20)
 
             Text("When on, workouts already in Apple Health win over the Fitbit's copy: an overlapping Fitbit session isn't added again -- it's kept in HealthLoom as a supplement instead. An Apple Watch workout also wins its heart rate, steps, energy, and distance. A workout another app saved, like a rower's, wins only the session, so Fitbit's heart rate still fills in. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
+                .foregroundStyle(Theme.tertiary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+
+            ThemedPanel {
+                SleepSourceRow(source: Binding(
+                    get: { sleepSource.source },
+                    set: { sleepSource.setSource($0) }
+                ))
+            }
+            .padding(.top, 20)
+
+            Text("When the Fitbit and an Apple Watch both record a night, HealthLoom reads that night from this one for Today, readiness, the Data tab and the coach. A night only one of them recorded is read from that one. Apple Health keeps both, and its own sleep chart follows the source order set in the Health app.")
                 .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
                 .foregroundStyle(Theme.tertiary)
                 .lineSpacing(3)

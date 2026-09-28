@@ -8,12 +8,17 @@
 
 import Foundation
 import HealthKit
+import SyncKit
 
 /// One sleep-analysis sample, reduced to what the sleep math reads.
 nonisolated struct SleepStageSample: Equatable, Sendable {
     /// `HKCategoryValueSleepAnalysis` raw value.
     var value: Int
     var interval: DateInterval
+    /// Which source recorded it (WP-60): one source wins each night.
+    var origin: SleepOrigin
+
+    var isAsleep: Bool { AsleepTime.categoryValues.contains(value) }
 
     /// A sleep-analysis query's results; anything but a category sample is
     /// dropped.
@@ -22,7 +27,8 @@ nonisolated struct SleepStageSample: Equatable, Sendable {
             guard let category = sample as? HKCategorySample else { return nil }
             return SleepStageSample(
                 value: category.value,
-                interval: DateInterval(start: category.startDate, end: category.endDate)
+                interval: DateInterval(start: category.startDate, end: category.endDate),
+                origin: SleepSourceSelection.origin(of: category)
             )
         }
     }
@@ -56,13 +62,25 @@ nonisolated enum LastNightSleep {
 
     /// The night inside `window`, or nil with no asleep time there. Samples
     /// are clipped to the window first: an evening nap that began before
-    /// 6 pm counts only its part inside, and doesn't stretch the span.
-    static func summary(of samples: [SleepStageSample], in window: DateInterval) -> Summary? {
-        let clipped = samples.compactMap { sample -> SleepStageSample? in
+    /// 6 pm counts only its part inside, and doesn't stretch the span. Then
+    /// one source wins (WP-60, `preference`): a night the Fitbit and the
+    /// watch both recorded reads as one device's night, awake stretches
+    /// included, never a union of the two.
+    static func summary(
+        of samples: [SleepStageSample],
+        in window: DateInterval,
+        preference: SleepSourcePreference
+    ) -> Summary? {
+        let inWindow = samples.compactMap { sample -> SleepStageSample? in
             guard let inside = sample.interval.intersection(with: window), inside.duration > 0 else { return nil }
-            return SleepStageSample(value: sample.value, interval: inside)
+            var clipped = sample
+            clipped.interval = inside
+            return clipped
         }
-        let asleepIntervals = clipped.filter { AsleepTime.categoryValues.contains($0.value) }.map(\.interval)
+        let clipped = SleepSourceSelection.winningSource(
+            of: inWindow, preference: preference, origin: \.origin, isAsleep: \.isAsleep
+        )
+        let asleepIntervals = clipped.filter(\.isAsleep).map(\.interval)
         let asleep = AsleepTime.total(asleepIntervals)
         guard asleep > 0,
               let wokeAt = asleepIntervals.map(\.end).max(),
