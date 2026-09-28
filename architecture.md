@@ -122,7 +122,10 @@ falls inside the window; the idempotency key (D4) makes re-pulling overlap free.
 high-water mark would silently drop any sample synced late by the device.
 The window is walked one day at a time, oldest first, and `lastSyncedAt` commits after
 each day (WP-52): a dense type (heart rate is hundreds of thousands of points on a first
-sync) keeps every finished day when a run is cut short, and resumes from there.
+sync) keeps every finished day when a run is cut short, and resumes from there. Only the
+dense streams walk day by day (`SyncConfiguration.denseTypes`, WP-63); sparse types fetch
+their window in one request. A sync runs up to three types at once (`SyncSchedule`) —
+Sync Now, first sync and background alike; per-type run state keeps them independent.
 
 **D4 — Idempotency via external ID metadata.**
 Every HealthKit sample is stamped with `HKMetadataKeyExternalUUID` = Google data-point ID

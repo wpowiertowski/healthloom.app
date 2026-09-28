@@ -612,9 +612,9 @@ import Testing
         let state = try #require(try context.fetch(
             FetchDescriptor<SyncState>(predicate: #Predicate { $0.dataType == key })
         ).first)
-        // WP-52: the cursor stops at the start of the failed span -- the
-        // earlier, empty days committed; never past the bad point.
-        #expect(state.lastSyncedAt == Self.fixedNow.addingTimeInterval(-24 * 3600))
+        // Never past the bad point: ECG fetches its window in one piece
+        // (WP-63), so nothing of the failed run commits.
+        #expect(state.lastSyncedAt == nil)
     }
 
     // MARK: - Fix round-9, unstamped members throw (items 4+6+9+11)

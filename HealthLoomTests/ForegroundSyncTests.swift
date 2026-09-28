@@ -14,20 +14,21 @@ import Testing
     @MainActor
     final class Recorder {
         var synced: [GoogleDataType] = []
-        var currentDuringSync: [GoogleDataType?] = []
+        var inFlightDuringSync: [GoogleDataType: [GoogleDataType]] = [:]
         var runningDuringSync: [Bool] = []
         var secondStartWasRefused: Bool?
     }
 
-    // catches: the run reporting idle (or naming the wrong type) while a
+    // catches: the run reporting idle (or leaving out a type) while that
     // type is still syncing -- the Data tab's spinner went idle mid-run and
-    // looked finished -- and staying "running" after the last type.
-    @Test func reportsTheTypeInFlightAndEndsIdle() async throws {
+    // looked finished -- and staying "running" after the last type. Types
+    // overlap since WP-63, so each must be named while it syncs.
+    @Test func reportsTheTypesInFlightAndEndsIdle() async throws {
         let recorder = Recorder()
         var foreground: ForegroundSync?
         foreground = ForegroundSync { type in
             recorder.synced.append(type)
-            recorder.currentDuringSync.append(foreground?.current)
+            recorder.inFlightDuringSync[type] = foreground?.inFlight ?? []
             recorder.runningDuringSync.append(foreground?.isRunning ?? false)
         }
         let sync = try #require(foreground)
@@ -35,11 +36,21 @@ import Testing
         let task = try #require(sync.start(types: [.steps, .heartRate]))
         await task.value
 
-        #expect(recorder.synced == [.steps, .heartRate])
-        #expect(recorder.currentDuringSync == [.steps, .heartRate])
+        #expect(Set(recorder.synced) == [.steps, .heartRate])
+        #expect(recorder.inFlightDuringSync[.steps]?.contains(.steps) == true)
+        #expect(recorder.inFlightDuringSync[.heartRate]?.contains(.heartRate) == true)
         #expect(recorder.runningDuringSync == [true, true])
-        #expect(sync.current == nil)
+        #expect(sync.inFlight.isEmpty)
         #expect(!sync.isRunning)
+    }
+
+    // catches: the progress line naming one type while three sync.
+    @Test func theProgressLineNamesEveryTypeInFlight() throws {
+        #expect(DashboardView.syncProgressText([]) == nil)
+        let text = try #require(DashboardView.syncProgressText([.steps, .sleep, .weight]))
+        #expect(text.contains(GoogleDataType.steps.displayName))
+        #expect(text.contains(GoogleDataType.sleep.displayName))
+        #expect(text.contains(GoogleDataType.weight.displayName))
     }
 
     // catches: a second Sync Now while one runs starting a parallel pass

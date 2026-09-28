@@ -217,12 +217,11 @@ struct HealthLoomApp: App {
 // **Budget / expiration (WP-16 step 2, "~20 s... check
 // task.expirationHandler, cancel gracefully via Task cancellation"):** two
 // complementary layers, not one:
-//   1. **Proactive:** `run(context:)` below calls `SyncEngine.sync(type:)`
-//      one type at a time (not the bulk `syncAll(types:)`) specifically so
-//      it can check `BackgroundSyncBudget.hasRemainingBudget(elapsed:)`
-//      *between* types and stop gracefully, with time to spare, once the
-//      self-imposed ~20 s budget is spent -- this is the normal, expected
-//      stopping path. `dueTypes(...)`'s most-overdue-first ordering means
+//   1. **Proactive:** `run(context:)` below runs `SyncEngine.sync(type:)`
+//      through `SyncSchedule` (a few types at a time, WP-63), which checks
+//      `BackgroundSyncBudget.hasRemainingBudget(elapsed:)` before starting
+//      each type and starts no more once the self-imposed ~20 s budget is
+//      spent -- this is the normal, expected stopping path. `dueTypes(...)`'s most-overdue-first ordering means
 //      whatever gets deferred by running out of budget is whatever was
 //      *least* overdue to begin with.
 //   2. **Reactive backstop:** `task.expirationHandler` cancels the detached
@@ -486,20 +485,19 @@ enum HealthLoomBackgroundSync {
         guard !enabledDue.isEmpty else { return [] }
 
         let runStart = Date()
-        var outcomes: [SyncOutcome] = []
-        outcomes.reserveCapacity(enabledDue.count)
-        for type in enabledDue {
-            // WP-58: expired -- the handler cancelled this task. Starting the
-            // next type would run past the deadline the system just set.
-            if Task.isCancelled { break }
-            let elapsed = Date().timeIntervalSince(runStart)
-            guard configuration.budget.hasRemainingBudget(elapsed: elapsed) else {
-                logger.notice(
-                    "Background sync time budget exhausted; \(enabledDue.count - outcomes.count, privacy: .public) type(s) deferred to the next run"
-                )
-                break
-            }
-            outcomes.append(await context.syncEngine.sync(type: type))
+        let syncEngine = context.syncEngine
+        // WP-63: a few types at a time (`SyncSchedule`). Before each start:
+        // WP-58's expiry check (the handler cancelled this task -- starting
+        // another type would run past the system's deadline) and the budget.
+        let outcomes = await SyncSchedule.run(enabledDue, shouldStart: {
+            !Task.isCancelled && configuration.budget.hasRemainingBudget(elapsed: Date().timeIntervalSince(runStart))
+        }, work: { type in
+            await syncEngine.sync(type: type)
+        })
+        if outcomes.count < enabledDue.count {
+            logger.notice(
+                "Background sync stopped (budget or expiry); \(enabledDue.count - outcomes.count, privacy: .public) type(s) deferred to the next run"
+            )
         }
         return outcomes
     }

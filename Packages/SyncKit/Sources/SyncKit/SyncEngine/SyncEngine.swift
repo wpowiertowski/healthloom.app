@@ -203,17 +203,14 @@ public actor SyncEngine {
         }
     }
 
-    /// Runs every type in `types` **sequentially** (WP-09 step 3:
-    /// "predictable quota usage") and always continues past a failing type --
-    /// `sync(type:)` never throws, so one type's `.error` outcome can't halt
-    /// the loop. Returns one `SyncOutcome` per type, in `types`' order.
+    /// Runs every type in `types`, `SyncSchedule.maxConcurrentTypes` at a
+    /// time (WP-63; sequential before, for WP-09's "predictable quota
+    /// usage" -- a small fixed bound keeps that), and always continues past
+    /// a failing type -- `sync(type:)` never throws, so one type's `.error`
+    /// outcome can't halt the rest. Returns one `SyncOutcome` per type, in
+    /// `types`' order.
     public func syncAll(types: [GoogleDataType]) async -> [SyncOutcome] {
-        var results: [SyncOutcome] = []
-        results.reserveCapacity(types.count)
-        for type in types {
-            results.append(await sync(type: type))
-        }
-        return results
+        await SyncSchedule.run(types) { type in await self.sync(type: type) }
     }
 
     /// WP-58: deletes the extra copies of `type`'s samples this app wrote
@@ -344,7 +341,8 @@ public actor SyncEngine {
                 )
             }
 
-            // WP-52: the window is walked one `chunkSpan` at a time, oldest
+            // WP-52: a dense type's window is walked one `chunkSpan` at a
+            // time (WP-63: other types in one piece, `chunks(for:)`), oldest
             // first, and each completed span commits its rows AND the
             // cursor (`lastSyncedAt` = the span's end) before the next
             // begins. An interrupted run -- cancelled, suspended, killed,
@@ -353,7 +351,7 @@ public actor SyncEngine {
             // walk restarted from zero every run and never finished a first
             // heart-rate sync, and a page-cap hit advanced the cursor past
             // the unwalked remainder.)
-            for chunk in configuration.chunks(from: windowStart, to: windowEnd) {
+            for chunk in configuration.chunks(for: type, from: windowStart, to: windowEnd) {
                 // Re-checked per span, not just at `sync(type:)`'s door: a
                 // dense first sync runs for minutes, and a wipe latched
                 // mid-run must not let the remaining days write behind it.
