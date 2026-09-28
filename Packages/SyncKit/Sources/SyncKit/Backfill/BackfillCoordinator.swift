@@ -164,6 +164,22 @@ public actor BackfillCoordinator {
 
     public var isPausedNow: Bool { isPaused }
 
+    /// Walks `type`'s history again from the start (WP-62): clears its
+    /// completed-horizon record and its cursor, so the next round begins
+    /// at `min(lastSyncedAt, now)` and walks back to the horizon. For a
+    /// type whose mapping changed after its history was imported (HRV
+    /// moved from in-app rows to Apple Health); the existence diff skips
+    /// anything already written. Throws if the cursor can't be read or
+    /// saved, leaving the completed record in place.
+    public func restartHistory(for type: GoogleDataType) throws {
+        let context = ModelContext(modelContainer)
+        if let state = try fetchSyncState(for: type, context: context), state.backfillCursor != nil {
+            state.backfillCursor = nil
+            try context.save()
+        }
+        horizonStore.setCompletedHorizon(nil, for: type)
+    }
+
     public func pause() {
         isPaused = true
     }

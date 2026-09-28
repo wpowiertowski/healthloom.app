@@ -339,38 +339,46 @@ public enum TypeMapper {
         )
     }
 
-    // MARK: - Heart Rate Variability -- WP-11, routed to `.localOnly`
+    // MARK: - Heart Rate Variability -- WP-62, written to Apple Health
 
-    /// WP-11's explicit instruction: "confirm Google's HRV metric is SDNN;
-    /// if not confirmably SDNN, keep it app-local (LocalSample) with a note
-    /// rather than writing heartRateVariabilitySDNN." base-knowledge.md §3
-    /// names the Google type only as "Heart Rate Variability" and §5 only
-    /// pairs it with the `heartRateVariabilitySDNN` HealthKit identifier --
-    /// neither section documents Google's underlying algorithm, field name,
-    /// or unit anywhere. CoreModel's writability table (`GoogleDataType
-    /// .swift`) already flags that its `.healthKit` cases are "an available
-    /// target string, not a decision to actually write it" (see that file's
-    /// WP-02 note on `totalCalories`/`basalEnergyBurned` for the identical
-    /// pattern) -- this is that exact call, made here.
-    ///
-    /// Out-of-band context (explicitly *not* sourced from base-knowledge.md,
-    /// flagged rather than silently folded in as fact): Fitbit's own HRV
-    /// metric is widely documented elsewhere in the wearable industry as an
-    /// overnight **RMSSD**-based figure, not SDNN -- a different statistic
-    /// over a different window, not merely a rescaled version of the same
-    /// number. Writing an RMSSD value into `heartRateVariabilitySDNN` would
-    /// silently mislabel the data in Apple Health under a claim this mapper
-    /// has no way to verify, which is worse than not writing it. Since
-    /// base-knowledge.md provides no way to *confirm* SDNN, HRV routes
-    /// unconditionally to `.localOnly` here — the raw value is preserved
-    /// verbatim (via `GoogleDataPoint`, not this decision) in
-    /// `LocalSample.payloadJSON` by WP-09's `SyncEngine` for in-app display
-    /// (WP-14), just never written to HealthKit under an unconfirmed label.
-    /// `point` itself needs no validation for this decision (there is no
-    /// sample to construct), so it's intentionally unused.
+    /// Apple Health's one HRV type (`heartRateVariabilitySDNN`), in ms,
+    /// tagged with the statistic it holds. WP-11 kept HRV in-app because
+    /// Google's statistic was undocumented and Fitbit's is RMSSD, not the
+    /// SDNN that type is named for. The real v4 format (WP-51) carries
+    /// `rmssd_ms` and, optionally, `sdnn_ms`; the owner chose (WP-62) to
+    /// write RMSSD under the SDNN type rather than keep it out of Apple
+    /// Health, as other wearables do. A true SDNN wins when Google sends
+    /// one. Either way `hrvStatistic` records which it is, so the sample
+    /// never claims to be something it isn't.
     private static func decideHeartRateVariability(_ point: GoogleDataPoint) -> MappedDecision {
-        .localOnly
+        let reading: (milliseconds: Double, statistic: HRVStatistic)
+        if let sdnn = point.values["sdnn_ms"] {
+            reading = (sdnn, .sdnn)
+        } else if let rmssd = point.values["rmssd_ms"] {
+            reading = (rmssd, .rmssd)
+        } else {
+            return .skip
+        }
+        guard point.end >= point.start else { return .skip }
+        guard hrvValidRange.contains(reading.milliseconds) else { return .skip }
+        var metadata = metadata(for: point)
+        metadata.hrvStatistic = reading.statistic
+        return .quantity(
+            MappedQuantitySample(
+                healthKitIdentifier: "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+                unit: .millisecond,
+                value: reading.milliseconds,
+                start: point.start,
+                end: point.end,
+                metadata: metadata
+            )
+        )
     }
+
+    /// Plausible HRV in ms, either statistic: resting adult RMSSD/SDNN runs
+    /// roughly 10-150 ms; the bounds only reject a zero, a negative or a
+    /// unit error (seconds or microseconds).
+    static let hrvValidRange: ClosedRange<Double> = 1...500
 
     // MARK: - Oxygen Saturation / SpO2 (oxygenSaturation / fraction) -- WP-11
 

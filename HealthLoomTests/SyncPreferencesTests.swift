@@ -11,6 +11,7 @@
 
 import Testing
 import Foundation
+import GoogleHealthClient
 import HealthKit
 @testable import HealthLoom
 import CoreModel
@@ -87,6 +88,18 @@ struct SyncPreferencesPureFunctionTests {
         #expect(SyncPreferences.consentScopes(for: [.sleep, .steps]) == [.activityAndFitness, .sleep])
     }
 
+    // catches: syncing types Google never returns -- food and total
+    // calories logged a red "notAvailableFromGoogle" error on every run --
+    // or background sync / the history import keeping their own list that
+    // still includes them.
+    @Test func syncableTypesLeaveOutWhatGoogleCantReturn() {
+        #expect(!SyncPreferences.syncableTypes.contains(.food))
+        #expect(!SyncPreferences.syncableTypes.contains(.totalCalories))
+        #expect(SyncPreferences.syncableTypes.allSatisfy { $0.isReadableFromGoogle })
+        #expect(SyncPreferences.syncableTypes.contains(.heartRateVariability))
+        #expect(AppEnvironment.backfillTypes == SyncPreferences.syncableTypes)
+    }
+
     @Test func syncableTypesExcludesEverySkipType() async throws {
         let skipTypes = GoogleDataType.allCases.filter { $0.writability == .skip }
 
@@ -99,7 +112,7 @@ struct SyncPreferencesPureFunctionTests {
     }
 
     @Test func syncableTypesIncludesEveryHealthKitAndLocalOnlyType() async throws {
-        for type in GoogleDataType.allCases where type.writability != .skip {
+        for type in GoogleDataType.allCases where type.writability != .skip && type.isReadableFromGoogle {
             #expect(SyncPreferences.syncableTypes.contains(type))
         }
     }

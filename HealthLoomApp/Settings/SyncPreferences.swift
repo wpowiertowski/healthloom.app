@@ -40,6 +40,7 @@
 
 import CoreModel
 import Foundation
+import GoogleHealthClient
 import Observation
 
 @MainActor
@@ -50,11 +51,13 @@ final class SyncPreferences {
     /// Every `GoogleDataType` this app can sync anywhere -- HealthKit *or*
     /// `LocalSample` (architecture.md D2) -- i.e. every non-`.skip` row of
     /// CoreModel's writability table (WP-17 deliverable 1: "every syncable
-    /// type, not `.skip` ones"). `.skip` types have no sync destination at
-    /// all, so a toggle for one would control nothing and is deliberately
-    /// never offered.
+    /// type, not `.skip` ones") that Google actually returns (WP-62:
+    /// `food` and `total_calories` failed with "notAvailableFromGoogle" on
+    /// every run). A toggle for anything else would control nothing, so
+    /// none is offered. The one list: background sync and the history
+    /// import use it too.
     static let syncableTypes: [GoogleDataType] = GoogleDataType.allCases
-        .filter { $0.writability != .skip }
+        .filter { $0.writability != .skip && $0.isReadableFromGoogle }
         .sorted { $0.rawValue < $1.rawValue }
 
     private let defaults: UserDefaults

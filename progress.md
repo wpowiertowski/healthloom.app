@@ -6225,3 +6225,40 @@ one-line field (17 pt) failed it — a `.frame(minHeight:)` around it doesn't co
 that entry); app 2 (entries load into their own section only; Save writes changed entries
 and clears emptied ones without re-stamping untouched ones). Mutants, each caught: no cap;
 empty text not removed; not filtered from the facts list; unchanged entries rewritten.
+
+## WP-62 — Fitbit HRV into Apple Health
+
+Owner question: "HRV doesn't seem to sync from Google." It did — 244 points a run, all
+`ok` — but WP-11 routed HRV to in-app rows only, because Fitbit measures RMSSD and Apple
+Health's single HRV type is SDNN. Owner chose option 2 of three: write it anyway.
+
+**Mapping.** `decideHeartRateVariability` writes `heartRateVariabilitySDNN` in ms (new
+`MappedUnit.millisecond`), preferring a true `sdnn_ms` when Google sends one, else
+`rmssd_ms`. Each sample carries `healthloom.hrvStatistic` = "RMSSD"/"SDNN"
+(`HRVStatistic`, `MappedMetadata.hrvStatisticKey`), so it never claims to be SDNN when it
+isn't. Values outside 1...500 ms are skipped (zero, negative, a unit error). The test
+fixture's value key was `rmssd` from before WP-51; it's `rmssd_ms` now.
+
+**History.** New points go to Apple Health from the next sync, and the lookback rewrites
+the last 72 h, but past nights were imported as in-app rows. `BackfillCoordinator
+.restartHistory(for:)` clears a type's completed record and cursor; the one-time
+`HRVHealthKitMigration` restarts HRV's history and deletes the in-app HRV rows (nothing
+reads them: HRV's writability is HealthKit, so neither the Data tab's local rows nor the
+coach's local-only fields include it). History imports while Data → Historical Backfill is
+open. `OneTimeTask` now holds the run-until-it-succeeds gate WP-58's repair used.
+
+**Known consequence (owner accepted).** Readiness, Today's HRV tile and the coach read
+Apple Health's HRV across sources, so with a Watch also worn, the latest reading and the
+30-day baseline can mix RMSSD and SDNN.
+
+**Sync log noise.** `food` and `total_calories` logged a red "notAvailableFromGoogle" error
+on every run: Google doesn't return them as data points. `GoogleDataType.isReadableFromGoogle`
+(GoogleHealthClient, from the schema table) now gates `SyncPreferences.syncableTypes`, and
+background sync and the history import use that list instead of each deriving their own.
+Their Settings toggles are gone too; they controlled nothing.
+
+**Tests.** SyncKit 344 (mapping 3 rewritten + 1 HealthKit layer, reversed window, key pin,
+restart 1); app 3 (only HRV rows deleted; runs until it succeeds; syncable list leaves out
+unreadable types and is the backfill list). Mutants, each caught: RMSSD preferred over SDNN;
+no statistic tag; tag not written to HealthKit metadata; no range check; restart keeps the
+completed record; deletion not filtered to HRV; syncable list not filtered by readability.

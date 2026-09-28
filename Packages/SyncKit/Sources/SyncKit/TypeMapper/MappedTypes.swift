@@ -90,6 +90,18 @@ nonisolated public enum MappedUnit: Sendable, Hashable {
     /// `HKUnit(from: "mL/(kg*min)")` string parsing, to avoid depending on
     /// getting an unverified unit-string grammar exactly right.
     case vo2MaxUnit
+    /// `HKUnit.secondUnit(with: .milli)` -- heart rate variability (WP-62).
+    case millisecond
+}
+
+/// Which HRV statistic a sample holds (WP-62). Apple Health has a single
+/// HRV type, named SDNN; Fitbit measures RMSSD, a different statistic that
+/// usually reads higher for the same night. The owner chose to file both
+/// under that one type, so each sample says which it is
+/// (`MappedMetadata.hrvStatisticKey`).
+nonisolated public enum HRVStatistic: String, Sendable, Hashable {
+    case rmssd = "RMSSD"
+    case sdnn = "SDNN"
 }
 
 /// Sleep stage, expressed as the exact `HKCategoryValueSleepAnalysis` raw
@@ -151,6 +163,9 @@ nonisolated public struct MappedMetadata: Sendable, Hashable {
     /// "bridge.*" to "healthloom.*" -- see this file's header and
     /// progress.md's WP-07 entry).
     public var sourceDevice: String?
+    /// Set on heart rate variability samples only: the statistic the value
+    /// is (WP-62).
+    public var hrvStatistic: HRVStatistic?
 
     /// The metadata key `externalID` is written under. Its presence marks
     /// an object this app imported: the conflict resolver's coverage query
@@ -158,11 +173,14 @@ nonisolated public struct MappedMetadata: Sendable, Hashable {
     /// would make imported workouts count as another app's (WP-58).
     public static let externalIDKey = "healthloom.externalID"
     static let sourceDeviceKey = "healthloom.sourceDevice"
+    /// Metadata key for `hrvStatistic`, value "RMSSD" or "SDNN" (WP-62).
+    public static let hrvStatisticKey = "healthloom.hrvStatistic"
 
-    public init(externalUUID: String, externalID: String, sourceDevice: String?) {
+    public init(externalUUID: String, externalID: String, sourceDevice: String?, hrvStatistic: HRVStatistic? = nil) {
         self.externalUUID = externalUUID
         self.externalID = externalID
         self.sourceDevice = sourceDevice
+        self.hrvStatistic = hrvStatistic
     }
 
     /// Workout-attachment roles `saveWorkout` stamps (round-8 item 2):

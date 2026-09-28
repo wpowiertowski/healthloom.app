@@ -552,3 +552,31 @@ actor StopFlag {
     }
 }
 #endif
+
+// MARK: - Restart (WP-62)
+
+extension BackfillChunkingTests {
+    // catches: a restart that leaves the completed record (or a mid-walk
+    // cursor) in place, so a type whose mapping changed never re-imports
+    // its history -- HRV's past nights would stay out of Apple Health.
+    @Test func restartingHistoryWalksTheTypeAgain() async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let mock = MockGoogleReconcileClient()
+        let coordinator = Self.makeCoordinator(
+            client: mock, container: container, clock: TestSyncClock(Self.fixedNow), horizon: .days30
+        )
+        var outcome = await coordinator.runNextChunk(for: .steps)
+        while case .processedChunk = outcome {
+            outcome = await coordinator.runNextChunk(for: .steps)
+        }
+        #expect(outcome == .alreadyDone)
+        let callsBefore = mock.calls.count
+
+        try await coordinator.restartHistory(for: .steps)
+
+        guard case .processedChunk = await coordinator.runNextChunk(for: .steps) else {
+            Issue.record("expected the history walk to start again"); return
+        }
+        #expect(mock.calls.count > callsBefore)
+    }
+}
