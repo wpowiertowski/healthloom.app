@@ -78,7 +78,7 @@ struct ReadinessScoreHistoryTests {
     @Test func buildingAHistoryWritesNothing() throws {
         let ephemeral = try makeDefaults()
         ephemeral.defaults.set([["2026-09-01", "80"]], forKey: ReadinessScoreHistory.retiredDefaultsKey)
-        final class Posts: @unchecked Sendable { var count = 0 }
+        nonisolated final class Posts: @unchecked Sendable { var count = 0 }
         let posts = Posts()
         let token = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: ephemeral.defaults, queue: nil
