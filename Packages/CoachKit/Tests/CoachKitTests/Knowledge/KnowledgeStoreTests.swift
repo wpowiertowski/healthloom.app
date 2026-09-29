@@ -192,7 +192,6 @@ struct KnowledgeStoreRefreshTests {
 
         let profile = try await store.refresh(now: now)
         #expect(!profile.sections.contains { $0.key == KnowledgeDerivation.workoutsFieldKey })
-        #expect(store.workoutsSummary(days: 30) == "No workouts recorded in the last 30 days.")
     }
 }
 
@@ -262,7 +261,6 @@ struct KnowledgeStoreSummaryTests {
         _ = try await store.refresh(now: .now)
         #expect(store.stepsSummary(days: 7) == "No step data available for the last 7 days.")
         #expect(store.sleepSummary(nights: 7) == "No sleep data available for the last 7 nights.")
-        #expect(store.workoutsSummary(days: 7) == "No workouts recorded in the last 7 days.")
         #expect(store.vitalsSummary() == "No recent vitals available.")
     }
 
@@ -285,7 +283,6 @@ struct KnowledgeStoreSummaryTests {
 
         #expect(store.stepsSummary(days: 90).contains("(30-day avg)"))
         #expect(store.sleepSummary(nights: 90).contains("14-night avg"))
-        #expect(store.workoutsSummary(days: 90).contains("in the last 30 days"))
     }
 
     @Test("vitalsSummary combines resting HR and HRV text")

@@ -3,7 +3,7 @@
 // WP-25 (implementation-plan.md): the Coach tab's conversation owner. One
 // `CoachSessionFactory` conversation session per view-model lifetime
 // (WP-22: the transcript is the memory), tools registered from
-// `CoachTools.all(store:)` (WP-24), instructions from the effective prompt
+// `CoachTools.all(store:workouts:)` (WP-24, WP-77), instructions from the effective prompt
 // (user base + safety suffix, D10), per-turn context assembled + snapshotted
 // for `.chat` (WP-20) with the snapshot ID linked on the assistant turn --
 // the "What did the coach see?" expander reads it back via
@@ -52,6 +52,9 @@ final class CoachChatViewModel {
         /// Settings without a relaunch. Interactive switching stays WP-32's.
         var tierSettings: TierSettingsStore
         var tierCatalog: ModelCatalog
+        /// The workout tools' reads (WP-77): HealthKit and the Activities
+        /// view live in the app, so the app hands them to CoachKit.
+        var workouts: CoachWorkoutQueries
 
         /// Explicit init (round-10 item 1 toolchain note, same as
         /// `WipeCoordinator.Dependencies`): this toolchain's memberwise
@@ -67,7 +70,8 @@ final class CoachChatViewModel {
             wiredTiers: Set<ModelTier> = [.onDevice],
             availability: any CoachAvailabilityChecking,
             tierSettings: TierSettingsStore,
-            tierCatalog: ModelCatalog
+            tierCatalog: ModelCatalog,
+            workouts: CoachWorkoutQueries
         ) {
             self.container = container
             self.store = store
@@ -78,14 +82,15 @@ final class CoachChatViewModel {
             self.availability = availability
             self.tierSettings = tierSettings
             self.tierCatalog = tierCatalog
+            self.workouts = workouts
         }
     }
 
     /// Tool-set identity for the chat session (WP-22 `toolSetID` contract:
     /// a new tool set must bust the cached conversation session). Bump when
     /// the registered tools change -- nothing enforces this at compile
-    /// time, so review the bump whenever `CoachTools.all(store:)` grows.
-    static let chatToolSetID = "wp25-chat-v1"
+    /// time, so review the bump whenever `CoachTools.all(store:workouts:)` changes.
+    static let chatToolSetID = "wp77-chat-v2"
 
     /// Newest turns kept in memory. The read is newest-first with a
     /// display-order reverse (WP-25 review #1): growth past the cap drops
@@ -331,7 +336,7 @@ final class CoachChatViewModel {
                 let turn = try await orchestrator.stream(
                     to: trimmed,
                     tier: servingTier,
-                    tools: CoachTools.all(store: deps.store),
+                    tools: CoachTools.all(store: deps.store, workouts: deps.workouts),
                     toolSetID: Self.chatToolSetID
                 )
                 switch turn {
@@ -473,7 +478,7 @@ final class CoachChatViewModel {
         deps.factory.makeSession(
             for: .conversation,
             instructions: instructions,
-            tools: CoachTools.all(store: deps.store),
+            tools: CoachTools.all(store: deps.store, workouts: deps.workouts),
             toolSetID: Self.chatToolSetID,
             tier: tier
         )

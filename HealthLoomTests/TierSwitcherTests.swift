@@ -145,7 +145,8 @@ struct TierSwitcherTests {
             wiredTiers: Set(ModelTier.allCases),
             availability: FixedCoachAvailabilityChecker(availability: .available),
             tierSettings: settings,
-            tierCatalog: catalog
+            tierCatalog: catalog,
+            workouts: .noWorkouts
         ))
         return TierSwitcherFixture(viewModel: viewModel, settings: settings, gates: gates, log: log, ephemeral: ephemeral)
     }
@@ -320,7 +321,8 @@ struct TierSwitcherTests {
             factory: CoachSessionFactory(),
             availability: FixedCoachAvailabilityChecker(availability: .available),
             tierSettings: settings,
-            tierCatalog: catalog
+            tierCatalog: catalog,
+            workouts: .noWorkouts
         ))
         settings.recordConsent(for: .privateCloudCompute)
         gates.setConsent(true, for: .privateCloudCompute)
@@ -414,7 +416,8 @@ struct TierSwitcherTests {
             factory: factory,
             availability: FixedCoachAvailabilityChecker(availability: .available),
             tierSettings: settings,
-            tierCatalog: catalog
+            tierCatalog: catalog,
+            workouts: .noWorkouts
         ))
         enable(.privateCloudCompute, settings: settings, gates: gates)
         #expect(viewModel.selectTier(.privateCloudCompute) == true)

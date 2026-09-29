@@ -52,7 +52,9 @@ final class ActivityDetailProvider {
         return types
     }
 
-    func detail(for entry: ActivityEntry) async -> ActivityDetail {
+    /// Everything recorded during `entry`, plus its route when asked --
+    /// the coach never is (WP-77: routes stay out of its answers).
+    func detail(for entry: ActivityEntry, includingRoute: Bool) async -> ActivityDetail {
         if requestsAuthorization {
             try? await healthKitAuth.requestRead(objectTypes: Self.readTypes)
         }
@@ -72,7 +74,7 @@ final class ActivityDetailProvider {
         samples.append(contentsOf: local ?? [])
 
         var route: ActivityRoute?
-        if case .workout(let workout) = entry.kind {
+        if includingRoute, case .workout(let workout) = entry.kind {
             route = await Self.route(workoutUUID: workout.uuid, store: store)
         }
         return ActivityDetail(series: ActivitySeriesBuilder.series(samples, from: start, to: end), route: route)

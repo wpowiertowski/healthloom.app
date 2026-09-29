@@ -170,7 +170,13 @@ none in 30 days strain is missing, since HealthKit returns a denied read as empt
 `ContextAssembler` builds `HealthContext` exclusively from the human-readable,
 source-tagged, timestamped `KnowledgeProfile`, honoring the user's per-field exclusions.
 The model pulls specifics on demand through typed tools (`getRecentSleep`, `getSteps`, …)
-that also route through `KnowledgeStore`. Every AI turn stores a `ContextSnapshot` of the
+that also route through `KnowledgeStore`. Workouts go deeper (WP-77): `getWorkouts` lists
+each one, numbered, and `getWorkoutDetail` answers everything recorded during one: every
+measurement per device, splits, and any single measurement by distance and by minute. The
+app reads both from what the Activities tab shows (`CoachWorkoutReader`) and CoachKit gates
+them on the workouts exclusion. Answers are plain text sized for the on-device context, so
+a larger model asks again rather than getting more at once, and routes never reach the
+model. Every AI turn stores a `ContextSnapshot` of the
 exact context sent, powering the "What did the coach see?" trace UI.
 The user can add what the data can't say (WP-61): goals, injuries and limits, activity
 preferences, typed on the You tab and stored as correction-sourced profile fields under

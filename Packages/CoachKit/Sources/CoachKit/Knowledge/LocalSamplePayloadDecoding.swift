@@ -30,8 +30,7 @@ nonisolated public struct ExerciseSupplement: Sendable {
     public let linkedWatchWorkoutUUID: UUID?
     /// The sample's own start date -- code review (2026-08-28) finding #4:
     /// callers must be able to window-filter supplements by date themselves
-    /// (`KnowledgeStore.refresh()`'s 30-day workouts window,
-    /// `workoutsSummary(days:)`'s re-sliced window) without a second lookup
+    /// (`KnowledgeStore.refresh()`'s 30-day workouts window) without a second lookup
     /// back into the `LocalSample` array that produced this value.
     public let start: Date
     /// The sample's device/source label (e.g. "Fitbit Air") -- code review

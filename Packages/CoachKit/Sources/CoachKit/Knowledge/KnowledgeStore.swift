@@ -87,8 +87,8 @@ public final class KnowledgeStore {
     // live `@Model` rows (and through them their throwaway `ModelContext`) for the
     // store's whole lifetime, although it was only ever read inside the same
     // `performRefresh` call that wrote it. `LocalSample` rows are now a local of
-    // that call; `cachedExerciseSupplements` (plain value types, read later by
-    // `workoutsSummary`) is the shape that actually needs caching.
+    // that call; `cachedExerciseSupplements` (plain value types, read by the
+    // profile derivation) is the shape that actually needs caching.
 
     /// The `now` most recently passed to `refresh(now:)` -- code review
     /// (2026-08-28) finding #5: the tool-facing summaries below must window
@@ -251,7 +251,7 @@ public final class KnowledgeStore {
         // Code review (2026-09-01): commit every cached array + `referenceNow`
         // together, with no `await` between these assignments -- the
         // tool-facing summaries below (`stepsSummary`/`sleepSummary`/
-        // `workoutsSummary`/`vitalsSummary`) read this cache directly and
+        // `vitalsSummary`) read this cache directly and
         // don't coordinate with `acquireRefreshLock()`/`releaseRefreshLock()`,
         // so a concurrent summary call must never be able to observe a
         // partially-updated cache straddling two different refresh
@@ -558,19 +558,6 @@ public final class KnowledgeStore {
         )
         guard !fields.isEmpty else { return "No sleep data available for the last \(clampedNights) nights." }
         return joinedDisplayText(fields)
-    }
-
-    public func workoutsSummary(days: Int) -> String {
-        let clampedDays = Clamping.window(days, maximum: Self.workoutsWindowDays)
-        let start = windowStart(daysBack: clampedDays, from: referenceNow)
-        let workouts = cachedWorkouts.filter { $0.start >= start }
-        // `supplement.start` directly (code review finding #4's `ExerciseSupplement`
-        // addition) -- no more looking the sample back up in `cachedLocalSamples`.
-        let supplements = cachedExerciseSupplements.filter { $0.start >= start }
-        return KnowledgeDerivation.workoutsField(
-            workouts: workouts, exerciseSupplements: supplements, windowDays: clampedDays,
-            asOf: referenceNow, source: "HealthKit"
-        )?.displayText ?? "No workouts recorded in the last \(clampedDays) days."
     }
 
     public func vitalsSummary(locale: Locale = .current) -> String {

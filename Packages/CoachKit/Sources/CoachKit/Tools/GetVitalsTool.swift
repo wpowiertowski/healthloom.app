@@ -5,7 +5,7 @@
 // Output is the same user-visible summary text as the profile -- nothing the
 // trace UI can't show (D7). Registered on session creation via
 // `CoachTools.all(store:)`. See GetStepsTool.swift for the isolation pattern
-// shared by all four tools.
+// shared by all the tools.
 
 import Foundation
 import FoundationModels
@@ -54,7 +54,7 @@ public struct GetVitalsTool: Tool, Sendable {
     /// fetch-error propagation in one place).
     public static func live(store: KnowledgeStore) -> GetVitalsTool {
         GetVitalsTool {
-            try store.gatedAnswer(
+            try await store.gatedAnswer(
                 coveredKeys: coveredKeys,
                 excludedMessage: excludedMessage
             ) {

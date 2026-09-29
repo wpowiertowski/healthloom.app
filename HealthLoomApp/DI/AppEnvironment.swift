@@ -556,7 +556,8 @@ final class AppEnvironment {
             factory: coachSessionFactory,
             availability: availabilityChecker,
             tierSettings: tierSettings,
-            tierCatalog: modelCatalog
+            tierCatalog: modelCatalog,
+            workouts: CoachWorkoutReader(healthKitAuth: healthKitAuth, modelContainer: container).queries
         ))
 
         // WP-34: notification seam + shared morning-insight runner. The

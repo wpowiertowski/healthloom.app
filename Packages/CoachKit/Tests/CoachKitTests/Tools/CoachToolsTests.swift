@@ -73,18 +73,60 @@ private func excludeKeys(_ keys: [String], store: KnowledgeStore, in container: 
     }
 }
 
+/// Stands in for the app's workout reads, recording what each tool asked
+/// for -- the reads themselves are the app's (HealthLoomTests cover them).
+@MainActor
+private final class WorkoutQueriesProbe {
+    var lists: [Int] = []
+    var details: [(number: Int, measurement: String?)] = []
+
+    var queries: CoachWorkoutQueries {
+        CoachWorkoutQueries(
+            list: { days in
+                self.lists.append(days)
+                return "list \(days)"
+            },
+            detail: { number, measurement in
+                self.details.append((number, measurement))
+                return "detail \(number)"
+            }
+        )
+    }
+}
+
 @Suite("CoachTools wiring")
 @MainActor
 struct CoachToolsWiringTests {
-    @Test("all builds four named tools in order")
+    @Test("all builds five named tools in order")
     func buildsAllTools() throws {
         let (store, _) = try makeToolsStore()
-        let tools: [any Tool] = CoachTools.all(store: store)
-        #expect(tools.map(\.name) == ["getSteps", "getRecentSleep", "getWorkouts", "getVitals"])
+        let tools: [any Tool] = CoachTools.all(store: store, workouts: WorkoutQueriesProbe().queries)
+        #expect(tools.map(\.name) == ["getSteps", "getRecentSleep", "getWorkouts", "getWorkoutDetail", "getVitals"])
         #expect(tools[0] is GetStepsTool)
         #expect(tools[1] is GetRecentSleepTool)
         #expect(tools[2] is GetWorkoutsTool)
-        #expect(tools[3] is GetVitalsTool)
+        #expect(tools[3] is GetWorkoutDetailTool)
+        #expect(tools[4] is GetVitalsTool)
+    }
+
+    // catches: the list asked for more days than it numbers, or the detail
+    // tool dropping the measurement (or passing a blank one as a name).
+    @Test("workout tools hand the app the clamped window, the number and the measurement")
+    func workoutToolsForwardTheirArguments() async throws {
+        let (store, _) = try makeToolsStore()
+        let probe = WorkoutQueriesProbe()
+        let list = GetWorkoutsTool.live(store: store, list: probe.queries.list)
+        let detail = GetWorkoutDetailTool.live(store: store, detail: probe.queries.detail)
+
+        #expect(try await list.call(arguments: .init(days: 500)) == "list \(GetWorkoutsTool.windowDays)")
+        _ = try await list.call(arguments: .init(days: 0))
+        _ = try await detail.call(arguments: .init(number: 2, measurement: " Ground contact time "))
+        _ = try await detail.call(arguments: .init(number: 3, measurement: "  "))
+        _ = try await detail.call(arguments: .init(number: 1))
+
+        #expect(probe.lists == [GetWorkoutsTool.windowDays, 1])
+        #expect(probe.details.map(\.number) == [2, 3, 1])
+        #expect(probe.details.map(\.measurement) == ["Ground contact time", nil, nil])
     }
 
     @Test("live tool output is the store summary, untransformed")
@@ -97,7 +139,6 @@ struct CoachToolsWiringTests {
 
         #expect(try await GetStepsTool.live(store: store).call(arguments: .init(days: 7)) == store.stepsSummary(days: 7))
         #expect(try await GetRecentSleepTool.live(store: store).call(arguments: .init(nights: 7)) == store.sleepSummary(nights: 7))
-        #expect(try await GetWorkoutsTool.live(store: store).call(arguments: .init(days: 7)) == store.workoutsSummary(days: 7))
         #expect(try await GetVitalsTool.live(store: store).call(arguments: .init()) == store.vitalsSummary())
     }
 
@@ -111,8 +152,6 @@ struct CoachToolsWiringTests {
 
         let steps = try await GetStepsTool.live(store: store).call(arguments: .init(days: 7))
         #expect(steps.contains("8,000") || steps.contains("8000"))
-        let workouts = try await GetWorkoutsTool.live(store: store).call(arguments: .init(days: 7))
-        #expect(workouts.localizedCaseInsensitiveContains("run"))
         let vitals = try await GetVitalsTool.live(store: store).call(arguments: .init())
         #expect(vitals.contains("58"))
     }
@@ -223,7 +262,13 @@ struct CoachToolsExclusionTests {
 
         let steps = try await GetStepsTool.live(store: store).call(arguments: .init(days: 7))
         #expect(steps == store.stepsSummary(days: 7))
-        #expect(try await GetWorkoutsTool.live(store: store).call(arguments: .init(days: 7)) == GetWorkoutsTool.excludedMessage)
+        let probe = WorkoutQueriesProbe()
+        #expect(try await GetWorkoutsTool.live(store: store, list: probe.queries.list).call(arguments: .init(days: 7))
+            == GetWorkoutsTool.excludedMessage)
+        // catches: the detail tool reading workouts the user excluded.
+        #expect(try await GetWorkoutDetailTool.live(store: store, detail: probe.queries.detail)
+            .call(arguments: .init(number: 1, measurement: "heart rate")) == GetWorkoutDetailTool.excludedMessage)
+        #expect(probe.lists.isEmpty && probe.details.isEmpty)
     }
 
     @Test("gate is false with no profile and empty keys")
@@ -294,6 +339,7 @@ struct ExclusionWritePathTests {
         #expect(GetStepsTool.excludedMessage == CoachTools.excludedMessage(forTopic: "Step"))
         #expect(GetRecentSleepTool.excludedMessage == CoachTools.excludedMessage(forTopic: "Sleep"))
         #expect(GetWorkoutsTool.excludedMessage == CoachTools.excludedMessage(forTopic: "Workout"))
+        #expect(GetWorkoutDetailTool.excludedMessage == GetWorkoutsTool.excludedMessage)
         #expect(GetVitalsTool.excludedMessage == CoachTools.excludedMessage(forTopic: "Vitals"))
     }
 }
