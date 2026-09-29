@@ -257,6 +257,10 @@ final class AppEnvironment {
     /// cache, `AvailabilityGate` for on-device, live PCC reads). The chat
     /// tier slot and the AI Models rows read this same instance's gate.
     let modelCatalog: ModelCatalog
+    /// WP-79: the units each measurement shows in, chosen in Settings. The
+    /// app root hands its preferences to every view (`\.unitPreferences`);
+    /// the coach's workout answers read them at call time.
+    let unitSettings: UnitSettings
     /// WP-34 (implementation-plan.md): morning-insight preferences + the
     /// notification seam. The notifier is stubbed under
     /// `-UITestStubNotifications` (grants on request) and starts denied
@@ -310,6 +314,8 @@ final class AppEnvironment {
         self.cloudSyncMonitor = CloudSyncChangeMonitor(engine: cloudSync)
         InsightRunnerHost.quiesceCheck = { WipeQuiesce.isLatched }
         self.healthKitAuth = HealthKitAuth()
+        let unitSettings = UnitSettings()
+        self.unitSettings = unitSettings
 
         let authManager = GoogleAuthManager(
             config: Self.googleAuthConfig,
@@ -557,7 +563,9 @@ final class AppEnvironment {
             availability: availabilityChecker,
             tierSettings: tierSettings,
             tierCatalog: modelCatalog,
-            workouts: CoachWorkoutReader(healthKitAuth: healthKitAuth, modelContainer: container).queries
+            workouts: CoachWorkoutReader(
+                healthKitAuth: healthKitAuth, modelContainer: container, units: { [unitSettings] in unitSettings.preferences }
+            ).queries
         ))
 
         // WP-34: notification seam + shared morning-insight runner. The

@@ -20,8 +20,15 @@ final class CoachWorkoutReader {
     private let details: ActivityDetailProvider
     private let modelContainer: ModelContainer
     private let healthStore: HKHealthStore
+    /// Read at each call, so answers follow a units change mid-chat (WP-79).
+    private let units: @MainActor () -> UnitPreferences
 
-    init(healthKitAuth: HealthKitAuth, modelContainer: ModelContainer, healthStore: HKHealthStore = HKHealthStore()) {
+    init(
+        healthKitAuth: HealthKitAuth,
+        modelContainer: ModelContainer,
+        units: @escaping @MainActor () -> UnitPreferences,
+        healthStore: HKHealthStore = HKHealthStore()
+    ) {
         self.workouts = ActivitiesProvider(healthStore: healthStore)
         self.details = ActivityDetailProvider(
             healthKitAuth: healthKitAuth,
@@ -31,6 +38,7 @@ final class CoachWorkoutReader {
         )
         self.modelContainer = modelContainer
         self.healthStore = healthStore
+        self.units = units
     }
 
     /// The tools' reads. The closures hold the reader (nothing else does),
@@ -43,7 +51,9 @@ final class CoachWorkoutReader {
     }
 
     func list(days: Int, now: Date = Date()) async -> String {
-        CoachWorkoutText.list(await entries(now: now), days: days, now: now, calendar: .autoupdatingCurrent, locale: .current)
+        CoachWorkoutText.list(
+            await entries(now: now), days: days, now: now, units: units(), calendar: .autoupdatingCurrent, locale: .current
+        )
     }
 
     func detail(number: Int, measurement: String?, now: Date = Date()) async -> String {
@@ -51,9 +61,11 @@ final class CoachWorkoutReader {
         guard let entry = CoachWorkoutText.entry(number: number, in: entries) else {
             return CoachWorkoutText.noWorkout(number: number, count: entries.count, days: GetWorkoutsTool.windowDays)
         }
-        let series = await details.detail(for: entry, includingRoute: false).series
+        let samples = await details.detail(for: entry, includingRoute: false).samples
+        let units = units()
+        let series = ActivitySeriesBuilder.series(samples, from: entry.start, to: entry.end, units: units)
         return CoachWorkoutText.detail(
-            entry, number: number, series: series, measurement: measurement,
+            entry, number: number, series: series, units: units, measurement: measurement,
             needsReadAccess: await needsReadAccess(), calendar: .autoupdatingCurrent, locale: .current
         )
     }

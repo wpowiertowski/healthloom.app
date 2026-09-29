@@ -85,17 +85,18 @@ nonisolated enum ActivityMetric: String, CaseIterable, Hashable, Sendable {
         }
     }
 
-    /// The display unit; empty for plain counts.
-    var unit: String {
+    /// The display unit in the user's units (WP-79); empty for plain counts.
+    func unit(_ units: UnitPreferences) -> String {
         switch self {
         case .heartRate: return "bpm"
-        case .activeEnergy: return "kcal"
-        case .distance, .cyclingDistance, .swimmingDistance: return "km"
+        case .activeEnergy: return units.energy.symbol
+        case .distance, .cyclingDistance: return units.distance.symbol
+        case .swimmingDistance: return units.pool.symbol
         case .steps, .swimmingStrokes, .flightsClimbed: return ""
-        case .runningSpeed, .cyclingSpeed: return "km/h"
+        case .runningSpeed, .cyclingSpeed: return units.distance.speedSymbol
         case .runningPower, .cyclingPower: return "W"
-        case .runningStrideLength: return "m"
-        case .runningVerticalOscillation: return "cm"
+        case .runningStrideLength: return units.bodyLength.strideSymbol
+        case .runningVerticalOscillation: return units.bodyLength.oscillationSymbol
         case .runningGroundContactTime: return "ms"
         case .cyclingCadence: return "rpm"
         case .respiratoryRate: return "br/min"
@@ -105,11 +106,16 @@ nonisolated enum ActivityMetric: String, CaseIterable, Hashable, Sendable {
     }
 
     /// A sample's canonical value (the unit the provider reads it in:
-    /// metres, metres per second, a 0...1 fraction) in display units.
-    func displayValue(_ canonical: Double) -> Double {
+    /// metres, metres per second, kilocalories, centimetres, a 0...1
+    /// fraction) in the user's display units.
+    func displayValue(_ canonical: Double, units: UnitPreferences) -> Double {
         switch self {
-        case .distance, .cyclingDistance, .swimmingDistance: return canonical / 1000
-        case .runningSpeed, .cyclingSpeed: return canonical * 3.6
+        case .distance, .cyclingDistance: return canonical / units.distance.meters
+        case .swimmingDistance: return canonical / units.pool.meters
+        case .runningSpeed, .cyclingSpeed: return canonical * 3600 / units.distance.meters
+        case .activeEnergy: return units.energy.value(kilocalories: canonical)
+        case .runningStrideLength: return units.bodyLength.stride(meters: canonical)
+        case .runningVerticalOscillation: return units.bodyLength.oscillation(centimeters: canonical)
         case .oxygenSaturation: return canonical * 100
         default: return canonical
         }
@@ -118,7 +124,7 @@ nonisolated enum ActivityMetric: String, CaseIterable, Hashable, Sendable {
     /// Decimal places a display value is shown with.
     var fractionDigits: Int {
         switch self {
-        case .distance, .cyclingDistance, .swimmingDistance, .runningStrideLength: return 2
+        case .distance, .cyclingDistance, .runningStrideLength: return 2
         case .runningSpeed, .cyclingSpeed, .runningVerticalOscillation, .respiratoryRate: return 1
         default: return 0
         }
@@ -130,8 +136,9 @@ nonisolated enum ActivityMetric: String, CaseIterable, Hashable, Sendable {
     }
 
     /// With its unit: "142 bpm", "6.21 km", "8,240".
-    func format(_ displayValue: Double, locale: Locale = .current) -> String {
+    func format(_ displayValue: Double, units: UnitPreferences, locale: Locale = .current) -> String {
         let number = formatNumber(displayValue, locale: locale)
+        let unit = unit(units)
         return unit.isEmpty ? number : "\(number) \(unit)"
     }
 }
@@ -159,16 +166,16 @@ nonisolated enum ActivitySeriesSummary: Equatable, Sendable {
     case cumulative(total: Double)
 }
 
-extension ActivitySeriesSummary {
+nonisolated extension ActivitySeriesSummary {
     /// The headline under a chart's device name: "Avg 142 bpm · 118–171"
     /// for readings, "412 kcal" for a total.
-    func text(for metric: ActivityMetric, locale: Locale = .current) -> String {
+    func text(for metric: ActivityMetric, units: UnitPreferences, locale: Locale = .current) -> String {
         switch self {
         case .sampled(let average, let minimum, let maximum):
             let range = "\(metric.formatNumber(minimum, locale: locale))\u{2013}\(metric.formatNumber(maximum, locale: locale))"
-            return "Avg \(metric.format(average, locale: locale)) \u{00B7} \(range)"
+            return "Avg \(metric.format(average, units: units, locale: locale)) \u{00B7} \(range)"
         case .cumulative(let total):
-            return metric.format(total, locale: locale)
+            return metric.format(total, units: units, locale: locale)
         }
     }
 }
@@ -180,12 +187,28 @@ nonisolated struct ActivitySeriesLine: Equatable, Sendable {
     let summary: ActivitySeriesSummary
 }
 
-/// One chart: a metric and a line per device that recorded it.
+/// One chart: a metric and a line per device that recorded it, in the
+/// units its values were converted to -- carried with them, so a value is
+/// never labelled in a unit it isn't in (WP-79).
 nonisolated struct ActivityMetricSeries: Identifiable, Equatable, Sendable {
     let metric: ActivityMetric
+    let units: UnitPreferences
     let lines: [ActivitySeriesLine]
 
     var id: ActivityMetric { metric }
+
+    /// The display unit ("km", "mph"; empty for counts).
+    var unit: String { metric.unit(units) }
+
+    /// A value of this series, with its unit.
+    func format(_ displayValue: Double, locale: Locale = .current) -> String {
+        metric.format(displayValue, units: units, locale: locale)
+    }
+
+    /// A line's headline: "Avg 142 bpm · 118–171", "412 kcal".
+    func summaryText(_ line: ActivitySeriesLine, locale: Locale = .current) -> String {
+        line.summary.text(for: metric, units: units, locale: locale)
+    }
 
     /// The chart's value axis. A running total starts at zero; readings
     /// fit their own range with a little room, so a heart rate between
@@ -214,27 +237,30 @@ nonisolated enum ActivitySeriesBuilder {
     static let originOrder: [SleepOrigin] = [.appleWatch, .fitbit, .otherApp]
 
     /// Every metric with at least one sample starting inside
-    /// `start ..< end`, in catalog order, one line per device.
-    static func series(_ samples: [ActivitySample], from start: Date, to end: Date) -> [ActivityMetricSeries] {
+    /// `start ..< end`, in catalog order, one line per device, in `units`.
+    static func series(
+        _ samples: [ActivitySample], from start: Date, to end: Date, units: UnitPreferences
+    ) -> [ActivityMetricSeries] {
         let inWindow = samples.filter { $0.start >= start && $0.start < end }
         let byMetric = Dictionary(grouping: inWindow, by: \.metric)
         return ActivityMetric.allCases.compactMap { metric in
             guard let metricSamples = byMetric[metric] else { return nil }
             let byOrigin = Dictionary(grouping: metricSamples, by: \.origin)
             let lines = originOrder.compactMap { origin in
-                byOrigin[origin].map { line(metric: metric, origin: origin, samples: $0, start: start, end: end) }
+                byOrigin[origin].map { line(metric: metric, origin: origin, samples: $0, start: start, end: end, units: units) }
             }
-            return ActivityMetricSeries(metric: metric, lines: lines)
+            return ActivityMetricSeries(metric: metric, units: units, lines: lines)
         }
     }
 
     private static func line(
-        metric: ActivityMetric, origin: SleepOrigin, samples: [ActivitySample], start: Date, end: Date
+        metric: ActivityMetric, origin: SleepOrigin, samples: [ActivitySample], start: Date, end: Date,
+        units: UnitPreferences
     ) -> ActivitySeriesLine {
         let sorted = samples.sorted { $0.start < $1.start }
         switch metric.style {
         case .sampled:
-            let points = sorted.map { ActivitySeriesPoint(date: $0.start, value: metric.displayValue($0.value)) }
+            let points = sorted.map { ActivitySeriesPoint(date: $0.start, value: metric.displayValue($0.value, units: units)) }
             let values = points.map(\.value)
             let summary = ActivitySeriesSummary.sampled(
                 average: values.reduce(0, +) / Double(values.count),
@@ -251,7 +277,7 @@ nonisolated enum ActivitySeriesBuilder {
             var total = 0.0
             var points = [ActivitySeriesPoint(date: start, value: 0)]
             for sample in sorted {
-                total += metric.displayValue(sample.value)
+                total += metric.displayValue(sample.value, units: units)
                 points.append(ActivitySeriesPoint(date: min(sample.end, end), value: total))
             }
             return ActivitySeriesLine(

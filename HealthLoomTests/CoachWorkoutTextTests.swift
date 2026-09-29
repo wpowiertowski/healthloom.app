@@ -47,12 +47,12 @@ struct CoachWorkoutTextTests {
     }
 
     static func series(_ samples: [ActivitySample], minutes: Double) -> [ActivityMetricSeries] {
-        ActivitySeriesBuilder.series(samples, from: start, to: start.addingTimeInterval(minutes * 60))
+        ActivitySeriesBuilder.series(samples, from: start, to: start.addingTimeInterval(minutes * 60), units: .metric)
     }
 
     static func detail(_ entry: ActivityEntry, _ series: [ActivityMetricSeries], measurement: String? = nil, needsReadAccess: Bool = false) -> String {
         CoachWorkoutText.detail(
-            entry, number: 1, series: series, measurement: measurement,
+            entry, number: 1, series: series, units: .metric, measurement: measurement,
             needsReadAccess: needsReadAccess, calendar: calendar, locale: locale
         )
     }
@@ -68,7 +68,7 @@ struct CoachWorkoutTextTests {
         ]
         let now = Self.start.addingTimeInterval(3600)
 
-        let week = CoachWorkoutText.list(entries, days: 7, now: now, calendar: Self.calendar, locale: Self.locale)
+        let week = CoachWorkoutText.list(entries, days: 7, now: now, units: .metric, calendar: Self.calendar, locale: Self.locale)
         let lines = week.split(separator: "\n").map(String.init)
         #expect(lines.count == 3)
         #expect(lines[1].hasPrefix("1. Rowing \u{2014} "))
@@ -80,7 +80,7 @@ struct CoachWorkoutTextTests {
         #expect(CoachWorkoutText.entry(number: 2, in: entries)?.id == "mid")
         #expect(CoachWorkoutText.entry(number: 0, in: entries) == nil)
         #expect(CoachWorkoutText.entry(number: 4, in: entries) == nil)
-        #expect(CoachWorkoutText.list([], days: 7, now: now, calendar: Self.calendar, locale: Self.locale)
+        #expect(CoachWorkoutText.list([], days: 7, now: now, units: .metric, calendar: Self.calendar, locale: Self.locale)
             == "No workouts in the last 7 days.")
     }
 
@@ -137,6 +137,34 @@ struct CoachWorkoutTextTests {
         #expect(marathon.length == 3)
         #expect(marathon.rows.count == 14)
         #expect(marathon.rows.count <= CoachWorkoutText.maxSplits)
+    }
+
+    // catches: miles or yards chosen but splits still per km or per 100 m,
+    // or paces worked out in the wrong unit.
+    @Test func splitsFollowTheChosenUnits() {
+        // 2 mi at 8:00 /mi, and 200 yd at 2:00 /100 yd.
+        let run = ActivitySeriesBuilder.series(
+            Self.samples(.distance, value: 1609.344 / 16, minutes: 16), from: Self.start,
+            to: Self.start.addingTimeInterval(16 * 60), units: .imperial
+        )
+        let runText = CoachWorkoutText.detail(
+            Self.entry("run", minutes: 16, distance: 2 * 1609.344), number: 1, series: run, units: .imperial,
+            measurement: nil, needsReadAccess: false, calendar: Self.calendar, locale: Self.locale
+        )
+        #expect(runText.contains("Distance 2.0 mi"))
+        #expect(runText.contains("- 0\u{2013}1 mi: 8:00 /mi"))
+        #expect(runText.contains("- 1\u{2013}2 mi: 8:00 /mi"))
+
+        let swim = ActivitySeriesBuilder.series(
+            Self.samples(.swimmingDistance, value: 25 * 0.9144, minutes: 4), from: Self.start,
+            to: Self.start.addingTimeInterval(4 * 60), units: .imperial
+        )
+        let swimText = CoachWorkoutText.detail(
+            Self.entry("swim", "Swim", minutes: 4), number: 1, series: swim, units: .imperial,
+            measurement: nil, needsReadAccess: false, calendar: Self.calendar, locale: Self.locale
+        )
+        #expect(swimText.contains("- 0\u{2013}100 yd: 2:00 /100 yd"))
+        #expect(swimText.contains("- Swimming distance \u{2014} Apple Watch: 200 yd"))
     }
 
     // catches: a breakdown that only covers the first device, averages a

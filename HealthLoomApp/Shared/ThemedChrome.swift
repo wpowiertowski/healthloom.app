@@ -528,10 +528,13 @@ struct ThemedSegmentedRow<Value: Hashable>: View {
                 Spacer(minLength: 8)
                 control
             }
+            // Leading, full width: stacked rows line up with the panel's
+            // other rows instead of centring.
             VStack(alignment: .leading, spacing: 8) {
                 label
                 control
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16).padding(.vertical, 11)
     }

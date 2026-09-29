@@ -45,6 +45,7 @@ struct LocalOnlyTypeRow: View {
     /// Computed off the main thread (WP-67, `LocalRowSummarizer`).
     let summary: LocalRowSummary
     @Environment(\.locale) private var locale
+    @Environment(\.unitPreferences) private var units
 
     // WP-33 follow-on (Shared/ThemedChrome.swift): Yacht club presentation --
     // `TodayMetricRowView` geometry and a `ThemedBadge` pill in place of the
@@ -97,7 +98,7 @@ struct LocalOnlyTypeRow: View {
             type: type,
             summary: summary,
             locale: locale,
-            unitSystem: ContextAssembler.defaultUnitSystem(for: locale)
+            units: units
         )
     }
 

@@ -132,12 +132,12 @@ struct DataTrendText: Equatable {
         _ trend: RollingTrend?,
         metric: DataTrendMetric,
         locale: Locale,
-        unitSystem: UnitSystem
+        units: UnitPreferences
     ) -> DataTrendText {
         guard let trend else { return .empty }
-        let average = format(trend.weekAverage, metric: metric, locale: locale, unitSystem: unitSystem)
-        let change = format(abs(trend.delta), metric: metric, locale: locale, unitSystem: unitSystem)
-        let zero = format(0, metric: metric, locale: locale, unitSystem: unitSystem)
+        let average = format(trend.weekAverage, metric: metric, locale: locale, units: units)
+        let change = format(abs(trend.delta), metric: metric, locale: locale, units: units)
+        let zero = format(0, metric: metric, locale: locale, units: units)
         let comparison: String
         if change == zero {
             comparison = "7d avg · same as 30d"
@@ -165,13 +165,13 @@ struct DataTrendText: Equatable {
         type: GoogleDataType,
         summary: LocalRowSummary,
         locale: Locale,
-        unitSystem: UnitSystem
+        units: UnitPreferences
     ) -> DataTrendText {
         guard let metric = DataTrendMetric(type) else {
             let noun = type == .electrocardiogram ? ("recording", "recordings") : ("notification", "notifications")
             return events(count: summary.recentCount, noun: noun)
         }
-        return make(summary.trend, metric: metric, locale: locale, unitSystem: unitSystem)
+        return make(summary.trend, metric: metric, locale: locale, units: units)
     }
 
     /// The value key GoogleHealthClient's schema writes Active Zone Minutes
@@ -182,7 +182,7 @@ struct DataTrendText: Equatable {
         _ value: Double,
         metric: DataTrendMetric,
         locale: Locale,
-        unitSystem: UnitSystem
+        units: UnitPreferences
     ) -> String {
         switch metric {
         case .today(let kind):
@@ -190,7 +190,7 @@ struct DataTrendText: Equatable {
                 kind: kind,
                 reading: TodayMetricReading(value: value, date: nil),
                 locale: locale,
-                unitSystem: unitSystem
+                units: units
             )
             return [display.value, display.unit].compactMap { $0 }.joined(separator: " ")
         case .minutesPerDay:

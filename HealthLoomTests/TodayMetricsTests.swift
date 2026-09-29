@@ -132,7 +132,7 @@ struct TodayMetricFormatterTests {
     }
 
     @Test func missingReadingRendersTheEmptyRow() {
-        let display = TodayMetricFormatter.display(kind: .heart, reading: nil, locale: Self.enUS, unitSystem: .imperial)
+        let display = TodayMetricFormatter.display(kind: .heart, reading: nil, locale: Self.enUS, units: .imperial)
         #expect(display.value == nil)
         #expect(display.sub == "No data yet")
         #expect(display.accessibilityText == "Heart, no data yet")
@@ -144,7 +144,7 @@ struct TodayMetricFormatterTests {
     // degrade to its empty row — no value, no progress, no crash.
     @Test func deniedAuthorizationEmptiesEveryKind() {
         for kind in TodayMetricKind.allCases {
-            let display = TodayMetricFormatter.display(kind: kind, reading: nil, locale: Self.enUS, unitSystem: .imperial)
+            let display = TodayMetricFormatter.display(kind: kind, reading: nil, locale: Self.enUS, units: .imperial)
             #expect(display.value == nil, "\(kind) leaks a value without a reading")
             #expect(display.sub == "No data yet")
             #expect(display.progress == nil)
@@ -156,7 +156,7 @@ struct TodayMetricFormatterTests {
             kind: .steps,
             reading: TodayMetricReading(value: 8240, date: nil),
             locale: Self.enUS,
-            unitSystem: .imperial
+            units: .imperial
         )
         #expect(display.value == "8,240")
         #expect(display.sub == "82% of 10,000 goal")
@@ -168,7 +168,7 @@ struct TodayMetricFormatterTests {
             kind: .steps,
             reading: TodayMetricReading(value: 13_000, date: nil),
             locale: Self.enUS,
-            unitSystem: .imperial
+            units: .imperial
         )
         #expect(over.progress == 1.0)
         #expect(over.sub == "130% of 10,000 goal")
@@ -179,7 +179,7 @@ struct TodayMetricFormatterTests {
             kind: .bloodOxygen,
             reading: TodayMetricReading(value: 0.97, date: nil),
             locale: Self.enUS,
-            unitSystem: .imperial
+            units: .imperial
         )
         #expect(display.value == "97")
         #expect(display.unit == "%")
@@ -188,7 +188,7 @@ struct TodayMetricFormatterTests {
     @Test func sleepDistanceAndEnergyFormatTheirUnits() {
         let sleep = TodayMetricFormatter.display(
             kind: .sleep, reading: TodayMetricReading(value: 7 * 3600 + 12 * 60, date: nil), locale: Self.enUS,
-            unitSystem: .imperial
+            units: .imperial
         )
         #expect(sleep.value == "7h 12m")
         #expect(sleep.sub == "Last night")
@@ -196,7 +196,7 @@ struct TodayMetricFormatterTests {
         // en_US renders imperial miles…
         let distance = TodayMetricFormatter.display(
             kind: .distance, reading: TodayMetricReading(value: 5230, date: nil), locale: Self.enUS,
-            unitSystem: .imperial
+            units: .imperial
         )
         #expect(distance.value == "3.2")
         #expect(distance.unit == "mi")
@@ -204,7 +204,7 @@ struct TodayMetricFormatterTests {
         // …while de_DE renders metric kilometers from the same canonical meters.
         let metricDistance = TodayMetricFormatter.display(
             kind: .distance, reading: TodayMetricReading(value: 5230, date: nil), locale: Self.deDE,
-            unitSystem: .metric
+            units: .metric
         )
         #expect(metricDistance.value == "5,2")
         #expect(metricDistance.unit == "km")
@@ -212,24 +212,45 @@ struct TodayMetricFormatterTests {
 
         let energy = TodayMetricFormatter.display(
             kind: .activeEnergy, reading: TodayMetricReading(value: 1421, date: nil), locale: Self.enUS,
-            unitSystem: .imperial
+            units: .imperial
         )
         #expect(energy.value == "1,421")
         #expect(energy.unit == "kcal")
     }
 
-    @Test func weightFollowsLocaleUnitSystem() {
-        // 78 kg canonical: en_US reads pounds, de_DE reads kilograms.
+    // catches: kilojoules or miles chosen but the row (or VoiceOver) still
+    // in kilocalories or kilometres.
+    @Test func energyAndDistanceFollowTheChosenUnits() {
+        var units = UnitPreferences.metric
+        units.energy = .kilojoules
+        units.distance = .miles
+        let energy = TodayMetricFormatter.display(
+            kind: .activeEnergy, reading: TodayMetricReading(value: 500, date: nil), locale: Self.enUS, units: units
+        )
+        #expect(energy.value == "2,092")
+        #expect(energy.unit == "kJ")
+        #expect(energy.accessibilityText.contains("kilojoules"))
+        let distance = TodayMetricFormatter.display(
+            kind: .distance, reading: TodayMetricReading(value: 8047, date: nil), locale: Self.enUS, units: units
+        )
+        #expect(distance.value == "5.0")
+        #expect(distance.unit == "mi")
+        #expect(distance.accessibilityText.contains("miles"))
+    }
+
+    @Test func weightFollowsTheChosenUnit() {
+        // 78 kg canonical: pounds when chosen, kilograms (in de_DE's
+        // decimal comma) when chosen.
         let imperial = TodayMetricFormatter.display(
             kind: .weight, reading: TodayMetricReading(value: 78, date: nil), locale: Self.enUS,
-            unitSystem: .imperial
+            units: .imperial
         )
         #expect(imperial.value == "172.0")
         #expect(imperial.unit == "lb")
         #expect(imperial.accessibilityText.contains("pounds"))
         let metric = TodayMetricFormatter.display(
             kind: .weight, reading: TodayMetricReading(value: 78, date: nil), locale: Self.deDE,
-            unitSystem: .metric
+            units: .metric
         )
         #expect(metric.value == "78,0")
         #expect(metric.unit == "kg")
@@ -309,7 +330,7 @@ struct TodayRecencyTests {
 
 @Suite("Today HRV row")
 struct TodayHRVRowTests {
-    private let unitSystem = UnitSystem.metric
+    private let units = UnitPreferences.metric
 
     @Test("renders whole milliseconds with its own unit")
     // catches: HRV borrowing another kind's formatting — a bpm unit, or
@@ -320,7 +341,7 @@ struct TodayHRVRowTests {
             kind: .hrv,
             reading: TodayMetricReading(value: 42.37, date: nil),
             locale: Locale(identifier: "en_US"),
-            unitSystem: unitSystem
+            units: units
         )
         #expect(display.value == "42")
         #expect(display.unit == "ms")
@@ -381,7 +402,7 @@ struct TodayHRVRowTests {
             kind: .hrv,
             reading: TodayMetricReading(value: 52, date: nil, latest: TodayLatestReading(value: 45, date: Date())),
             locale: locale,
-            unitSystem: unitSystem
+            units: units
         )
         #expect(display.value == "52")
         #expect(display.sub.contains("Latest 45 ms"))
@@ -395,7 +416,7 @@ struct TodayHRVRowTests {
             kind: .hrv,
             reading: TodayMetricReading(value: 42, date: nil),
             locale: Locale(identifier: "en_US"),
-            unitSystem: unitSystem
+            units: units
         )
         #expect(display.accessibilityText.contains("milliseconds"))
         #expect(!display.accessibilityText.contains("beats per minute"))
