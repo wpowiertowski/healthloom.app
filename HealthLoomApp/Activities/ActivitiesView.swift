@@ -26,10 +26,17 @@ struct ActivitiesView: View {
     /// Fitbit exercise sessions only (WP-67: this fetched every
     /// `LocalSample`, per-minute Active Minutes included, on the main thread
     /// and filtered them here).
-    @Query(
-        filter: #Predicate<LocalSample> { $0.dataType == "exercise" },
-        sort: \LocalSample.start, order: .reverse
-    ) private var localSamples: [LocalSample]
+    @Query(ActivitiesView.exerciseSessions) private var localSamples: [LocalSample]
+    /// The filter reads `GoogleDataType.exercise`'s raw value, not a typed
+    /// copy of it (WP-74). Captured into a local first: `#Predicate` takes
+    /// values, not member lookups.
+    static var exerciseSessions: FetchDescriptor<LocalSample> {
+        let exercise = GoogleDataType.exercise.rawValue
+        return FetchDescriptor<LocalSample>(
+            predicate: #Predicate { $0.dataType == exercise },
+            sortBy: [SortDescriptor(\.start, order: .reverse)]
+        )
+    }
     @State private var workouts: [WorkoutSummary] = []
     @State private var hasLoaded = false
     private let provider = ActivitiesProvider()

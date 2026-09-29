@@ -6,6 +6,7 @@
 // WP-71: `BackgroundTime` stands in for UIKit's background-task assertion.
 
 import CoreModel
+import Foundation
 import SyncKit
 import Testing
 @testable import HealthLoom
@@ -134,5 +135,23 @@ import Testing
         #expect(recorder.synced.count <= SyncSchedule.maxConcurrentTypes)
         #expect(!sync.isRunning)
         #expect(sync.inFlight.isEmpty)
+    }
+
+    // catches (WP-74, review): the Data tab's trends and in-app rows
+    // refreshing only on Sync Now -- a background sync or backfill landing
+    // new rows (a new type's last sync, a backfill step, more items) left
+    // them stale -- and state no sync writes forcing reloads.
+    @Test func theDataTabRefreshesWheneverASyncLandsData() {
+        let date = Date(timeIntervalSince1970: 1_790_500_000)
+        func key(_ states: [SyncState], syncing: Bool = false) -> DashboardView.RefreshKey {
+            DashboardView.refreshKey(states, isSyncing: syncing)
+        }
+        let base = key([SyncState(dataType: "activeMinutes", lastSyncedAt: date, itemCount: 10)])
+        #expect(key([SyncState(dataType: "activeMinutes", lastSyncedAt: date, itemCount: 10)]) == base)
+        #expect(key([SyncState(dataType: "activeMinutes", lastSyncedAt: date.addingTimeInterval(60), itemCount: 10)]) != base)
+        #expect(key([SyncState(dataType: "activeMinutes", lastSyncedAt: date, backfillCursor: date, itemCount: 10)]) != base)
+        #expect(key([SyncState(dataType: "activeMinutes", lastSyncedAt: date, itemCount: 11)]) != base)
+        #expect(key([SyncState(dataType: "activeMinutes", lastSyncedAt: date, itemCount: 10)], syncing: true) != base)
+        #expect(key([SyncState(dataType: "activeMinutes", lastSyncedAt: date, lastError: "x", itemCount: 10)]) == base)
     }
 }

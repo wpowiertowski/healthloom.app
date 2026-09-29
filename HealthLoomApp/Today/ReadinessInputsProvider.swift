@@ -48,7 +48,9 @@ final class ReadinessInputsProvider {
     private let healthStore: HKHealthStore
     private let calendar: Calendar
 
-    init(healthStore: HKHealthStore = HKHealthStore(), calendar: Calendar = .current) {
+    /// `autoupdatingCurrent`: one provider lives as long as Today's does
+    /// (WP-69), and a `current` snapshot would miss a zone change (WP-74).
+    init(healthStore: HKHealthStore = HKHealthStore(), calendar: Calendar = .autoupdatingCurrent) {
         self.healthStore = healthStore
         self.calendar = calendar
     }
@@ -99,10 +101,22 @@ final class ReadinessInputsProvider {
         )
     }
 
+    /// Fetches last night's HRV itself -- for callers without Today's
+    /// shared snapshot (the morning insight).
     func aggregates(now: Date = Date()) async -> ReadinessAggregates {
         guard HKHealthStore.isHealthDataAvailable() else { return ReadinessAggregates() }
+        let nightly = await NightlyHRV.fetchSnapshot(
+            from: healthStore, preference: SleepSourcePreference.current(), timeZone: calendar.timeZone, now: now
+        )
+        return await aggregates(now: now, nightlyHRV: nightly)
+    }
+
+    /// WP-65: last night's average HRV (the Today tile's number) against
+    /// the mean of the 30 nights before it -- from the same device since
+    /// WP-74 (`NightlyHRV.Snapshot`).
+    func aggregates(now: Date = Date(), nightlyHRV nightly: NightlyHRV.Snapshot?) async -> ReadinessAggregates {
+        guard HKHealthStore.isHealthDataAvailable() else { return ReadinessAggregates() }
         let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) ?? now
-        async let hrv = nightlyHRV(now: now)
         async let rhrLatest = latestQuantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), now: now)
         async let rhrBaseline = averageQuantity(
             .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()),
@@ -111,10 +125,9 @@ final class ReadinessInputsProvider {
         async let sleep = lastNightSleep(now: now)
         async let strain = yesterdayWorkoutKcal(now: now)
         let slept = await sleep
-        let nightly = await hrv
         return ReadinessAggregates(
-            hrvLatestMs: nightly.latest,
-            hrvBaselineMs: nightly.baseline,
+            hrvLatestMs: nightly?.average.milliseconds,
+            hrvBaselineMs: nightly?.baseline,
             restingHRLatestBpm: await rhrLatest,
             restingHRBaselineBpm: await rhrBaseline,
             sleepSeconds: slept?.asleep,
@@ -124,21 +137,6 @@ final class ReadinessInputsProvider {
     }
 
     // MARK: - Query shapes (same bridging as TodayMetricsProvider)
-
-    /// WP-65: last night's average HRV (8 pm-6 am, the Today tile's number)
-    /// against the mean of the 30 nights before it. It used to be the latest
-    /// single reading against a 30-day average of every reading, so one
-    /// high reading at dawn filled the HRV bar.
-    private func nightlyHRV(now: Date) async -> (latest: Double?, baseline: Double?) {
-        let span = TimeInterval(NightlyHRV.baselineNights + NightlyHRV.freshNights + 1) * 86_400
-        let readings = await NightlyHRV.fetchReadings(from: healthStore, start: now.addingTimeInterval(-span), end: now)
-        let averages = NightlyHRV.averages(
-            readings, preference: SleepSourcePreference.current(), fallbackTimeZone: calendar.timeZone
-        )
-        let lastCompleted = NightlyHRV.lastCompletedNight(before: now, in: calendar.timeZone)
-        guard let night = NightlyHRV.latestNight(in: averages, lastCompleted: lastCompleted) else { return (nil, nil) }
-        return (averages[night], NightlyHRV.baseline(averages, before: night))
-    }
 
     /// Latest sample within the past 7 days (L3): a watch unworn for
     /// months still holds ancient HRV/RHR samples, and scoring those as

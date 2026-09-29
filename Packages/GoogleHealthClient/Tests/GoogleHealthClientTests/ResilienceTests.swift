@@ -201,7 +201,7 @@ struct ResilienceTests {
     func persistentDropThrowsAfterOneRetry() async throws {
         // The network comes back on the fourth request: an unbounded
         // retry would reach it and succeed, failing this test, not hang it.
-        let http = Self.dropping(.timedOut, failures: 3)
+        let http = Self.dropping(.cannotConnectToHost, failures: 3)
         let client = TestClientFactory.client(http: http, sleeper: RecordingSleeper(), jitter: ZeroJitterSource())
 
         do {
@@ -215,16 +215,18 @@ struct ResilienceTests {
     }
 
     // catches: retrying failures that repeat identically (a TLS failure
-    // costs a wasted wait and request), and the classifier dropping a
-    // transient code.
+    // costs a wasted wait and request) or that already waited the full
+    // timeout (WP-74), and the classifier dropping a transient code.
     @Test("only a network blip counts as transient")
     func transientClassification() async throws {
-        let transient: [URLError.Code] = [.networkConnectionLost, .timedOut, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed]
+        let transient: [URLError.Code] = [.networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed]
         for code in transient {
             #expect(GoogleHealthClient.isTransient(URLError(code)), "\(code)")
         }
         #expect(!GoogleHealthClient.isTransient(URLError(.secureConnectionFailed)))
         #expect(!GoogleHealthClient.isTransient(URLError(.badURL)))
+        // WP-74: a timeout already waited the full request timeout.
+        #expect(!GoogleHealthClient.isTransient(URLError(.timedOut)))
 
         let http = Self.dropping(.secureConnectionFailed, failures: 1)
         let client = TestClientFactory.client(http: http, sleeper: RecordingSleeper(), jitter: ZeroJitterSource())

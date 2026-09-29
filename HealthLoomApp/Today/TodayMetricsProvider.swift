@@ -31,23 +31,41 @@ final class TodayMetricsProvider {
     private let healthStore: HKHealthStore
     private let calendar: Calendar
 
-    init(healthStore: HKHealthStore = HKHealthStore(), calendar: Calendar = .current) {
+    /// `autoupdatingCurrent`, not `current`: Today keeps one provider for
+    /// the life of the process (WP-69), and `current` is a snapshot that
+    /// would keep the old zone's days and nights after a flight (WP-74).
+    init(healthStore: HKHealthStore = HKHealthStore(), calendar: Calendar = .autoupdatingCurrent) {
         self.healthStore = healthStore
         self.calendar = calendar
     }
 
-    func readings(for kinds: [TodayMetricKind], now: Date = Date()) async -> [TodayMetricKind: TodayMetricReading] {
+    /// Last night's HRV for both the HRV row and readiness (WP-74: they
+    /// fetched and averaged the same readings separately), off the main
+    /// actor. Nil without data or HealthKit.
+    func nightlyHRV(now: Date = Date()) async -> NightlyHRV.Snapshot? {
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        return await NightlyHRV.fetchSnapshot(
+            from: healthStore, preference: SleepSourcePreference.current(), timeZone: calendar.timeZone, now: now
+        )
+    }
+
+    /// `nightlyHRV` is `nightlyHRV(now:)`'s result, shared with readiness.
+    func readings(
+        for kinds: [TodayMetricKind],
+        nightlyHRV: NightlyHRV.Snapshot?,
+        now: Date = Date()
+    ) async -> [TodayMetricKind: TodayMetricReading] {
         guard HKHealthStore.isHealthDataAvailable() else { return [:] }
         var readings: [TodayMetricKind: TodayMetricReading] = [:]
         for kind in kinds {
-            if let reading = await reading(for: kind, now: now) {
+            if let reading = await reading(for: kind, nightlyHRV: nightlyHRV, now: now) {
                 readings[kind] = reading
             }
         }
         return readings
     }
 
-    private func reading(for kind: TodayMetricKind, now: Date) async -> TodayMetricReading? {
+    private func reading(for kind: TodayMetricKind, nightlyHRV: NightlyHRV.Snapshot?, now: Date) async -> TodayMetricReading? {
         let startOfDay = calendar.startOfDay(for: now)
         switch kind {
         case .steps:
@@ -61,7 +79,7 @@ final class TodayMetricsProvider {
         case .hrv:
             // WP-65: last night's average (8 pm-6 am, `NightlyHRV`) -- the
             // number the readiness score uses, not the latest single reading.
-            return await lastNightHRV(now: now)
+            return nightlyHRV.map { Self.hrvReading($0, calendar: calendar) }
         case .bloodOxygen:
             return await latestSample(.oxygenSaturation, unit: .percent(), now: now)
         case .weight:
@@ -207,25 +225,14 @@ final class TodayMetricsProvider {
         }
     }
 
-    /// The latest completed night's average HRV (or the most recent within
-    /// a week), dated by the night's evening; the preferred sleep source's
-    /// readings, each on the clock it was recorded by.
-    private func lastNightHRV(now: Date) async -> TodayMetricReading? {
-        let readings = await NightlyHRV.fetchReadings(
-            from: healthStore, start: now.addingTimeInterval(-TimeInterval(NightlyHRV.freshNights + 1) * 86_400), end: now
+    /// The HRV row's reading: the night's average dated by its evening,
+    /// and (WP-72) the newest single reading from the same device.
+    private static func hrvReading(_ snapshot: NightlyHRV.Snapshot, calendar: Calendar) -> TodayMetricReading {
+        TodayMetricReading(
+            value: snapshot.average.milliseconds,
+            date: snapshot.night.startOfEveningDate(in: calendar),
+            latest: snapshot.latest.map { TodayLatestReading(value: $0.milliseconds, date: $0.time) }
         )
-        let preference = SleepSourcePreference.current()
-        let averages = NightlyHRV.averages(
-            readings, preference: preference, fallbackTimeZone: calendar.timeZone
-        )
-        let lastCompleted = NightlyHRV.lastCompletedNight(before: now, in: calendar.timeZone)
-        guard let night = NightlyHRV.latestNight(in: averages, lastCompleted: lastCompleted),
-              let average = averages[night]
-        else { return nil }
-        // WP-72: the newest single reading rides along for the sub line.
-        let latest = NightlyHRV.latestReading(readings, preference: preference, now: now)
-            .map { TodayLatestReading(value: $0.milliseconds, date: $0.time) }
-        return TodayMetricReading(value: average, date: night.startOfEveningDate(in: calendar), latest: latest)
     }
 
     private func lastNightAsleepSeconds(now: Date) async -> TodayMetricReading? {

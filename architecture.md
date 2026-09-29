@@ -549,7 +549,7 @@ local notification → Today view coach panel.
 |---|---|
 | Google 401 | Single-flight token refresh (actor-serialized); hard failure ⇒ re-consent UI state |
 | Google 429 / 5xx | Exponential backoff + jitter; per-type; sync marked `error` with retry time |
-| No response (connection lost, timeout, offline, DNS) | One retry per page after a ~1 s backoff wait (WP-71); a second failure marks the type `error` as a transport failure. TLS or URL failures aren't retried |
+| No response (connection lost, offline, can't reach host, DNS) | One retry per page after a ~1 s backoff wait (WP-71); a second failure marks the type `error` as a transport failure. Timeouts (they already waited the full request timeout, WP-74), TLS and URL failures aren't retried |
 | User leaves the app during Sync Now | The run holds a background-task assertion (`BackgroundTime`, WP-71). When iOS's time runs out, the run is cancelled (types record `cancelled`) and no further type starts |
 | Workspace Google account | Detected post-consent; clear "personal accounts only" screen; sign-out |
 | HealthKit write denied | Detectable for writes (`sharingDenied`): per-type badge + Settings deep-link; reads: code defensively, HK never reveals denial |
