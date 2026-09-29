@@ -136,6 +136,10 @@ struct HealthLoomApp: App {
                 let backfill = appEnvironment.backfillCoordinator
                 let container = appEnvironment.modelContainer
                 Task {
+                    await OneTimeTask.runIfNeeded(key: "com.healthloom.repair.retiredReadinessHistory") {
+                        ReadinessScoreHistory.removeRetiredHistory()
+                        return "retired readiness history removed"
+                    }
                     await DuplicateWriteRepair.runIfNeeded { type in
                         try await syncEngine.removeDuplicateWrites(of: type)
                     }

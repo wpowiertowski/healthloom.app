@@ -74,8 +74,12 @@ struct TodayView: View {
     @State private var unavailableKinds: Set<TodayMetricKind> = []
     @State private var readiness: ReadinessDisplay = .pending
     @State private var isEditing = false
-    private let provider = TodayMetricsProvider()
-    private let readinessProvider = ReadinessInputsProvider()
+    // Shared, not per instance (WP-69): SwiftUI re-creates this struct on
+    // every parent render, and each instance built its own `HKHealthStore`.
+    private static let sharedProvider = TodayMetricsProvider()
+    private static let sharedReadinessProvider = ReadinessInputsProvider()
+    private var provider: TodayMetricsProvider { Self.sharedProvider }
+    private var readinessProvider: ReadinessInputsProvider { Self.sharedReadinessProvider }
     private let scoreHistory = ReadinessScoreHistory()
 
     var body: some View {

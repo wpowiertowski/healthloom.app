@@ -123,6 +123,11 @@ enum InitialRoute: Sendable, Equatable {
 
 struct LaunchConfiguration: Sendable {
     var stubGoogle: Bool
+    /// WP-69: `-UITestStubGoogleVolume` -- the stub returns realistic
+    /// per-minute Active Minutes / Zone Minutes volume (with network-like
+    /// latency) and the store starts with 60 days of that history, so a UI
+    /// test can reproduce a sync's load on the store (implies `stubGoogle`).
+    var stubGoogleVolume: Bool = false
     var seedDashboardData: Bool
     var useInMemoryContainer: Bool
     /// WP-33: `-UITestResetTodayMetrics` clears the persisted Today-panel
@@ -201,8 +206,15 @@ struct LaunchConfiguration: Sendable {
     /// Pure argument decoding, so the flag matrix is unit-testable without
     /// launching (WP-25 round-2 review #2/#7/#11).
     static func resolve(arguments: [String]) -> LaunchConfiguration {
-        let stubGoogle = arguments.contains("-UITestStubGoogle")
-        let seedDashboardData = arguments.contains("-UITestSeedData")
+        // `-HLStressVolume` (WP-69): the same volume and seeded dashboard, but
+        // without the `-UITest` prefix, so every production behaviour that
+        // UI-test mode switches off (the iCloud change monitor, the
+        // knowledge refresh trigger) stays on -- the stress test must see
+        // what a phone runs.
+        let stress = arguments.contains("-HLStressVolume")
+        let stubGoogleVolume = arguments.contains("-UITestStubGoogleVolume") || stress
+        let stubGoogle = arguments.contains("-UITestStubGoogle") || stubGoogleVolume
+        let seedDashboardData = arguments.contains("-UITestSeedData") || stress
         let scriptedCoach = arguments.contains("-UITestScriptedCoach")
         let scrubChat = arguments.contains("-UITestScrubChat")
         let forcedCoachAvailability = Self.forcedAvailability(from: arguments)
@@ -233,6 +245,7 @@ struct LaunchConfiguration: Sendable {
         let tipsStub = Self.tipsStub(from: arguments)
         return LaunchConfiguration(
             stubGoogle: stubGoogle,
+            stubGoogleVolume: stubGoogleVolume,
             seedDashboardData: seedDashboardData,
             // Scripted wins over forced unconditionally (round-2 #7): the
             // on-disk guarantee `-UITestScriptedCoach` documents holds even

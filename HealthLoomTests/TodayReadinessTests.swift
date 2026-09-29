@@ -61,13 +61,32 @@ struct ReadinessScoreHistoryTests {
     }
 
     // catches: pre-WP-57 scores (sleep double-counted) feeding the
-    // "vs 30-day average" caption for a month after the fix.
+    // "vs 30-day average" caption for a month after the fix, and the
+    // launch cleanup not removing them.
     @Test func scoresFromTheRetiredKeyAreDropped() throws {
         let ephemeral = try makeDefaults()
         ephemeral.defaults.set([[ReadinessScoreHistory.dayString(day(-1)), "95"]], forKey: ReadinessScoreHistory.retiredDefaultsKey)
         let history = ReadinessScoreHistory(defaults: ephemeral.defaults)
         #expect(history.recentScores(today: day(0)).isEmpty)
+        ReadinessScoreHistory.removeRetiredHistory(defaults: ephemeral.defaults)
         #expect(ephemeral.defaults.object(forKey: ReadinessScoreHistory.retiredDefaultsKey) == nil)
+    }
+
+    // catches: the init writing defaults again. TodayView builds one per
+    // render; a write posts a change notification mid-render, which fed the
+    // render loop that got the app killed by the watchdog (WP-69).
+    @Test func buildingAHistoryWritesNothing() throws {
+        let ephemeral = try makeDefaults()
+        ephemeral.defaults.set([["2026-09-01", "80"]], forKey: ReadinessScoreHistory.retiredDefaultsKey)
+        nonisolated final class Posts: @unchecked Sendable { var count = 0 }
+        let posts = Posts()
+        let token = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: ephemeral.defaults, queue: nil
+        ) { _ in posts.count += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+        _ = ReadinessScoreHistory(defaults: ephemeral.defaults)
+        #expect(posts.count == 0)
+        #expect(ephemeral.defaults.object(forKey: ReadinessScoreHistory.retiredDefaultsKey) != nil)
     }
 
     @Test func emptyHistoryYieldsNoRecentScores() throws {
