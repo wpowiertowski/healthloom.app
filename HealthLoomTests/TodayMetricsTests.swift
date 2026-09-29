@@ -348,6 +348,45 @@ struct TodayHRVRowTests {
         #expect(TodayMetricFormatter.nightSub(older, now: now, calendar: calendar).hasPrefix("Night of"))
     }
 
+    @Test("shows the latest single reading after the night")
+    // catches (WP-72): the row showing only the night (the owner asked for
+    // both), the latest reading's value or clock time dropped, or a reading
+    // from an earlier morning passed off as today's by its time alone.
+    func showsTheLatestReading() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+        let locale = Locale(identifier: "en_US")
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 28, hour: 15)))
+        let yesterday = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 27)))
+        let afternoon = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 28, hour: 14, minute: 14)))
+        let earlier = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 27, hour: 5, minute: 50)))
+
+        let today = TodayMetricFormatter.hrvSub(
+            night: yesterday, latest: TodayLatestReading(value: 44.6, date: afternoon),
+            now: now, calendar: calendar, locale: locale
+        )
+        #expect(today == "Last night \u{00B7} Latest 45 ms \u{00B7} 2:14\u{202F}PM")
+
+        let older = TodayMetricFormatter.hrvSub(
+            night: yesterday, latest: TodayLatestReading(value: 38, date: earlier),
+            now: now, calendar: calendar, locale: locale
+        )
+        #expect(older.contains("Sun"))
+        #expect(older.contains("5:50"))
+
+        #expect(TodayMetricFormatter.hrvSub(night: yesterday, latest: nil, now: now, calendar: calendar, locale: locale) == "Last night")
+
+        // The row itself carries it (display forwards the reading's latest).
+        let display = TodayMetricFormatter.display(
+            kind: .hrv,
+            reading: TodayMetricReading(value: 52, date: nil, latest: TodayLatestReading(value: 45, date: Date())),
+            locale: locale,
+            unitSystem: unitSystem
+        )
+        #expect(display.value == "52")
+        #expect(display.sub.contains("Latest 45 ms"))
+    }
+
     @Test("speaks milliseconds, not the neighbouring heart row's bpm")
     // catches: WP-37's rule that spoken units match displayed ones, broken
     // by HRV falling into the `.heart` branch it sits beside.

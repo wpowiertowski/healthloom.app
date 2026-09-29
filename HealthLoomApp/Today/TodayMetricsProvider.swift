@@ -214,14 +214,18 @@ final class TodayMetricsProvider {
         let readings = await NightlyHRV.fetchReadings(
             from: healthStore, start: now.addingTimeInterval(-TimeInterval(NightlyHRV.freshNights + 1) * 86_400), end: now
         )
+        let preference = SleepSourcePreference.current()
         let averages = NightlyHRV.averages(
-            readings, preference: SleepSourcePreference.current(), fallbackTimeZone: calendar.timeZone
+            readings, preference: preference, fallbackTimeZone: calendar.timeZone
         )
         let lastCompleted = NightlyHRV.lastCompletedNight(before: now, in: calendar.timeZone)
         guard let night = NightlyHRV.latestNight(in: averages, lastCompleted: lastCompleted),
               let average = averages[night]
         else { return nil }
-        return TodayMetricReading(value: average, date: night.startOfEveningDate(in: calendar))
+        // WP-72: the newest single reading rides along for the sub line.
+        let latest = NightlyHRV.latestReading(readings, preference: preference, now: now)
+            .map { TodayLatestReading(value: $0.milliseconds, date: $0.time) }
+        return TodayMetricReading(value: average, date: night.startOfEveningDate(in: calendar), latest: latest)
     }
 
     private func lastNightAsleepSeconds(now: Date) async -> TodayMetricReading? {

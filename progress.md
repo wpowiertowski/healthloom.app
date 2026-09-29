@@ -6539,3 +6539,27 @@ The backoff sleep's cancellation handling is now one helper shared by the 429/5x
 
 Mutants caught: start gate removed; expiry a no-op; assertion ended at the run's start;
 connection-lost not transient; everything transient; no wait; unbounded retry.
+
+## WP-72 — Today HRV row: last night and the latest reading
+
+Owner request: show both last night's HRV and the current measurement in the Today HRV row.
+The headline value stays last night's 8 pm–6 am average (WP-65, the number readiness uses).
+The sub line now adds the newest single reading: "Last night · Latest 45 ms · 2:14 PM".
+A reading from an earlier day names the day ("Sun 5:50 AM"), so last night's final reading
+never passes for today's.
+
+The latest reading comes from the same source the nightly averages prefer
+(`NightlyHRV.latestReading`, the sleep-source preference). A Fitbit's RMSSD and a watch's
+SDNN are different scales, so pairing a watch spot check with a Fitbit night would compare
+unlike numbers. The other device stands in only when the preferred one has no readings,
+the same as for a night. No extra HealthKit query: it reuses the readings the night average
+already fetched.
+
+**Tests** (milliseconds):
+- `NightlyHRVTests.theLatestReadingIsThePreferredSourcesNewest` (catches: the other
+  device's reading, an older reading, or a future-dated one shown as latest).
+- `TodayHRVRowTests.showsTheLatestReading` (catches: the latest dropped from the row, its
+  value or time missing, an earlier day's reading shown by its time alone).
+
+Mutants caught: display not forwarding the latest; no day for older readings; the `now`
+filter dropped; oldest instead of newest; source preference ignored.
