@@ -28,7 +28,7 @@ private enum ActivitiesSnapshotSubject {
 
     static func entry(
         _ id: String, _ title: String, _ family: ActivityFamily, day: Int, hour: Int, minute: Int, minutes: Double,
-        source: String = "Apple Watch", distance: Double? = nil, heartRate: Double? = nil,
+        source: String = ActivitySource.appleWatch.label, distance: Double? = nil, heartRate: Double? = nil,
         swim: SwimLocation? = nil, supplement: FitbitActivitySupplement? = nil
     ) -> ActivityEntry {
         let start = at(day: day, hour: hour, minute: minute)
@@ -49,7 +49,7 @@ private enum ActivitiesSnapshotSubject {
             dataType: GoogleDataType.exercise.rawValue,
             payloadJSON: Data(#"{"sessionPayload":"\#(session.base64EncodedString())"}"#.utf8),
             start: start, end: start.addingTimeInterval(37 * 60),
-            source: "Fitbit Air", linkedWatchWorkoutUUID: nil
+            source: "Google Health", linkedWatchWorkoutUUID: nil
         ))
     }
 
@@ -61,7 +61,8 @@ private enum ActivitiesSnapshotSubject {
               supplement: runSupplement),
         entry("swim-open", "Swim", .water, day: 18, hour: 7, minute: 7, minutes: 71, swim: .openWater),
         entry("strength", "Strength Training", .training, day: 15, hour: 18, minute: 2, minutes: 45),
-        entry("rowing", "Rowing", .endurance, day: 12, hour: 22, minute: 46, minutes: 20, source: "Hydrow", distance: 4180),
+        entry("rowing", "Rowing", .endurance, day: 12, hour: 22, minute: 46, minutes: 20,
+              source: ActivitySource.appleHealth.label(detail: "Hydrow"), distance: 4180),
     ] }
 
     static var list: some View {

@@ -6679,3 +6679,24 @@ input orders) and `twoSessionsLinkedToOneUnreadableWorkoutShowOnce`. `WorkoutsFi
 
 Mutants caught: keeping the first session and listing the rest; ranking without figures;
 counting each copy for the coach.
+
+## WP-76 — One name per source in Activities
+
+The Activities list and detail named sources several ways: "Fitbit" and "Other app" in
+chart legends, "Google Health" on figures, a bare app name ("Hydrow") on rows, and
+"HealthLoom" (the writer) on imported Fitbit workouts. A single `ActivitySource` now names
+every source:
+
+- **Google Health:** Google sessions, and the Fitbit samples and workouts HealthLoom wrote
+  to Apple Health.
+- **Apple Watch:** the watch.
+- **Apple Health:** any other app that saves there.
+
+Rows and the detail header add what recorded it when that says more ("Apple Health ·
+Hydrow", "Apple Watch · <watch>"). Chart legends map each sample's `SleepOrigin` through
+`ActivitySource(_:)`; `SleepOrigin.deviceLabel` is gone.
+
+**Tests:** `ActivityConsolidatorTests.everySourceIsNamedOneWay`; existing label assertions
+now name the constant. The Activities list and detail snapshots were re-recorded.
+
+Mutants caught: another app named Google Health; an import named after HealthLoom.

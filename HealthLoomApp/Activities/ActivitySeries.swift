@@ -309,14 +309,3 @@ nonisolated struct ActivityRoute: Equatable, Sendable {
             && zip(lhs.coordinates, rhs.coordinates).allSatisfy { $0.latitude == $1.latitude && $0.longitude == $1.longitude }
     }
 }
-
-/// Device names for the chart legends.
-nonisolated extension SleepOrigin {
-    var deviceLabel: String {
-        switch self {
-        case .appleWatch: return "Apple Watch"
-        case .fitbit: return "Fitbit"
-        case .otherApp: return "Other app"
-        }
-    }
-}

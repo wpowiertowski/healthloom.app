@@ -124,7 +124,7 @@ struct ActivityRow: View {
         if let energy = supplement.energyKilocalories {
             parts.append("\(Int(energy)) kcal")
         }
-        parts.append(supplement.source)
+        parts.append(supplement.sourceLabel)
         return parts.joined(separator: " \u{00B7} ")
     }
 }

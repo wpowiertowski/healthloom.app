@@ -162,7 +162,7 @@ import Testing
 
     // catches: the detail's summary missing a recorded figure, or the
     // linked Fitbit session's figures passed off as the watch workout's own.
-    @Test func figuresLabelTheSupplementByItsDevice() {
+    @Test func figuresLabelTheSupplementAsGoogleHealth() {
         let session = Data(#"{"exerciseType":"RUNNING","metricsSummary":{"distanceMillimeters":6300000.0,"caloriesKcal":410.0}}"#.utf8)
         let supplement = FitbitActivitySupplement(sample: LocalSample(
             externalID: "fitbit-run", dataType: GoogleDataType.exercise.rawValue,
@@ -178,8 +178,8 @@ import Testing
             ActivityFigure(label: "Duration", value: "37 m"),
             ActivityFigure(label: "Distance", value: "6.2 km"),
             ActivityFigure(label: "Avg heart rate", value: "148 bpm"),
-            ActivityFigure(label: "Fitbit Air distance", value: "6.3 km"),
-            ActivityFigure(label: "Fitbit Air energy", value: "410 kcal"),
+            ActivityFigure(label: "\(ActivitySource.googleHealth.label) distance", value: "6.3 km"),
+            ActivityFigure(label: "\(ActivitySource.googleHealth.label) energy", value: "410 kcal"),
         ])
     }
 
