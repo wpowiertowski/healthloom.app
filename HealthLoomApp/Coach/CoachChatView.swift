@@ -2,7 +2,8 @@
 //
 // WP-25 (implementation-plan.md): the Coach tab -- message list over the
 // view model's turns, token streaming into a draft bubble, input disabled
-// while responding, prewarm on appear, stop button, and error/unavailable
+// while responding, prewarm on appear, stop button, a typing indicator
+// naming what the coach is doing (WP-78), and error/unavailable
 // states from `AvailabilityGate`. Each assistant message with a linked
 // snapshot carries a "What did the coach see?" expander (summary list here;
 // full UI in WP-30). The trailing toolbar slot is WP-32's tier switcher
@@ -190,14 +191,18 @@ private struct CoachTurnRow: View {
     }
 }
 
-/// The in-flight streaming text. Reads only `draft` (review #11) and owns
-/// its own scroll-following, so the transcript above never observes tokens.
+/// The in-flight reply: the streaming text, and the typing indicator for
+/// as long as the coach is responding (WP-78) -- named ("Thinking…",
+/// "Reading workout 2…") until text arrives or while a tool runs, bare
+/// dots under the text otherwise. Reads only the draft and activity
+/// (review #11) and owns its own scroll-following, so the transcript
+/// above never observes tokens.
 private struct CoachDraftSection: View {
     let viewModel: CoachChatViewModel
     let proxy: ScrollViewProxy
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 6) {
             if !viewModel.draft.isEmpty {
                 Text(viewModel.draft)
                     .padding(10)
@@ -205,14 +210,89 @@ private struct CoachDraftSection: View {
                     .foregroundStyle(Theme.ink)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .accessibilityIdentifier("chat.message.streaming")
-                    .id("draft")
+            }
+            if viewModel.isResponding {
+                let named = viewModel.draft.isEmpty || !viewModel.toolActivity.isEmpty
+                CoachActivityIndicator(label: named ? viewModel.activityLabel : nil)
             }
         }
+        .id("draft")
         .onChange(of: viewModel.draft) {
             if !viewModel.draft.isEmpty {
                 proxy.scrollTo("draft", anchor: .bottom)
             }
         }
+        .onChange(of: viewModel.isResponding) {
+            if viewModel.isResponding {
+                proxy.scrollTo("draft", anchor: .bottom)
+            }
+        }
+    }
+}
+
+/// Three dots pulsing in turn, with what the coach is doing beside them in
+/// a reply bubble; bare dots when `label` is nil (the reply is already
+/// streaming). Still under Reduce Motion.
+struct CoachActivityIndicator: View {
+    let label: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            CoachActivityBubble(label: label, lit: nil)
+        } else {
+            TimelineView(.periodic(from: .now, by: 0.4)) { context in
+                CoachActivityBubble(label: label, lit: Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 3)
+            }
+        }
+    }
+}
+
+/// One frame of the indicator: `lit` is the dot at full strength (nil:
+/// all even). VoiceOver reads the label, not the dots.
+struct CoachActivityBubble: View {
+    let label: String?
+    let lit: Int?
+
+    var body: some View {
+        // Dots beside the label's first line, however it wraps.
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            CoachTypingDots(lit: lit)
+            if let label {
+                Text(label)
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
+                    .foregroundStyle(Theme.secondary)
+            }
+        }
+        .padding(.horizontal, label == nil ? 4 : 10)
+        .padding(.vertical, label == nil ? 2 : 10)
+        .background(label == nil ? Color.clear : Theme.accentTint)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label ?? "The coach is still replying")
+        .accessibilityIdentifier("chat.activity")
+    }
+}
+
+/// The indicator's dots; `lit` is the one at full strength (nil: all even).
+private struct CoachTypingDots: View {
+    let lit: Int?
+    @ScaledMetric(relativeTo: .caption) private var size: CGFloat = 6
+
+    var body: some View {
+        // Read here: the alignment closure is Sendable and can't touch the
+        // view's main-actor state. Lifts the dots to the text's middle.
+        let lift = size * 0.15
+        HStack(spacing: size * 0.6) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Theme.secondary)
+                    .frame(width: size, height: size)
+                    .opacity(lit == nil || lit == index ? 1 : 0.35)
+                    .animation(.easeInOut(duration: 0.3), value: lit)
+            }
+        }
+        .alignmentGuide(.firstTextBaseline) { $0[.bottom] + lift }
     }
 }
 

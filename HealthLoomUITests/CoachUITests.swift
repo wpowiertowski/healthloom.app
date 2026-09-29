@@ -44,8 +44,10 @@ final class CoachUITests: XCTestCase {
         // The user turn persists immediately...
         XCTAssertTrue(app.staticTexts[ping].waitForExistence(timeout: 10))
 
-        // ...a stream is visibly in flight (stop button present)...
+        // ...a stream is visibly in flight (stop button and typing
+        // indicator present)...
         XCTAssertTrue(anyElement["chat.stop"].waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement["chat.activity"].exists)
 
         // ...and the scripted reply's chunks join into the full reply.
         XCTAssertTrue(

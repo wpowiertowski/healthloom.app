@@ -3,7 +3,7 @@
 // WP-25 (implementation-plan.md): the Coach tab's conversation owner. One
 // `CoachSessionFactory` conversation session per view-model lifetime
 // (WP-22: the transcript is the memory), tools registered from
-// `CoachTools.all(store:workouts:)` (WP-24, WP-77), instructions from the effective prompt
+// `CoachTools.all(store:workouts:activity:)` (WP-24, WP-77, WP-78), instructions from the effective prompt
 // (user base + safety suffix, D10), per-turn context assembled + snapshotted
 // for `.chat` (WP-20) with the snapshot ID linked on the assistant turn --
 // the "What did the coach see?" expander reads it back via
@@ -89,8 +89,8 @@ final class CoachChatViewModel {
     /// Tool-set identity for the chat session (WP-22 `toolSetID` contract:
     /// a new tool set must bust the cached conversation session). Bump when
     /// the registered tools change -- nothing enforces this at compile
-    /// time, so review the bump whenever `CoachTools.all(store:workouts:)` changes.
-    static let chatToolSetID = "wp77-chat-v2"
+    /// time, so review the bump whenever `CoachTools.all(store:workouts:activity:)` changes.
+    static let chatToolSetID = "wp78-chat-v3"
 
     /// Newest turns kept in memory. The read is newest-first with a
     /// display-order reverse (WP-25 review #1): growth past the cap drops
@@ -118,6 +118,9 @@ final class CoachChatViewModel {
     private(set) var turns: [ChatTurn] = []
     private(set) var draft = ""
     private(set) var isResponding = false
+    /// Tools running right now, oldest first (WP-78): the typing indicator
+    /// names the newest.
+    private(set) var toolActivity: [String] = []
     /// Optimistic until the async gate resolves on first appear. `send`
     /// guards on this cached value for instant feedback, then re-queries
     /// the live gate as the stream task's first step (round-2 #4) -- the
@@ -317,7 +320,10 @@ final class CoachChatViewModel {
         isResponding = true
         draft = ""
         streamTask = Task {
-            defer { isResponding = false }
+            defer {
+                isResponding = false
+                toolActivity = []
+            }
             // Live re-check (round-2 #4): the sync guard above ran on the
             // cached value, which is optimistic before first appear. A
             // mismatch aborts before any model/streaming work, leaving the
@@ -336,7 +342,7 @@ final class CoachChatViewModel {
                 let turn = try await orchestrator.stream(
                     to: trimmed,
                     tier: servingTier,
-                    tools: CoachTools.all(store: deps.store, workouts: deps.workouts),
+                    tools: CoachTools.all(store: deps.store, workouts: deps.workouts, activity: toolActivityReporter),
                     toolSetID: Self.chatToolSetID
                 )
                 switch turn {
@@ -416,6 +422,24 @@ final class CoachChatViewModel {
         }
     }
 
+    /// What the typing indicator says: the newest running tool, else
+    /// that the model is thinking.
+    var activityLabel: String {
+        (toolActivity.last ?? "Thinking") + "\u{2026}"
+    }
+
+    /// Where the tools report (WP-78). Weak: cached sessions keep their
+    /// tools, and with them this closure, past any one turn.
+    var toolActivityReporter: CoachToolActivity {
+        CoachToolActivity(
+            began: { [weak self] label in self?.toolActivity.append(label) },
+            ended: { [weak self] label in
+                guard let self, let index = self.toolActivity.firstIndex(of: label) else { return }
+                self.toolActivity.remove(at: index)
+            }
+        )
+    }
+
     /// Stop button: cancels the in-flight stream only (never warm-up); the
     /// cancellation path above persists any visible partial.
     func stop() {
@@ -478,7 +502,7 @@ final class CoachChatViewModel {
         deps.factory.makeSession(
             for: .conversation,
             instructions: instructions,
-            tools: CoachTools.all(store: deps.store, workouts: deps.workouts),
+            tools: CoachTools.all(store: deps.store, workouts: deps.workouts, activity: toolActivityReporter),
             toolSetID: Self.chatToolSetID,
             tier: tier
         )

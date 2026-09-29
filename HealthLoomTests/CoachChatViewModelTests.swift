@@ -21,16 +21,16 @@ import Testing
 
 private struct WaitTimeout: Error {}
 
-/// Structural fixture (round-3 item 12): owns the view model
-/// AND its ephemeral suite. Call sites bind the FIXTURE (round-4 item
-/// 6 — never a projection off a temporary) and read `.viewModel` off
-/// the binding — bodies otherwise untouched, no defers.
 extension CoachWorkoutQueries {
     /// The chat tests never exercise the workout tools (CoachWorkoutTextTests
     /// covers their answers).
     static let noWorkouts = CoachWorkoutQueries(list: { _ in "" }, detail: { _, _ in "" })
 }
 
+/// Structural fixture (round-3 item 12): owns the view model
+/// AND its ephemeral suite. Call sites bind the FIXTURE (round-4 item
+/// 6 — never a projection off a temporary) and read `.viewModel` off
+/// the binding — bodies otherwise untouched, no defers.
 @MainActor
 final class CoachChatFixture {
     let viewModel: CoachChatViewModel
@@ -103,6 +103,27 @@ struct CoachChatViewModelTests {
         #expect(viewModel.errorMessage == nil)
         // The linked snapshot decodes through the shared accessor.
         #expect(viewModel.resolveSharedContext(for: viewModel.turns[1]) == [])
+    }
+
+    // catches: the typing indicator stuck on a finished tool, naming the
+    // older of two running tools, or dropping both when one of two
+    // same-named calls ends.
+    @Test("the typing indicator names the newest running tool, then goes back to thinking")
+    func activityLabelFollowsTools() throws {
+        let coachFixture = try makeCoachViewModel(session: TestCoachSession())
+        let viewModel = coachFixture.viewModel
+        let activity = viewModel.toolActivityReporter
+        #expect(viewModel.activityLabel == "Thinking\u{2026}")
+        activity.began("Looking through your workouts")
+        activity.began("Reading workout 2")
+        activity.began("Reading workout 2")
+        #expect(viewModel.activityLabel == "Reading workout 2\u{2026}")
+        activity.ended("Reading workout 2")
+        #expect(viewModel.activityLabel == "Reading workout 2\u{2026}")
+        activity.ended("Reading workout 2")
+        #expect(viewModel.activityLabel == "Looking through your workouts\u{2026}")
+        activity.ended("Looking through your workouts")
+        #expect(viewModel.activityLabel == "Thinking\u{2026}")
     }
 
     @Test("history past the cap keeps the newest turns, not the oldest")
