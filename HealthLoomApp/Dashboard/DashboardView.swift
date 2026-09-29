@@ -135,11 +135,37 @@ struct DashboardView: View {
         }
         // WP-56: trends load on appear and again whenever a Sync Now starts
         // or finishes (the run's end brings new days into Apple Health).
-        .task(id: appEnvironment.foregroundSync.isRunning) {
+        // WP-74: and whenever any sync lands data -- background syncs and
+        // backfill never flip `isRunning`, so the rows went stale.
+        .task(id: Self.refreshKey(syncStates, isSyncing: appEnvironment.foregroundSync.isRunning)) {
             trends = await DataTrendProvider().trends(for: AppEnvironment.p0Types)
             localSummaries = await LocalRowSummarizer(modelContainer: appEnvironment.modelContainer)
                 .summaries(for: AppEnvironment.p1LocalOnlyTypes, now: Date(), calendar: .current)
         }
+    }
+
+    /// What the trends and in-app rows depend on: whether Sync Now is
+    /// running, and per type its last sync, backfill progress and item
+    /// count -- every sync path (Sync Now, background, backfill) writes
+    /// these, and `syncStates` is a live query (WP-74).
+    struct RefreshKey: Hashable {
+        struct Row: Hashable {
+            let dataType: String
+            let lastSyncedAt: Date?
+            let backfillCursor: Date?
+            let itemCount: Int
+        }
+        let rows: [Row]
+        let isSyncing: Bool
+    }
+
+    static func refreshKey(_ states: [SyncState], isSyncing: Bool) -> RefreshKey {
+        RefreshKey(
+            rows: states.map {
+                RefreshKey.Row(dataType: $0.dataType, lastSyncedAt: $0.lastSyncedAt, backfillCursor: $0.backfillCursor, itemCount: $0.itemCount)
+            }.sorted { $0.dataType < $1.dataType },
+            isSyncing: isSyncing
+        )
     }
 
     /// Names the types in flight during Sync Now (WP-53): a first heart-rate

@@ -29,6 +29,7 @@ import CoachKit
 import CoreModel
 import SwiftData
 import SwiftUI
+import SyncKit
 
 struct TodayView: View {
     /// Opens the Coach tab from the coach panel (plan WP-33 step 1).
@@ -196,12 +197,10 @@ struct TodayView: View {
         // tab roots -- otherwise an empty bar would push the header down.
         .toolbar(.hidden, for: .navigationBar)
         .task(id: preferences.visibleKinds) {
-            await refreshReadings()
-            await refreshReadiness()
+            await refresh()
         }
         .refreshable {
-            await refreshReadings()
-            await refreshReadiness()
+            await refresh()
         }
     }
 
@@ -226,8 +225,16 @@ struct TodayView: View {
         }
     }
 
-    private func refreshReadings() async {
-        readings = await provider.readings(for: preferences.visibleKinds)
+    /// Last night's HRV is read once and shared by the HRV row and the
+    /// readiness score (WP-74: each fetched and averaged it separately).
+    private func refresh() async {
+        let nightlyHRV = await provider.nightlyHRV()
+        await refreshReadings(nightlyHRV: nightlyHRV)
+        await refreshReadiness(nightlyHRV: nightlyHRV)
+    }
+
+    private func refreshReadings(nightlyHRV: NightlyHRV.Snapshot?) async {
+        readings = await provider.readings(for: preferences.visibleKinds, nightlyHRV: nightlyHRV)
         unavailableKinds = await provider.unavailableKinds(among: preferences.visibleKinds)
     }
 
@@ -235,8 +242,8 @@ struct TodayView: View {
     /// -> hero. Any HealthKit gap (denied/unavailable/empty) surfaces as
     /// all-nil inputs, which `display` maps to `.pending` — the hero never
     /// renders the engine's all-nil fallback score.
-    private func refreshReadiness() async {
-        let inputs = ReadinessInputsProvider.assemble(await readinessProvider.aggregates())
+    private func refreshReadiness(nightlyHRV: NightlyHRV.Snapshot?) async {
+        let inputs = ReadinessInputsProvider.assemble(await readinessProvider.aggregates(nightlyHRV: nightlyHRV))
         let result = ReadinessEngine.score(inputs: inputs, recentScores: scoreHistory.recentScores())
         // Round-10 item 5: this record is the TOGGLE-INDEPENDENT path
         // — daily Today opens accumulate history (and the delta)

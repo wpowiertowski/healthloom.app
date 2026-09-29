@@ -103,8 +103,8 @@ nonisolated public struct GoogleHealthClient: Sendable {
                 // red dashboard row.
                 throw .cancelled
             } catch let urlError as URLError where Self.isTransient(urlError) && !retriedTransport {
-                // WP-71: a dropped connection or a timeout gets one retry
-                // after a short wait -- a Wi-Fi to cellular hand-off used
+                // WP-71: a dropped connection gets one retry after a short
+                // wait -- a Wi-Fi to cellular hand-off used
                 // to fail the whole type until the next sync.
                 retriedTransport = true
                 try await backoffSleep(seconds: config.backoff.delay(forAttempt: 1, retryAfter: nil, jitterFraction: jitter.nextFraction()))
@@ -156,12 +156,14 @@ nonisolated public struct GoogleHealthClient: Sendable {
     }
 
     /// Whether a request that got no response is worth one more try: the
-    /// connection dropped, timed out, or the network wasn't there for a
-    /// moment. Anything else (a TLS failure, a bad URL) fails the same way
-    /// again.
+    /// connection dropped, or the network wasn't there for a moment -- all
+    /// of which fail fast. Not a timeout (WP-74): it already waited the
+    /// whole request timeout, and waiting it again burned the background
+    /// time a sync left running has. Anything else (a TLS failure, a bad
+    /// URL) fails the same way again.
     nonisolated static func isTransient(_ error: URLError) -> Bool {
         switch error.code {
-        case .networkConnectionLost, .timedOut, .notConnectedToInternet,
+        case .networkConnectionLost, .notConnectedToInternet,
              .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
             true
         default:

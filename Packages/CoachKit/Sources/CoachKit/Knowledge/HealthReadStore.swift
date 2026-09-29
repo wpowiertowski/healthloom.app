@@ -90,7 +90,9 @@ nonisolated public final class HealthKitReadStore: HealthReadStore, Sendable {
     /// mirroring `HealthKitStore`'s init.
     public init(
         healthStore: HKHealthStore = HKHealthStore(),
-        calendar: Calendar = .current,
+        // `autoupdatingCurrent` (WP-74): a long-lived store must follow a
+        // time-zone change, and `current` is a snapshot.
+        calendar: Calendar = .autoupdatingCurrent,
         sleepSource: @escaping @Sendable () -> SleepSourcePreference = { SleepSourcePreference.current() }
     ) {
         self.healthStore = healthStore
@@ -115,12 +117,13 @@ nonisolated public final class HealthKitReadStore: HealthReadStore, Sendable {
     /// One reading per night: the 8 pm-6 am average (WP-65, `NightlyHRV`),
     /// dated by the night's evening -- the Today tile's and readiness's
     /// number, not a calendar-day average that mixed daytime spot checks in.
+    /// Completed, whole nights only (WP-74): tonight's first reading, or
+    /// the morning half of the night the window starts in, read as "latest".
     public func dailyHeartRateVariability(from start: Date, to end: Date) async -> [QuantityReading] {
         let readings = await NightlyHRV.fetchReadings(from: healthStore, start: start, end: end)
-        let averages = NightlyHRV.averages(readings, preference: sleepSource(), fallbackTimeZone: calendar.timeZone)
-        return averages.keys.sorted().compactMap { night in
-            averages[night].map { QuantityReading(date: night.startOfEveningDate(in: calendar), value: $0) }
-        }
+        return NightlyHRV.completedNights(
+            readings, preference: sleepSource(), timeZone: calendar.timeZone, from: start, to: end
+        ).map { QuantityReading(date: $0.night.startOfEveningDate(in: calendar), value: $0.average.milliseconds) }
     }
 
     public func sleepStageSegments(from start: Date, to end: Date) async -> [SleepStageSegment] {

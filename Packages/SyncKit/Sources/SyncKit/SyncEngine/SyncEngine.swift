@@ -443,6 +443,36 @@ public actor SyncEngine {
             // on a context with nothing pending (mid-pipeline failures) is
             // a harmless no-op.
             context.rollback()
+            // Unwrap for everything below — a bare check on the wrapper
+            // would misclassify a cancelled walk as failed.
+            let effective = (error as? PageWalkPartial)?.underlying ?? error
+            let walk = error as? PageWalkPartial
+            // The walk's skipped points count on every path, the error-row
+            // fetch failure included (WP-74): they were never going to be
+            // written, whatever happens to the rows around them.
+            totalSkipped += walk?.skipped ?? 0
+
+            // WP-12b: same drains on the failure path -- draining the count
+            // both reports partial progress and resets the resolver's state
+            // so nothing leaks into the next run. Links drain WITHOUT
+            // applying (round-9 item 7): the old apply-then-save stamped
+            // them onto SURVIVING pre-existing rows, and the upsert never
+            // resets `linkedWatchWorkoutUUID` -- a stale link went
+            // permanent. Drained here means DROPPED here (re-recorded on
+            // the re-pull, like the resolver state itself). Drained before
+            // the error-row fetch (WP-74), so its failure can't skip them.
+            _ = await conflictFilter.drainDeferredSessionLinks(for: type)
+            let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
+
+            /// Every failure-path outcome, with the run's counts (WP-74:
+            /// the error-row fetch failure built its own and dropped them).
+            func outcome(_ status: SyncStatus, errorMessage: String? = nil) -> SyncOutcome {
+                SyncOutcome(
+                    dataType: type, status: status, itemCount: totalItemCount,
+                    suppressedCount: suppressedCount, skippedCount: totalSkipped, errorMessage: errorMessage
+                )
+            }
+
             // Re-acquire after the rollback: it may have undone
             // `fetchOrCreateSyncState`'s insert on a first-ever sync.
             // Best-effort: if the fetch itself throws here, the error row cannot
@@ -451,10 +481,9 @@ public actor SyncEngine {
             do {
                 syncState = try fetchOrCreateSyncState(for: type, context: context)
             } catch {
-                let message = SyncLogRedactor.redact(String(describing: error))
-                let outcome = SyncOutcome(dataType: type, status: .error, itemCount: totalItemCount, errorMessage: message)
-                await runRecorder?.record(outcome)
-                return outcome
+                let failed = outcome(.error, errorMessage: SyncLogRedactor.redact(String(describing: error)))
+                await runRecorder?.record(failed)
+                return failed
             }
 
             // Round-10 item 14: commit the completed pages' `.localOnly`
@@ -464,13 +493,9 @@ public actor SyncEngine {
             // idempotently around the persisted rows). The walk counted
             // them, so the count reflects persisted rows exactly:
             // subtract any upsert that fails rather than masking the
-            // original error with a new throw. Unwrap for everything
-            // below — a bare check on the wrapper would misclassify a
-            // cancelled walk as failed.
-            let effective = (error as? PageWalkPartial)?.underlying ?? error
-            if let walk = error as? PageWalkPartial {
+            // original error with a new throw.
+            if let walk {
                 totalItemCount += walk.total
-                totalSkipped += walk.skipped
                 var upsertFailures = 0
                 for point in walk.localOnly {
                     do {
@@ -486,17 +511,6 @@ public actor SyncEngine {
                     totalItemCount -= upsertFailures
                 }
             }
-
-            // WP-12b: same drains on the failure path -- draining the count
-            // both reports partial progress and resets the resolver's state
-            // so nothing leaks into the next run. Links drain WITHOUT
-            // applying (round-9 item 7): the old apply-then-save stamped
-            // them onto SURVIVING pre-existing rows, and the upsert never
-            // resets `linkedWatchWorkoutUUID` -- a stale link went
-            // permanent. Drained here means DROPPED here (re-recorded on
-            // the re-pull, like the resolver state itself).
-            _ = await conflictFilter.drainDeferredSessionLinks(for: type)
-            let suppressedCount = await conflictFilter.drainSuppressedCount(for: type)
 
             // Cancellation is a stop, not a failure: no error status, no
             // message, cursor at the last committed span -- the next run
@@ -514,10 +528,7 @@ public actor SyncEngine {
                 // the red row for silent amnesia.
                 syncState.lastStatus = SyncStatus.cancelled.rawValue
                 try? context.save()
-                let stopped = SyncOutcome(
-                    dataType: type, status: .cancelled, itemCount: totalItemCount,
-                    suppressedCount: suppressedCount, skippedCount: totalSkipped
-                )
+                let stopped = outcome(.cancelled)
                 await runRecorder?.record(stopped)
                 return stopped
             }
@@ -537,16 +548,9 @@ public actor SyncEngine {
             syncState.lastStatus = SyncStatus.error.rawValue
             syncState.lastError = message
             try? context.save()
-            let outcome = SyncOutcome(
-                dataType: type,
-                status: .error,
-                itemCount: totalItemCount,
-                suppressedCount: suppressedCount,
-                skippedCount: totalSkipped,
-                errorMessage: message
-            )
-            await runRecorder?.record(outcome) // WP-18: additive diagnostics hook, see this actor's `runRecorder` doc comment.
-            return outcome
+            let failed = outcome(.error, errorMessage: message)
+            await runRecorder?.record(failed) // WP-18: additive diagnostics hook, see this actor's `runRecorder` doc comment.
+            return failed
         }
     }
 

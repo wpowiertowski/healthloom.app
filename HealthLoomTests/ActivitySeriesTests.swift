@@ -208,4 +208,22 @@ import Testing
         #expect(samples.first { $0.metric == .activeZoneMinutes }?.value == 2)
         #expect(samples.allSatisfy { $0.origin == .fitbit })
     }
+
+    // catches (WP-74): the Activities list's query drifting from
+    // `GoogleDataType.exercise` (it held a typed copy of the string) --
+    // the list would silently lose every Fitbit session -- or letting
+    // per-minute rows back onto the main thread (WP-67).
+    @Test func theActivitiesQueryReadsExerciseSessionsOnly() throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let context = ModelContext(container)
+        for (id, type) in [("run", GoogleDataType.exercise), ("am", .activeMinutes), ("azm", .activeZoneMinutes)] {
+            context.insert(LocalSample(
+                externalID: id, dataType: type.rawValue, payloadJSON: Data("{}".utf8),
+                start: Self.start, end: Self.end, source: "Fitbit Air", linkedWatchWorkoutUUID: nil
+            ))
+        }
+        try context.save()
+        let rows = try ModelContext(container).fetch(ActivitiesView.exerciseSessions)
+        #expect(rows.map(\.externalID) == ["run"])
+    }
 }

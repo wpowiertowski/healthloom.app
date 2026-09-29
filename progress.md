@@ -6605,3 +6605,54 @@ since MapKit draws nothing off-screen). `ActivitiesUITests` now also opens the d
 (+3 s; no new UI test). Mutants caught: window end inclusive; devices merged; no zero start;
 totals averaged when thinned; summary from thinned points; readings axis from zero; reader
 ignoring type; speed shown raw.
+
+## WP-74 — Code review fixes (last 10 commits)
+
+All ten findings from the `/code-review last 10 commits` pass.
+
+1. **Readiness blended devices** (`NightlyHRV.baseline`). Each night now keeps the device
+   that produced it (`NightAverage`). The baseline averages only earlier nights from the
+   same device, so a Watch SDNN night is never scored against a Fitbit RMSSD baseline.
+2. **"Latest" from the other device** (WP-72 regression). The Today row's latest reading now
+   comes from the device of the night it's shown beside (`latestReading(origin:)`), not the
+   preferred device across the whole window.
+3. **Stale calendar after a time-zone change.** Today's shared providers (WP-69) and the
+   coach's `HealthReadStore` default to `Calendar.autoupdatingCurrent`; `current` is a
+   snapshot.
+4. **The coach's "latest" was a partial night.** `NightlyHRV.completedNights` keeps only
+   nights whose whole 20:00–06:00 window lies inside the query and has ended: not tonight's
+   first reading, and not the morning half of the night the window starts in.
+5. **Stale Data-tab rows.** The trends and in-app rows refresh on a key built from every
+   `SyncState`'s last sync, backfill cursor and item count (a live query), not only Sync Now.
+   Background syncs and backfill now refresh them.
+6. **Timeouts no longer retried** (WP-71). A timed-out request already waited the whole
+   request timeout; waiting again used up a background sync's time.
+7. **The skipped count on the last error path.** Every failure-path outcome in
+   `SyncEngine.sync` goes through one local builder carrying the item, skipped and suppressed
+   counts. The walk's skipped points and the resolver drains now run before the error-row
+   fetch, so that fetch failing no longer drops the counts or leaks resolver state into the
+   next run. There's no seam that makes the fetch fail, so this path is fixed structurally
+   rather than tested.
+8. **Hard-coded predicate string.** The Activities query is a static `FetchDescriptor` built
+   from `GoogleDataType.exercise.rawValue`.
+9. **Public surface narrowed.** In `NightlyHRV`, only what the app and CoachKit call stays
+   public: `NightKey` and `startOfEveningDate`; `Reading`'s time and milliseconds (now
+   `let`); `NightAverage.milliseconds`; `Snapshot`; `completedNights`; `fetchReadings`;
+   `fetchSnapshot`.
+10. **Allocation and duplicate work.** Night and day keys are arithmetic on the zone's
+    offset at that instant, with no `Calendar` per reading. Today reads one
+    `NightlyHRV.Snapshot` per refresh (`fetchSnapshot`, `@concurrent`, off the main actor)
+    and shares it between the HRV row and readiness. The morning insight path fetches its
+    own.
+
+**Tests** (milliseconds):
+- `NightlyHRVTests`: same-device baseline, the review's snapshot scenario, completed nights
+  for the coach, and the calendar-free arithmetic against `Calendar` across DST changes,
+  half- and quarter-hour zones and pre-2001 dates.
+- `ResilienceTests`: timeouts not transient.
+- `ForegroundSyncTests.theDataTabRefreshesWheneverASyncLandsData`.
+- `ActivitySeriesTests.theActivitiesQueryReadsExerciseSessionsOnly`.
+
+Mutants caught: baseline from any device; latest from any device; coach keeping tonight; coach
+keeping the partial first night; offset ignoring DST; first night counted from the start day;
+timeout transient; refresh key ignoring item count; query reading the wrong type.
