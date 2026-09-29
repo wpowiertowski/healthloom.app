@@ -43,7 +43,7 @@ nonisolated public enum SleepSourcePreference: String, CaseIterable, Sendable {
 }
 
 /// Where a sleep sample came from.
-nonisolated public enum SleepOrigin: Sendable, Equatable {
+nonisolated public enum SleepOrigin: Sendable, Hashable {
     /// Imported by HealthLoom from the Google (Fitbit) feed.
     case fitbit
     case appleWatch

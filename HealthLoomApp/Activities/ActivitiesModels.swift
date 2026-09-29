@@ -185,6 +185,39 @@ struct ActivityEntry: Identifiable, Hashable {
     }
 }
 
+/// One labelled figure on the activity detail's summary panel (WP-73).
+struct ActivityFigure: Equatable {
+    let label: String
+    let value: String
+}
+
+extension ActivityEntry {
+    /// The detail screen's summary: the badges' readings, labelled, then
+    /// the linked Fitbit session's own figures under its device's name --
+    /// still a supplement (D13.2), never merged into the workout's.
+    var figures: [ActivityFigure] {
+        var figures = [ActivityFigure(label: "Duration", value: ActivityFormat.totalDuration(duration))]
+        if let distanceMeters, distanceMeters > 0 {
+            figures.append(ActivityFigure(label: "Distance", value: ActivityFormat.distance(distanceMeters)))
+        }
+        if let averageHeartRate, averageHeartRate > 0 {
+            figures.append(ActivityFigure(label: "Avg heart rate", value: "\(Int(averageHeartRate.rounded())) bpm"))
+        }
+        if let swimLocation {
+            figures.append(ActivityFigure(label: "Location", value: swimLocation.label))
+        }
+        if let supplement {
+            if let distance = supplement.distanceMeters, distance > 0 {
+                figures.append(ActivityFigure(label: "\(supplement.source) distance", value: ActivityFormat.distance(distance)))
+            }
+            if let energy = supplement.energyKilocalories, energy > 0 {
+                figures.append(ActivityFigure(label: "\(supplement.source) energy", value: "\(Int(energy)) kcal"))
+            }
+        }
+        return figures
+    }
+}
+
 enum ActivityFormat {
     /// "6.2 km"; under a kilometre, whole metres ("850 m").
     static func distance(_ meters: Double) -> String {

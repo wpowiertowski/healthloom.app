@@ -247,6 +247,24 @@ public final class HealthKitAuth: Sendable {
         }
     }
 
+    /// Read access for HealthKit types no `GoogleDataType` maps to -- the
+    /// activity detail's workout metrics (running power, cadence, ...) and
+    /// workout routes (WP-73). Same incremental semantics and invisible
+    /// denial as `requestRead(_:)`; read-disallowed sample types (the Food
+    /// correlation) are dropped, never passed to HealthKit.
+    public func requestRead(objectTypes: Set<HKObjectType>) async throws(HealthKitAuthError) {
+        let readable = objectTypes.filter { type in
+            guard let sampleType = type as? HKSampleType else { return true }
+            return Self.isReadRequestable(sampleType)
+        }
+        guard isAvailable else { throw .healthDataUnavailable }
+        do {
+            try await store.requestAuthorization(toShare: [], read: readable)
+        } catch {
+            throw .underlying(String(describing: error))
+        }
+    }
+
     /// Current write (share) authorization status for `type`
     /// (implementation-plan.md WP-06 step 4).
     ///

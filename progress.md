@@ -6563,3 +6563,45 @@ already fetched.
 
 Mutants caught: display not forwarding the latest; no day for older readings; the `now`
 filter dropped; oldest instead of newest; source preference ignored.
+
+## WP-73 — Activity detail: summary, route map, and a time plot of every measurement
+
+Owner request: tapping an activity opens a full summary with time plots of every data point
+recorded during it, plus a map when the activity has a route.
+
+**Screen.** `ActivityDetailView`, pushed from each Activities row, shows:
+- the day, times and source;
+- a summary panel (`ActivityEntry.figures`: duration, distance, average heart rate, swim
+  location, and the linked Fitbit session's figures under its device's name — still a
+  supplement);
+- the route on a map (MapKit) when Apple Health has one;
+- a chart per metric recorded during the activity (Swift Charts), with one line per device
+  and each device's headline figures above the chart.
+
+**Data.** `ActivityDetailProvider` reads every quantity in `ActivityMetric`'s catalog from any
+source, inside the activity's window: heart rate, energy, distance (on foot, cycling,
+swimming), steps, running and cycling speed/power/cadence/form metrics, strokes, flights,
+breathing rate and SpO₂. It also reads Fitbit's in-app Zone Minutes and Active Minutes
+(`ActivityLocalSampleReader`, off the main actor) and the workout's route
+(`HKWorkoutRouteQuery`). The HealthKit reads complete in nonisolated handlers, so the series
+types are `nonisolated`. The read types onboarding doesn't cover go through a new
+`HealthKitAuth.requestRead(objectTypes:)` the first time a detail opens; HealthKit prompts
+only for new types. That request is skipped under `-UITest*`.
+
+**Series logic** (`ActivitySeries.swift`, pure):
+- Samples count when they start inside the activity; each device gets its own line, in a
+  fixed order with fixed colours.
+- Amounts (energy, steps, distance) plot as a running total from zero; readings plot as read,
+  with an axis fitted to their range.
+- Lines thin to ≤240 points (slice means, or the slice's last point for totals); headline
+  figures come from every sample. Routes thin to ≤1,000 points, keeping both ends.
+- `SleepOrigin` became `Hashable` (SyncKit) so lines can group by device.
+
+**Tests.** `ActivitySeriesTests` (13, milliseconds) — window, device lines, catalog order,
+running totals, summary from every sample, thinning, axis domain, display units, headlines,
+each metric having exactly one source, route thinning, figures, and the in-app reader. The
+Activities snapshot suite gains three detail renders (light/dark XL, light AXXXL; no map,
+since MapKit draws nothing off-screen). `ActivitiesUITests` now also opens the detail
+(+3 s; no new UI test). Mutants caught: window end inclusive; devices merged; no zero start;
+totals averaged when thinned; summary from thinned points; readings axis from zero; reader
+ignoring type; speed shown raw.

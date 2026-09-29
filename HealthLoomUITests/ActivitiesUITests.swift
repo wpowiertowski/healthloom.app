@@ -54,5 +54,18 @@ final class ActivitiesUITests: XCTestCase {
         XCTAssertTrue(detail.label.contains("40 min"))
         // WP-37: hit-region audit over the Activities screen (test plan §6).
         try app.performAccessibilityAudit(for: [.hitRegion])
+
+        // WP-73: the row opens the activity in full. The simulator's store
+        // holds no samples for it, so the screen shows its summary and
+        // finishes loading (the empty note or charts, never a spinner).
+        title.tap()
+        XCTAssertTrue(anyElement["activity.detail.summary"].waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement["activity.detail.figures"].exists)
+        let loaded = NSPredicate { _, _ in
+            anyElement["activity.detail.empty"].exists
+                || anyElement.matching(NSPredicate(format: "identifier BEGINSWITH 'activity.detail.chart.'")).count > 0
+        }
+        wait(for: [XCTNSPredicateExpectation(predicate: loaded, object: nil)], timeout: 10)
+        try app.performAccessibilityAudit(for: [.hitRegion])
     }
 }

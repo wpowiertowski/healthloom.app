@@ -259,7 +259,12 @@ dense HR), so it is the priority source wherever it exists; Fitbit fills everyth
    as an `HKWorkout`. It is kept in `LocalSample`, linked to the watch workout's UUID,
    and surfaces in the in-app **Activities view** as one consolidated activity: watch
    workout primary, Fitbit fields shown only where they add something (e.g. Active Zone
-   Minutes, recovery metrics) — supplement, never duplicate.
+   Minutes, recovery metrics) — supplement, never duplicate. Each entry opens a detail
+   screen (WP-73): its summary figures, the workout's route on a map when Apple Health
+   has one, and a time plot of every measurement recorded during it, one line per device
+   (`ActivitySeries`, read by `ActivityDetailProvider`). The extra read types (running
+   and cycling metrics, workout routes) are asked for incrementally, the first time a
+   detail opens.
 3. **Stream-level:** Fitbit samples of watch-covered quantity types (heart rate, active
    energy, steps, distance) whose interval falls inside a coverage window are suppressed
    (not written) — the watch already recorded them at higher fidelity. Outside coverage
