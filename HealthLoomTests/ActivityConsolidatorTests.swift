@@ -122,6 +122,45 @@ struct ActivityConsolidatorTests {
         #expect(entries[0].sourceLabel == "Fitbit Air")
     }
 
+    /// A second Google copy of the same activity with no figures, running a
+    /// little longer than `deferredSession` -- so only the figures rank can
+    /// pick the right one.
+    static func bareSession(linkedTo uuid: UUID?) -> FitbitActivitySupplement {
+        FitbitActivitySupplement(sample: LocalSample(
+            externalID: "fitbit-run-0",
+            dataType: GoogleDataType.exercise.rawValue,
+            payloadJSON: Data("{}".utf8),
+            start: at(10),
+            end: at(10.8),
+            source: "Google Health",
+            linkedWatchWorkoutUUID: uuid
+        ))
+    }
+
+    @Test func twoSessionsLinkedToOneWorkoutFoldIntoItsEntry() {
+        // Google Health held two copies of one Hydrow row; both deferred to
+        // the one workout. The second rendered as its own row.
+        let rich = FitbitActivitySupplement(sample: Self.deferredSession())
+        let bare = Self.bareSession(linkedTo: Self.watchUUID)
+
+        for order in [[rich, bare], [bare, rich]] {
+            let entries = ActivityConsolidator.consolidate(workouts: [Self.watchWorkout()], supplements: order)
+            #expect(entries.map(\.id) == [Self.watchUUID.uuidString])
+            #expect(entries.first?.supplement == rich)
+        }
+    }
+
+    @Test func twoSessionsLinkedToOneUnreadableWorkoutShowOnce() {
+        let missing = UUID()
+        let rich = FitbitActivitySupplement(sample: Self.deferredSession(linkedTo: missing))
+
+        let entries = ActivityConsolidator.consolidate(
+            workouts: [], supplements: [Self.bareSession(linkedTo: missing), rich]
+        )
+
+        #expect(entries.map(\.id) == [rich.externalID])
+    }
+
     @Test func mixedDayConsolidatesEachActivityOnceNewestFirst() {
         let watch = Self.watchWorkout()
         let fitbitOnly = Self.fitbitImportedWorkout()

@@ -283,21 +283,22 @@ enum ActivityConsolidator {
         workouts: [WorkoutSummary],
         supplements: [FitbitActivitySupplement]
     ) -> [ActivityEntry] {
-        var supplementsByWorkoutUUID: [UUID: FitbitActivitySupplement] = [:]
+        // Several sessions can link to one workout: Google Health can hold
+        // two copies of one activity (a Hydrow row the tracker also logged),
+        // and the resolver defers both to the same Apple Health workout.
+        // They are one activity, so the workout's entry shows the most
+        // complete of them and the rest fold away -- rendering the others
+        // standalone listed the same row twice.
+        var linked: [UUID: [FitbitActivitySupplement]] = [:]
         var unlinked: [FitbitActivitySupplement] = []
         for supplement in supplements {
             if let uuid = supplement.linkedWatchWorkoutUUID {
-                // One supplement per workout; a duplicate link (shouldn't
-                // happen -- external IDs are unique) keeps the first.
-                if supplementsByWorkoutUUID[uuid] == nil {
-                    supplementsByWorkoutUUID[uuid] = supplement
-                } else {
-                    unlinked.append(supplement)
-                }
+                linked[uuid, default: []].append(supplement)
             } else {
                 unlinked.append(supplement)
             }
         }
+        var supplementsByWorkoutUUID = linked.compactMapValues(mostComplete)
 
         var entries: [ActivityEntry] = workouts.map { workout in
             // Always consume AND always attach: the link is ground truth
@@ -327,7 +328,8 @@ enum ActivityConsolidator {
 
         // Whatever's left points at a workout we couldn't read -- surface it
         // standalone (header note). Supplements consumed above are gone from
-        // the dictionary; ones never consumed join the unlinked list.
+        // the dictionary; ones never consumed join the unlinked list -- one
+        // per workout, so copies of an unreadable workout still show once.
         unlinked.append(contentsOf: supplementsByWorkoutUUID.values)
         entries.append(contentsOf: unlinked.map { supplement in
             // Standalone: the session's own distance is the ENTRY's
@@ -354,6 +356,21 @@ enum ActivityConsolidator {
         return entries.sorted {
             if $0.start != $1.start { return $0.start > $1.start }
             return $0.id > $1.id
+        }
+    }
+
+    /// The session that says the most about one activity: the one with more
+    /// recorded figures (distance, energy), then the longer one, then the
+    /// lowest external ID so the pick never depends on fetch order.
+    static func mostComplete(_ sessions: [FitbitActivitySupplement]) -> FitbitActivitySupplement? {
+        func rank(_ session: FitbitActivitySupplement) -> (Int, TimeInterval) {
+            let figures = [session.distanceMeters, session.energyKilocalories].compactMap { $0 }.count
+            return (figures, session.end.timeIntervalSince(session.start))
+        }
+        return sessions.min { lhs, rhs in
+            let (l, r) = (rank(lhs), rank(rhs))
+            if l != r { return l > r }
+            return lhs.externalID < rhs.externalID
         }
     }
 

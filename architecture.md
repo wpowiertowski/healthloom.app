@@ -259,7 +259,10 @@ dense HR), so it is the priority source wherever it exists; Fitbit fills everyth
    as an `HKWorkout`. It is kept in `LocalSample`, linked to the watch workout's UUID,
    and surfaces in the in-app **Activities view** as one consolidated activity: watch
    workout primary, Fitbit fields shown only where they add something (e.g. Active Zone
-   Minutes, recovery metrics) — supplement, never duplicate. Each entry opens a detail
+   Minutes, recovery metrics) — supplement, never duplicate. Several sessions can link to
+   one workout, because Google Health can hold two copies of one activity. They fold into
+   that workout's single entry, which shows the most complete one: more figures, then the
+   longer session (WP-75). Each entry opens a detail
    screen (WP-73): its summary figures, the workout's route on a map when Apple Health
    has one, and a time plot of every measurement recorded during it, one line per device
    (`ActivitySeries`, read by `ActivityDetailProvider`). The extra read types (running
