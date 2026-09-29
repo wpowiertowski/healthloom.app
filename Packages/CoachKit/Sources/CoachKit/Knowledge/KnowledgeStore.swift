@@ -229,35 +229,24 @@ public final class KnowledgeStore {
         let fetchedSleepSegments = await sleepSegments
         let fetchedWorkouts = await workouts
 
-        let context = ModelContext(modelContainer)
-        // Code review (2026-08-28) finding #10: bound the fetch to the
-        // widest window any derivation below actually needs
-        // (`workoutsWindowDays`, always ≥ `localOnlyWindowDays`) instead of
-        // pulling every `LocalSample` row ever stored. This is also what
-        // fixes finding #4 (the unlinked-workout count silently including
-        // arbitrarily old sessions): `cachedExerciseSupplements` below is
-        // derived from this same bounded fetch, so it can never contain a
-        // sample older than `workoutsWindowDays` in the first place.
-        //
-        // Code review (2026-09-01): upper-bound against `now` too, matching
-        // `KnowledgeDerivation.localOnlyField`'s own `asOf` bound a few
-        // layers downstream -- without it, a future-dated sample (device
-        // clock skew during import) never aged out of this cache at all.
-        let localSampleFetchStart = min(workoutsStart, localOnlyStart)
-        let localSampleDescriptor = FetchDescriptor<LocalSample>(
-            predicate: #Predicate<LocalSample> { $0.start >= localSampleFetchStart && $0.start <= now }
+        // WP-70: the local samples are fetched and derived on a background
+        // context (`LocalKnowledgeReader`) -- a month of per-minute Active
+        // Minutes decoded on the main actor stuttered the UI. Same bounds
+        // as before: code review (2026-08-28) finding #10 (each fetch
+        // bounded to its derivation's window, so exercise supplements can't
+        // include sessions older than `workoutsWindowDays` -- finding #4)
+        // and code review (2026-09-01) (upper-bounded at `now`, so a
+        // future-dated sample ages out; a fetch failure propagates rather
+        // than erasing previously derived fields).
+        let localOnlyTypes = GoogleDataType.allCases.filter { $0.writability == .localOnly }
+        let local = try await LocalKnowledgeReader(modelContainer: modelContainer).read(
+            exerciseSince: workoutsStart,
+            localOnlySince: localOnlyStart,
+            now: now,
+            localOnlyTypes: localOnlyTypes,
+            windowDays: Self.localOnlyWindowDays
         )
-        // Code review (2026-09-01): propagate a real fetch failure instead of
-        // swallowing it via `try?` -- treating "SwiftData fetch threw" the
-        // same as "no local samples" would, on every derived-field rebuild
-        // below, silently erase previously-persisted local-only/clinical
-        // fields from the profile instead of leaving them stale. Matches
-        // `refresh()`'s own doc comment ("Failure ... propagates
-        // `ModelContext.save()`'s error instead of swallowing it").
-        let fetchedLocalSamples = try context.fetch(localSampleDescriptor)
-        let fetchedExerciseSupplements = fetchedLocalSamples
-            .filter { $0.dataType == GoogleDataType.exercise.rawValue }
-            .map(ExerciseSupplement.init(sample:))
+        let fetchedExerciseSupplements = local.exerciseSupplements
 
         // Code review (2026-09-01): commit every cached array + `referenceNow`
         // together, with no `await` between these assignments -- the
@@ -304,18 +293,9 @@ public final class KnowledgeStore {
         ) {
             derived.append(field)
         }
-        for type in GoogleDataType.allCases where type.writability == .localOnly {
-            if let field = KnowledgeDerivation.localOnlyField(
-                dataType: type,
-                samples: fetchedLocalSamples,
-                windowStart: localOnlyStart,
-                windowDays: Self.localOnlyWindowDays,
-                asOf: now
-            ) {
-                derived.append(field)
-            }
-        }
+        derived.append(contentsOf: local.localOnlyFields)
 
+        let context = ModelContext(modelContainer)
         let profile = try fetchOrCreateProfile(context: context)
         // Code review (2026-08-28) finding #1: `Dictionary(uniqueKeysWithValues:)`
         // traps on a duplicate key. Nothing in this type enforces that at

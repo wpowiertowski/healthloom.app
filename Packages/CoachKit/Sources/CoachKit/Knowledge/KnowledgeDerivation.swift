@@ -19,7 +19,7 @@ import CoreModel
 import Foundation
 import SyncKit
 
-public enum KnowledgeDerivation {
+nonisolated public enum KnowledgeDerivation {
     // MARK: - Key prefixes
     //
     // Shared with `ContextAssembler.priorityRank(for:)` (WP-20): the rank
