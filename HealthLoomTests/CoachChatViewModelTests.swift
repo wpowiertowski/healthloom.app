@@ -25,6 +25,12 @@ private struct WaitTimeout: Error {}
 /// AND its ephemeral suite. Call sites bind the FIXTURE (round-4 item
 /// 6 — never a projection off a temporary) and read `.viewModel` off
 /// the binding — bodies otherwise untouched, no defers.
+extension CoachWorkoutQueries {
+    /// The chat tests never exercise the workout tools (CoachWorkoutTextTests
+    /// covers their answers).
+    static let noWorkouts = CoachWorkoutQueries(list: { _ in "" }, detail: { _, _ in "" })
+}
+
 @MainActor
 final class CoachChatFixture {
     let viewModel: CoachChatViewModel
@@ -61,7 +67,8 @@ private func makeCoachViewModel(
         factory: CoachSessionFactory(build: { _, _, _ in session }),
         availability: FixedCoachAvailabilityChecker(availability: availability),
         tierSettings: TierSettingsStore(defaults: ephemeral.defaults),
-        tierCatalog: ModelCatalog(onDeviceAvailable: { true })
+        tierCatalog: ModelCatalog(onDeviceAvailable: { true }),
+        workouts: .noWorkouts
     ))
     return CoachChatFixture(viewModel: viewModel, ephemeral: ephemeral)
 }

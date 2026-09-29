@@ -58,7 +58,7 @@ public struct GetStepsTool: Tool, Sendable {
     /// a gate throw surfaces as a tool error, never as an answer.
     public static func live(store: KnowledgeStore) -> GetStepsTool {
         GetStepsTool { days in
-            try store.gatedAnswer(
+            try await store.gatedAnswer(
                 coveredKeys: coveredKeys,
                 excludedMessage: excludedMessage
             ) {

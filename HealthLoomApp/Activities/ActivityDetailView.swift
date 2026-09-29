@@ -28,7 +28,7 @@ struct ActivityDetailView: View {
                 modelContainer: appEnvironment.modelContainer,
                 requestsAuthorization: !appEnvironment.launchConfiguration.isUITest
             )
-            detail = await provider.detail(for: entry)
+            detail = await provider.detail(for: entry, includingRoute: true)
         }
     }
 }
@@ -194,12 +194,15 @@ struct ActivitySeriesChart: View {
                 Text(series.metric.title)
                     .font(Theme.font(Theme.Step.body, .medium, relativeTo: .subheadline))
                     .foregroundStyle(Theme.ink)
+                // Read here: the alignment closure is Sendable and can't
+                // touch the view's main-actor state.
+                let lift = swatchLift
                 ForEach(series.lines, id: \.origin) { line in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         // Sits beside the first line of the label, however
                         // it wraps.
                         Rectangle().fill(Self.color(line.origin)).frame(width: 10, height: 3)
-                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] + swatchLift }
+                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] + lift }
                             .accessibilityHidden(true)
                         SilkscreenText("\(ActivitySource(line.origin).label) \u{00B7} \(line.summary.text(for: series.metric, locale: locale))")
                             .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))

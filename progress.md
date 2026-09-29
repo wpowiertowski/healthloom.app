@@ -6700,3 +6700,53 @@ Hydrow", "Apple Watch · <watch>"). Chart legends map each sample's `SleepOrigin
 now name the constant. The Activities list and detail snapshots were re-recorded.
 
 Mutants caught: another app named Google Health; an import named after HealthLoom.
+
+## WP-77 — Coach reads each workout in full
+
+The coach only saw a count of workouts by type. `getWorkouts` returned "3 workouts in the
+last 30 days: 2× Running, 1× Swimming", with no dates, durations or measurements. It now
+reaches everything the Activities tab shows:
+
+- **`getWorkouts(days)`** lists each workout, newest first and numbered, with its time, source
+  and the Activities figures (duration, distance, average heart rate, the Google Health extras).
+  Numbers stay the same whatever window is listed.
+- **`getWorkoutDetail(number, measurement?)`** (new):
+  - Without a measurement, it gives the overview: figures, every recorded measurement with its
+    per-device summary (heart rate, energy, distance, steps, running speed, power, stride,
+    vertical oscillation, ground contact time, cycling speed, power and cadence, strokes,
+    flights, breathing rate, blood oxygen, zone and active minutes), and splits per km
+    (per 100 m swimming, speed on a ride) with heart rate. With no distance, heart rate
+    every few minutes stands in for splits.
+  - With a measurement (matched loosely: "power", "Ground Contact Time"), it gives that
+    measurement per device, by distance and by minute.
+- **Size:** each answer is capped (20 splits, 60 time rows) to fit the on-device model, so a
+  larger model makes more calls instead. That holds when a quota fallback moves a turn to
+  on-device partway through.
+- **Privacy:** routes never reach the coach (the reader skips the route read). Excluding
+  workouts silences both tools.
+- **Access:** the reader never prompts for HealthKit access mid-chat. When the detail screen's
+  extra types were never asked for, the answer says that opening an activity grants them.
+
+**Structure:**
+- CoachKit gets the reads through `CoachWorkoutQueries`, a required chat dependency, so HealthKit
+  stays in the app.
+- `CoachWorkoutReader` reuses `ActivitiesProvider`, `ActivityConsolidator` and
+  `ActivityDetailProvider` (now `detail(for:includingRoute:)`).
+- `CoachWorkoutText` builds the answers.
+- `gatedAnswer` is async.
+- `KnowledgeStore.workoutsSummary` is gone.
+- The tool-set ID is `wp77-chat-v2`.
+
+Also fixed a WP-73 warning that surfaced when `ActivityDetailView` recompiled: the chart
+swatch's alignment closure (Sendable) read `@ScaledMetric` view state.
+
+**Tests:**
+- `CoachWorkoutTextTests` (7): list window and numbering, overview across devices, splits
+  (pace, per-split heart rate, remainder merge), swim and marathon splits, breakdown by
+  distance and minute (both devices, amounts), loose names, the access note.
+- `CoachToolsTests`: five tools; the workout tools forward clamped days, number and trimmed
+  measurement; the detail tool is silenced by the workouts exclusion.
+
+Mutants caught: split averages over the whole workout; no remainder merge; running totals not
+differenced; splits never widening; breakdown of the first device only; exact names only;
+detail tool ungated.
