@@ -3,8 +3,10 @@
 // WP-53: the manual Sync Now run owned by `AppEnvironment`. The syncType
 // closure stands in for `SyncEngine.sync(type:)` (the network + HealthKit
 // boundary) and records what the run looked like while each type synced.
+// WP-71: `BackgroundTime` stands in for UIKit's background-task assertion.
 
 import CoreModel
+import SyncKit
 import Testing
 @testable import HealthLoom
 
@@ -17,6 +19,21 @@ import Testing
         var inFlightDuringSync: [GoogleDataType: [GoogleDataType]] = [:]
         var runningDuringSync: [Bool] = []
         var secondStartWasRefused: Bool?
+        var backgroundTimeBegun = 0
+        var backgroundTimeEnded = 0
+        var backgroundTimeEndedDuringSync: [Int] = []
+        var expire: (@MainActor @Sendable () -> Void)?
+        var sawCancellation = false
+
+        /// Records the assertion's lifetime; `expire` plays iOS running
+        /// out of background time.
+        var backgroundTime: BackgroundTime {
+            BackgroundTime { _, expired in
+                self.backgroundTimeBegun += 1
+                self.expire = expired
+                return { self.backgroundTimeEnded += 1 }
+            }
+        }
     }
 
     // catches: the run reporting idle (or leaving out a type) while that
@@ -26,7 +43,7 @@ import Testing
     @Test func reportsTheTypesInFlightAndEndsIdle() async throws {
         let recorder = Recorder()
         var foreground: ForegroundSync?
-        foreground = ForegroundSync { type in
+        foreground = ForegroundSync(backgroundTime: recorder.backgroundTime) { type in
             recorder.synced.append(type)
             recorder.inFlightDuringSync[type] = foreground?.inFlight ?? []
             recorder.runningDuringSync.append(foreground?.isRunning ?? false)
@@ -59,7 +76,7 @@ import Testing
     @Test func aSecondStartWhileRunningDoesNothing() async throws {
         let recorder = Recorder()
         var foreground: ForegroundSync?
-        foreground = ForegroundSync { type in
+        foreground = ForegroundSync(backgroundTime: recorder.backgroundTime) { type in
             recorder.synced.append(type)
             if recorder.secondStartWasRefused == nil {
                 recorder.secondStartWasRefused = foreground?.start(types: [.weight]) == nil
@@ -76,5 +93,46 @@ import Testing
         let next = try #require(sync.start(types: [.weight]))
         await next.value
         #expect(recorder.synced == [.steps, .weight])
+    }
+
+    // catches: a Sync Now run without background time (leaving the app
+    // cut off the types in flight), and the assertion never ended -- or
+    // ended before the last type finished.
+    @Test func holdsBackgroundTimeForTheWholeRun() async throws {
+        let recorder = Recorder()
+        let sync = ForegroundSync(backgroundTime: recorder.backgroundTime) { _ in
+            recorder.backgroundTimeEndedDuringSync.append(recorder.backgroundTimeEnded)
+        }
+
+        let task = try #require(sync.start(types: [.steps, .heartRate]))
+        #expect(recorder.backgroundTimeBegun == 1)
+        await task.value
+
+        #expect(recorder.backgroundTimeEndedDuringSync == [0, 0])
+        #expect(recorder.backgroundTimeEnded == 1)
+    }
+
+    // catches: running out of background time leaving the run going (iOS
+    // kills an app that overstays), or starting further types after it.
+    @Test func runningOutOfBackgroundTimeCancelsTheRun() async throws {
+        let recorder = Recorder()
+        let sync = ForegroundSync(backgroundTime: recorder.backgroundTime) { type in
+            recorder.synced.append(type)
+            // The first type to run expires the time, before any finishes.
+            if let expire = recorder.expire {
+                recorder.expire = nil
+                expire()
+                recorder.sawCancellation = Task.isCancelled
+            }
+        }
+        let types: [GoogleDataType] = [.steps, .heartRate, .weight, .sleep, .distance]
+
+        let task = try #require(sync.start(types: types))
+        await task.value
+
+        #expect(recorder.sawCancellation)
+        #expect(recorder.synced.count <= SyncSchedule.maxConcurrentTypes)
+        #expect(!sync.isRunning)
+        #expect(sync.inFlight.isEmpty)
     }
 }
