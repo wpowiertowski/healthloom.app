@@ -217,6 +217,9 @@ struct ActivityEntry: Identifiable, Hashable {
 
     var duration: TimeInterval { end.timeIntervalSince(start) }
 
+    /// Swims measure distance in pool lengths (metres or yards).
+    var isSwim: Bool { family == .water }
+
     /// Whole minutes, never "0 min" for a real entry.
     var durationText: String {
         "\(max(1, Int(duration / 60))) min"
@@ -224,10 +227,10 @@ struct ActivityEntry: Identifiable, Hashable {
 
     /// The row's badges, in reading order: duration always, then only what
     /// was actually recorded (D16's rule: no field the data can't back).
-    var badges: [String] {
+    func badges(units: UnitPreferences) -> [String] {
         var badges = [durationText]
         if let distanceMeters, distanceMeters > 0 {
-            badges.append(ActivityFormat.distance(distanceMeters))
+            badges.append(ActivityFormat.distance(distanceMeters, units: units, inPool: isSwim))
         }
         if let averageHeartRate, averageHeartRate > 0 {
             badges.append("\(Int(averageHeartRate.rounded())) bpm")
@@ -249,10 +252,10 @@ extension ActivityEntry {
     /// The detail screen's summary: the badges' readings, labelled, then
     /// the linked session's own figures under Google Health's name --
     /// still a supplement (D13.2), never merged into the workout's.
-    var figures: [ActivityFigure] {
+    func figures(units: UnitPreferences) -> [ActivityFigure] {
         var figures = [ActivityFigure(label: "Duration", value: ActivityFormat.totalDuration(duration))]
         if let distanceMeters, distanceMeters > 0 {
-            figures.append(ActivityFigure(label: "Distance", value: ActivityFormat.distance(distanceMeters)))
+            figures.append(ActivityFigure(label: "Distance", value: ActivityFormat.distance(distanceMeters, units: units, inPool: isSwim)))
         }
         if let averageHeartRate, averageHeartRate > 0 {
             figures.append(ActivityFigure(label: "Avg heart rate", value: "\(Int(averageHeartRate.rounded())) bpm"))
@@ -262,10 +265,13 @@ extension ActivityEntry {
         }
         if let supplement {
             if let distance = supplement.distanceMeters, distance > 0 {
-                figures.append(ActivityFigure(label: "\(ActivitySource.googleHealth.label) distance", value: ActivityFormat.distance(distance)))
+                figures.append(ActivityFigure(
+                    label: "\(ActivitySource.googleHealth.label) distance",
+                    value: ActivityFormat.distance(distance, units: units, inPool: isSwim)
+                ))
             }
             if let energy = supplement.energyKilocalories, energy > 0 {
-                figures.append(ActivityFigure(label: "\(ActivitySource.googleHealth.label) energy", value: "\(Int(energy)) kcal"))
+                figures.append(ActivityFigure(label: "\(ActivitySource.googleHealth.label) energy", value: ActivityFormat.energy(energy, units: units)))
             }
         }
         return figures
@@ -273,11 +279,29 @@ extension ActivityEntry {
 }
 
 enum ActivityFormat {
-    /// "6.2 km"; under a kilometre, whole metres ("850 m").
-    static func distance(_ meters: Double) -> String {
-        meters < 1000
-            ? "\(Int(meters.rounded())) m"
-            : String(format: "%.1f km", meters / 1000)
+    /// In the user's units (WP-79): a swim in pool lengths ("1,500 m",
+    /// "1,640 yd"); otherwise "6.2 km" (whole metres under a kilometre,
+    /// "850 m") or "3.9 mi" (two places under a mile, "0.53 mi").
+    static func distance(_ meters: Double, units: UnitPreferences, inPool: Bool, locale: Locale = .current) -> String {
+        if inPool {
+            let lengths = (meters / units.pool.meters).rounded()
+            return "\(lengths.formatted(.number.precision(.fractionLength(0)).locale(locale))) \(units.pool.symbol)"
+        }
+        switch units.distance {
+        case .kilometers:
+            return meters < 1000
+                ? "\(Int(meters.rounded())) m"
+                : String(format: "%.1f km", locale: locale, meters / 1000)
+        case .miles:
+            let miles = meters / units.distance.meters
+            return String(format: miles < 1 ? "%.2f mi" : "%.1f mi", locale: locale, miles)
+        }
+    }
+
+    /// "412 kcal", "1,724 kJ".
+    static func energy(_ kilocalories: Double, units: UnitPreferences, locale: Locale = .current) -> String {
+        let value = units.energy.value(kilocalories: kilocalories).rounded()
+        return "\(value.formatted(.number.precision(.fractionLength(0)).locale(locale))) \(units.energy.symbol)"
     }
 
     /// "3 h 49 m", or "49 m" under an hour -- the summary line's total.

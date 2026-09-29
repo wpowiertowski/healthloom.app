@@ -29,13 +29,15 @@ enum CoachWorkoutText {
     /// One line per workout started in the last `days` days, numbered by
     /// position in `entries` (newest first) -- the numbers
     /// `getWorkoutDetail` takes, whatever window is listed.
-    static func list(_ entries: [ActivityEntry], days: Int, now: Date, calendar: Calendar, locale: Locale) -> String {
+    static func list(
+        _ entries: [ActivityEntry], days: Int, now: Date, units: UnitPreferences, calendar: Calendar, locale: Locale
+    ) -> String {
         let since = now.addingTimeInterval(-Double(days) * 86_400)
         let lines = entries.enumerated()
             .filter { $0.element.start >= since }
             .map { index, entry in
                 ([heading(entry, number: index + 1, calendar: calendar, locale: locale, withEnd: false)]
-                    + entry.figures.map(figureText)).joined(separator: " \u{00B7} ")
+                    + entry.figures(units: units).map(figureText)).joined(separator: " \u{00B7} ")
             }
         guard !lines.isEmpty else { return "No workouts in the last \(days) days." }
         return (["Workouts in the last \(days) days, newest first. Pass a number to getWorkoutDetail for everything recorded during it."]
@@ -56,11 +58,13 @@ enum CoachWorkoutText {
     // MARK: - Detail
 
     /// One workout: its overview, or -- when `measurement` names one it
-    /// recorded -- that measurement's breakdown.
+    /// recorded -- that measurement's breakdown. `series` are in the units
+    /// the figures show in.
     static func detail(
         _ entry: ActivityEntry,
         number: Int,
         series: [ActivityMetricSeries],
+        units: UnitPreferences,
         measurement: String?,
         needsReadAccess: Bool,
         calendar: Calendar,
@@ -68,7 +72,7 @@ enum CoachWorkoutText {
     ) -> String {
         var lines = [
             heading(entry, number: number, calendar: calendar, locale: locale, withEnd: true),
-            entry.figures.map(figureText).joined(separator: " \u{00B7} "),
+            entry.figures(units: units).map(figureText).joined(separator: " \u{00B7} "),
         ]
         if let measurement {
             if let match = Self.series(named: measurement, in: series) {
@@ -89,22 +93,23 @@ enum CoachWorkoutText {
         guard !series.isEmpty else { return ["No measurements were recorded during it beyond these figures."] }
         var lines = ["Measurements (pass one as measurement for its breakdown by distance and by minute):"]
         lines += series.map { "- \($0.metric.title) \u{2014} " + summaries($0, locale: locale) }
-        let heartRate = series.first { $0.metric == .heartRate }?.lines.first
+        let heartSeries = series.first { $0.metric == .heartRate }
+        let heartRate = heartSeries?.lines.first
         if let splits = DistanceSplits(series: series) {
             lines.append("Splits (\(ActivitySource(splits.line.origin).label) \(splits.metric.title.lowercased())):")
             lines += splits.rows.map { row in
                 var parts = [splits.pace(row, locale: locale)]
-                if let heartRate, let bpm = value(of: heartRate, metric: .heartRate, from: row.start, to: row.end) {
-                    parts.append("heart rate \(ActivityMetric.heartRate.format(bpm, locale: locale))")
+                if let heartSeries, let heartRate, let bpm = value(of: heartRate, metric: .heartRate, from: row.start, to: row.end) {
+                    parts.append("heart rate \(heartSeries.format(bpm, locale: locale))")
                 }
                 return "- \(splits.label(row, locale: locale)): " + parts.joined(separator: " \u{00B7} ")
             }
-        } else if let heartRate {
+        } else if let heartSeries, let heartRate {
             let buckets = TimeBuckets(start: entry.start, end: entry.end, maxRows: maxOverviewBuckets)
             lines.append("Heart rate every \(buckets.minutes) min (\(ActivitySource(heartRate.origin).label)):")
             lines += buckets.rows.compactMap { row in
                 value(of: heartRate, metric: .heartRate, from: row.start, to: row.end).map {
-                    "- \(buckets.label(row)): \(ActivityMetric.heartRate.format($0, locale: locale))"
+                    "- \(buckets.label(row)): \(heartSeries.format($0, locale: locale))"
                 }
             }
         }
@@ -122,8 +127,8 @@ enum CoachWorkoutText {
             }
             guard !values.isEmpty else { return nil }
             let text = measured.lines.count == 1
-                ? values.map { metric.format($0.1, locale: locale) }
-                : values.map { "\(ActivitySource($0.0).label) \(metric.format($0.1, locale: locale))" }
+                ? values.map { measured.format($0.1, locale: locale) }
+                : values.map { "\(ActivitySource($0.0).label) \(measured.format($0.1, locale: locale))" }
             return "- \(label): " + text.joined(separator: ", ")
         }
         if let splits = DistanceSplits(series: series) {
@@ -162,7 +167,7 @@ enum CoachWorkoutText {
 
     private static func summaries(_ series: ActivityMetricSeries, locale: Locale) -> String {
         series.lines
-            .map { "\(ActivitySource($0.origin).label): \($0.summary.text(for: series.metric, locale: locale))" }
+            .map { "\(ActivitySource($0.origin).label): \(series.summaryText($0, locale: locale))" }
             .joined(separator: "; ")
     }
 
@@ -211,9 +216,9 @@ enum CoachWorkoutText {
 }
 
 /// Splits by distance, from the longest distance a device recorded: per
-/// kilometre (per 100 m in the pool), widened to keep at most
-/// `CoachWorkoutText.maxSplits` rows. A remainder under a tenth of a split
-/// joins the last one.
+/// kilometre or mile (per 100 m or yd in the pool), in the series' own
+/// units, widened to keep at most `CoachWorkoutText.maxSplits` rows. A
+/// remainder under a tenth of a split joins the last one.
 struct DistanceSplits {
     struct Row {
         let from: Double
@@ -222,18 +227,20 @@ struct DistanceSplits {
         let end: Date
     }
 
-    let metric: ActivityMetric
+    let series: ActivityMetricSeries
     let line: ActivitySeriesLine
-    /// Split length, in the metric's display unit (km).
+    /// Split length, in the series' display unit.
     let length: Double
     let rows: [Row]
 
-    init?(series: [ActivityMetricSeries]) {
-        let candidates = series.filter { [.distance, .cyclingDistance, .swimmingDistance].contains($0.metric) }
-        guard let best = candidates.compactMap({ candidate in candidate.lines.first.map { (candidate.metric, $0) } })
-            .max(by: { Self.total($0.1) < Self.total($1.1) }) else { return nil }
+    var metric: ActivityMetric { series.metric }
+
+    init?(series all: [ActivityMetricSeries]) {
+        let candidates = all.filter { [.distance, .cyclingDistance, .swimmingDistance].contains($0.metric) }
+        guard let best = candidates.compactMap({ candidate in candidate.lines.first.map { (candidate, $0) } })
+            .max(by: { Self.meters($0.0, $0.1) < Self.meters($1.0, $1.1) }) else { return nil }
         let total = Self.total(best.1)
-        let base = best.0 == .swimmingDistance ? 0.1 : 1.0
+        let base = best.0.metric == .swimmingDistance ? 100.0 : 1.0
         guard total >= base else { return nil }
         let length = base * max(1, (total / base / Double(CoachWorkoutText.maxSplits)).rounded(.up))
         var rows: [Row] = []
@@ -246,7 +253,7 @@ struct DistanceSplits {
             rows.append(Row(from: from, to: to, start: start, end: end))
             (from, start) = (to, end)
         }
-        self.metric = best.0
+        self.series = best.0
         self.line = best.1
         self.length = length
         self.rows = rows
@@ -257,30 +264,38 @@ struct DistanceSplits {
         return 0
     }
 
-    /// "0–1 km", "200–300 m".
-    func label(_ row: Row, locale: Locale) -> String {
-        "\(number(row.from, locale: locale))\u{2013}\(number(row.to, locale: locale)) \(metric == .swimmingDistance ? "m" : "km")"
+    /// A line's distance in metres, so a swim in yards and a run in miles
+    /// compare by what was covered.
+    private static func meters(_ series: ActivityMetricSeries, _ line: ActivitySeriesLine) -> Double {
+        let perUnit = series.metric == .swimmingDistance ? series.units.pool.meters : series.units.distance.meters
+        return total(line) * perUnit
     }
 
-    /// Pace per km (per 100 m swimming), or speed on a ride.
+    /// "0–1 km", "0–1 mi", "200–300 yd".
+    func label(_ row: Row, locale: Locale) -> String {
+        "\(number(row.from, locale: locale))\u{2013}\(number(row.to, locale: locale)) \(series.unit)"
+    }
+
+    /// Pace per km or mile (per 100 m or yd swimming), or speed on a ride.
     func pace(_ row: Row, locale: Locale) -> String {
         let seconds = row.end.timeIntervalSince(row.start)
         let covered = row.to - row.from
         guard seconds > 0, covered > 0 else { return "no time recorded" }
         if metric == .cyclingDistance {
-            return ActivityMetric.cyclingSpeed.format(covered / (seconds / 3600), locale: locale)
+            return ActivityMetric.cyclingSpeed.format(covered / (seconds / 3600), units: series.units, locale: locale)
         }
-        let per = metric == .swimmingDistance ? 0.1 : 1.0
+        let per = metric == .swimmingDistance ? 100.0 : 1.0
         let pace = Int((seconds / covered * per).rounded())
-        return String(format: "%d:%02d", pace / 60, pace % 60) + (metric == .swimmingDistance ? " /100 m" : " /km")
+        let unit = metric == .swimmingDistance ? "100 \(series.unit)" : series.unit
+        return String(format: "%d:%02d", pace / 60, pace % 60) + " /\(unit)"
     }
 
-    /// Metres in the pool, kilometres otherwise; no unit.
-    private func number(_ km: Double, locale: Locale) -> String {
+    /// Whole lengths in the pool, up to two places otherwise; no unit.
+    private func number(_ value: Double, locale: Locale) -> String {
         if metric == .swimmingDistance {
-            return "\(Int((km * 1000).rounded()))"
+            return "\(Int(value.rounded()))"
         }
-        return km.formatted(.number.precision(.fractionLength(0...2)).locale(locale))
+        return value.formatted(.number.precision(.fractionLength(0...2)).locale(locale))
     }
 }
 

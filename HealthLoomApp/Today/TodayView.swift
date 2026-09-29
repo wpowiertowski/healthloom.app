@@ -35,6 +35,7 @@ struct TodayView: View {
     /// Opens the Coach tab from the coach panel (plan WP-33 step 1).
     /// Nil in previews and anywhere without tab control.
     var onOpenCoach: (() -> Void)?
+    @Environment(\.unitPreferences) private var units
 
     @Query private var syncStates: [SyncState]
     /// The newest in-app sample only -- its source names the device in the
@@ -213,15 +214,13 @@ struct TodayView: View {
     }
 
     private var displayMetrics: [TodayMetricDisplay] {
-        // WP-37: display units follow the locale (single-sourced from
-        // CoachKit's mapping — HealthKit keeps canonical units).
-        let unitSystem = ContextAssembler.defaultUnitSystem(for: .current)
+        // Display units are the user's (WP-79) — HealthKit keeps canonical units.
         let kinds = TodayMetricKind.rows(
             visible: preferences.visibleKinds,
             unavailable: unavailableKinds
         )
         return kinds.map { kind in
-            TodayMetricFormatter.display(kind: kind, reading: readings[kind], unitSystem: unitSystem)
+            TodayMetricFormatter.display(kind: kind, reading: readings[kind], units: units)
         }
     }
 

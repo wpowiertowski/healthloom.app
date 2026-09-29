@@ -40,6 +40,7 @@ struct DashboardView: View {
     /// WP-56: 7-day vs 30-day trends from Apple Health, per P0 row.
     @State private var trends: [GoogleDataType: RollingTrend] = [:]
     @Environment(\.locale) private var locale
+    @Environment(\.unitPreferences) private var units
     @State private var connectError: String?
 
     /// Onboarding-skip-Google: read live from defaults every render (no cached copy
@@ -196,7 +197,7 @@ struct DashboardView: View {
             trends[type],
             metric: metric,
             locale: locale,
-            unitSystem: ContextAssembler.defaultUnitSystem(for: locale)
+            units: units
         )
     }
 

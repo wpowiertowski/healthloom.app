@@ -17,9 +17,11 @@ import HealthKit
 import SwiftData
 import SyncKit
 
-/// What the detail screen shows below the summary.
+/// What the detail screen shows below the summary: every sample read,
+/// kept in canonical units so the screen converts them to whatever units
+/// are chosen when it draws (WP-79), and the route.
 nonisolated struct ActivityDetail: Equatable, Sendable {
-    var series: [ActivityMetricSeries]
+    var samples: [ActivitySample]
     var route: ActivityRoute?
 }
 
@@ -77,7 +79,7 @@ final class ActivityDetailProvider {
         if includingRoute, case .workout(let workout) = entry.kind {
             route = await Self.route(workoutUUID: workout.uuid, store: store)
         }
-        return ActivityDetail(series: ActivitySeriesBuilder.series(samples, from: start, to: end), route: route)
+        return ActivityDetail(samples: samples, route: route)
     }
 
     /// Each HealthKit-backed metric's type and the canonical unit

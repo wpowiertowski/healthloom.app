@@ -538,6 +538,19 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 10)
 
+            // WP-79: each kind of measurement's display unit, chosen on its
+            // own. Stored values never change; only what's shown does.
+            ThemedSectionHeader(title: "Units")
+            UnitSettingsPanel(settings: appEnvironment.unitSettings)
+
+            Text("How Today, the Data tab, Activities and the coach's workout answers show each measurement. Distance covers speed and pace; pool is swim distance; stride and bounce are a run's stride length and vertical oscillation. Apple Health keeps its own units.")
+                .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
+                .foregroundStyle(Theme.tertiary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+
             ForEach(groupedByScope, id: \.scope) { group in
                 ThemedSectionHeader(title: scopeDisplayName(group.scope))
                 ThemedPanel {

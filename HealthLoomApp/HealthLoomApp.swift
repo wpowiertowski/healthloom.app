@@ -89,6 +89,7 @@ struct HealthLoomApp: App {
                 completion: appEnvironment.launchConfiguration.isUITest ? nil : OnboardingCompletion()
             )
                 .environment(appEnvironment)
+                .environment(\.unitPreferences, appEnvironment.unitSettings.preferences)
                 .modelContainer(appEnvironment.modelContainer)
         }
         // Single dispatcher, re-merged (round-3 item 15 overrode the

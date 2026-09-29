@@ -83,6 +83,7 @@ private enum ActivitiesSnapshotSubject {
             }
         }
         .environment(\.locale, Locale(identifier: "en_GB"))
+        .environment(\.unitPreferences, .metric)
         .environment(\.timeZone, calendar.timeZone)
         .environment(\.calendar, calendar)
     }
@@ -96,7 +97,6 @@ private enum ActivityDetailSnapshotSubject {
     static var detail: some View {
         let calendar = ActivitiesSnapshotSubject.calendar
         let start = ActivitiesSnapshotSubject.at(day: 18, hour: 11, minute: 48)
-        let end = start.addingTimeInterval(37 * 60)
         let entry = ActivitiesSnapshotSubject.entry(
             "run", "Run", .onFoot, day: 18, hour: 11, minute: 48, minutes: 37, distance: 6200, heartRate: 148,
             supplement: ActivitiesSnapshotSubject.runSupplement
@@ -109,9 +109,10 @@ private enum ActivityDetailSnapshotSubject {
             samples.append(ActivitySample(metric: .heartRate, start: time, end: time, value: effort - 4, origin: .fitbit))
             samples.append(ActivitySample(metric: .activeEnergy, start: time, end: time.addingTimeInterval(20), value: 3.6, origin: .appleWatch))
         }
-        let detail = ActivityDetail(series: ActivitySeriesBuilder.series(samples, from: start, to: end), route: nil)
+        let detail = ActivityDetail(samples: samples, route: nil)
         return ActivityDetailContent(entry: entry, detail: detail)
             .environment(\.locale, Locale(identifier: "en_GB"))
+            .environment(\.unitPreferences, .metric)
             .environment(\.timeZone, calendar.timeZone)
             .environment(\.calendar, calendar)
     }

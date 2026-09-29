@@ -6782,3 +6782,48 @@ WP-77's tool calls made that gap seconds long. Now:
 
 Mutants caught: the oldest tool named; one end clearing every same-named call; no end
 reported on failure.
+
+## WP-79 — Units chosen per measurement
+
+Units followed the phone's region with one metric/imperial switch, which only Today's weight
+and distance rows honoured. Activities, its charts and the coach's workout answers were
+always km, km/h and kcal, and a swim's distance showed in km. Settings now has a Units
+section with one choice per kind of measurement:
+
+- **Weight:** kg / lb (Today, Data tab).
+- **Distance:** km / mi, which also sets speed (km/h / mph) and pace (/km / /mi). Covers Today,
+  Activities rows, figures and charts, and the coach's splits.
+- **Pool:** m / yd, for swim distance on rows, figures and charts, and swim splits per 100 m or
+  100 yd.
+- **Energy:** kcal / kJ (Today, Activities, charts, the coach).
+- **Stride, bounce:** m, cm / ft, in, for stride length and vertical oscillation.
+
+A kind never chosen follows the region: US imperial, the UK miles with metric for the rest,
+everywhere else metric. It keeps following the region until the user picks. Stored values
+never change, only what's shown. Device-local.
+
+**Structure:**
+- `UnitPreferences` (value type, conversions and symbols) and `UnitSettings` (observable store,
+  one defaults key per kind) replace `UnitSystem` in the app's formatters.
+- The app root hands the preferences to every view as `\.unitPreferences`, and snapshots pin
+  their own. The coach's workout reader reads them per call.
+- `ActivityMetricSeries` carries the units its values were converted to, so a value can't be
+  labelled in another unit.
+- `ActivityDetail` keeps raw samples, and the detail screen converts them as it draws, so a
+  change redraws an open chart.
+- `ActivityFormat.distance(_:units:inPool:)` and `.energy(_:units:)`.
+- `ThemedSegmentedRow` stacks leading, not centred, at large text sizes; this also fixes the
+  Sleep source and Workout source rows.
+
+**Not changed:** the coach's context still says metric or imperial by region. Its profile states
+no distances or weights, and the workout tools name their units.
+
+**Tests:**
+- `UnitPreferencesTests` (region defaults; choices persist one kind at a time).
+- `ActivitySeriesTests.valuesFollowTheChosenUnits`.
+- Imperial and pool cases in `formatsDistanceAndTotalDuration`.
+- `TodayMetricFormatterTests.energyAndDistanceFollowTheChosenUnits`.
+- `CoachWorkoutTextTests.splitsFollowTheChosenUnits`.
+- The Units panel snapshot (new), and the Sleep source row at AXXXL re-recorded.
+
+Mutants caught: swims measured in road units; a choice not saved.

@@ -92,24 +92,24 @@ import Testing
     @Test func trendStringsCarryUnitsAndSignedChange() {
         let heart = DataTrendText.make(
             RollingTrend(weekAverage: 61.6, monthAverage: 64.9),
-            metric: .today(.heart), locale: Self.locale, unitSystem: .metric
+            metric: .today(.heart), locale: Self.locale, units: .metric
         )
         #expect(heart.value == "62 bpm")
         #expect(heart.comparison == "7d avg · −3 bpm vs 30d")
 
         let steps = DataTrendText.make(
             RollingTrend(weekAverage: 8_240, monthAverage: 7_930),
-            metric: .today(.steps), locale: Self.locale, unitSystem: .metric
+            metric: .today(.steps), locale: Self.locale, units: .metric
         )
         #expect(steps.value == "8,240")
         #expect(steps.comparison == "7d avg · +310 vs 30d")
 
         let flat = DataTrendText.make(
             RollingTrend(weekAverage: 70.52, monthAverage: 70.5),
-            metric: .today(.weight), locale: Self.locale, unitSystem: .metric
+            metric: .today(.weight), locale: Self.locale, units: .metric
         )
         #expect(flat.comparison == "7d avg · same as 30d")
-        #expect(DataTrendText.make(nil, metric: .today(.sleep), locale: Self.locale, unitSystem: .metric) == .empty)
+        #expect(DataTrendText.make(nil, metric: .today(.sleep), locale: Self.locale, units: .metric) == .empty)
     }
 
     static func localSample(_ type: GoogleDataType, start: Date, minutes: Double?) -> LocalSample {
@@ -133,7 +133,7 @@ import Testing
         let summary = LocalRowSummary.make(
             type: .activeZoneMinutes, recent: samples, lastSample: nil, now: Self.now, calendar: Self.calendar
         )
-        let text = DataTrendText.local(type: .activeZoneMinutes, summary: summary, locale: Self.locale, unitSystem: .metric)
+        let text = DataTrendText.local(type: .activeZoneMinutes, summary: summary, locale: Self.locale, units: .metric)
         #expect(text.value == "35 min")
     }
 
@@ -147,9 +147,9 @@ import Testing
         let summary = LocalRowSummary.make(
             type: .electrocardiogram, recent: samples, lastSample: nil, now: Self.now, calendar: Self.calendar
         )
-        let text = DataTrendText.local(type: .electrocardiogram, summary: summary, locale: Self.locale, unitSystem: .metric)
+        let text = DataTrendText.local(type: .electrocardiogram, summary: summary, locale: Self.locale, units: .metric)
         #expect(text == DataTrendText(value: "1 recording", comparison: "last 30 days"))
-        let none = DataTrendText.local(type: .irregularRhythmNotification, summary: .empty, locale: Self.locale, unitSystem: .metric)
+        let none = DataTrendText.local(type: .irregularRhythmNotification, summary: .empty, locale: Self.locale, units: .metric)
         #expect(none.value == "None")
     }
 
@@ -169,7 +169,7 @@ import Testing
             .summaries(for: [.activeZoneMinutes, .electrocardiogram, .activeMinutes], now: Self.now, calendar: Self.calendar)
 
         let zone = try #require(summaries[.activeZoneMinutes])
-        #expect(DataTrendText.local(type: .activeZoneMinutes, summary: zone, locale: Self.locale, unitSystem: .metric).value == "30 min")
+        #expect(DataTrendText.local(type: .activeZoneMinutes, summary: zone, locale: Self.locale, units: .metric).value == "30 min")
         #expect(zone.lastSample == Self.day(-1).addingTimeInterval(900))
         #expect(summaries[.electrocardiogram]?.recentCount == 1)
         #expect(summaries[.activeMinutes] == LocalRowSummary(trend: nil, recentCount: 0, lastSample: nil))

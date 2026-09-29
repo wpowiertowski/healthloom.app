@@ -284,7 +284,7 @@ struct ActivityDetailingTests {
             return
         }
         #expect(entry.distanceMeters == 8000)
-        #expect(entry.badges.contains("8.0 km"))
+        #expect(entry.badges(units: .metric).contains("8.0 km"))
         #expect(entry.family == .onFoot)
     }
 
@@ -301,16 +301,16 @@ struct ActivityDetailingTests {
         }
         #expect(entry.supplement?.distanceMeters == 8000)
         #expect(entry.distanceMeters == nil)
-        #expect(entry.badges == ["40 min"])
+        #expect(entry.badges(units: .metric) == ["40 min"])
     }
 
     // catches: badges for stats the workout never recorded ("0 bpm", "0 m"),
     // or readings out of order.
     @Test func badgesListOnlyRecordedReadingsInOrder() {
-        #expect(Self.entry(duration: 20).badges == ["20 min"])
-        #expect(Self.entry(duration: 20, distance: 0, heartRate: 0).badges == ["20 min"])
+        #expect(Self.entry(duration: 20).badges(units: .metric) == ["20 min"])
+        #expect(Self.entry(duration: 20, distance: 0, heartRate: 0).badges(units: .metric) == ["20 min"])
         #expect(
-            Self.entry(duration: 37, distance: 6200, heartRate: 147.6, swim: .openWater).badges
+            Self.entry(duration: 37, distance: 6200, heartRate: 147.6, swim: .openWater).badges(units: .metric)
                 == ["37 min", "6.2 km", "148 bpm", "Open water"]
         )
     }
@@ -320,11 +320,21 @@ struct ActivityDetailingTests {
         #expect(Self.entry(duration: 0.4).durationText == "1 min")
     }
 
-    // catches: sub-kilometre distances shown as "0.9 km", and totals past an
-    // hour rendered in minutes.
+    // catches: sub-kilometre distances shown as "0.9 km", a miles or yards
+    // choice ignored, a swim counted in road units, and totals past an hour
+    // rendered in minutes.
     @Test func formatsDistanceAndTotalDuration() {
-        #expect(ActivityFormat.distance(850) == "850 m")
-        #expect(ActivityFormat.distance(6200) == "6.2 km")
+        let enUS = Locale(identifier: "en_US")
+        #expect(ActivityFormat.distance(850, units: .metric, inPool: false, locale: enUS) == "850 m")
+        #expect(ActivityFormat.distance(6200, units: .metric, inPool: false, locale: enUS) == "6.2 km")
+        #expect(ActivityFormat.distance(6200, units: .imperial, inPool: false, locale: enUS) == "3.9 mi")
+        #expect(ActivityFormat.distance(850, units: .imperial, inPool: false, locale: enUS) == "0.53 mi")
+        #expect(ActivityFormat.distance(1500, units: .metric, inPool: true, locale: enUS) == "1,500 m")
+        #expect(ActivityFormat.distance(1500, units: .imperial, inPool: true, locale: enUS) == "1,640 yd")
+        var kilojoules = UnitPreferences.metric
+        kilojoules.energy = .kilojoules
+        #expect(ActivityFormat.energy(412, units: .metric, locale: enUS) == "412 kcal")
+        #expect(ActivityFormat.energy(412, units: kilojoules, locale: enUS) == "1,724 kJ")
         #expect(ActivityFormat.totalDuration(3 * 3600 + 49 * 60) == "3 h 49 m")
         #expect(ActivityFormat.totalDuration(49 * 60) == "49 m")
     }

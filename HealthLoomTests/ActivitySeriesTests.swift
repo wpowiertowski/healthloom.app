@@ -35,7 +35,7 @@ import Testing
             Self.sample(.heartRate, at: 10, 140),
             Self.sample(.heartRate, at: 60, 100), // starts exactly at the end
         ]
-        let series = ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end)
+        let series = ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end, units: .metric)
         #expect(series.map(\.metric) == [.heartRate])
         let line = try #require(series.first?.lines.first)
         #expect(line.points.map(\.value) == [140])
@@ -50,7 +50,7 @@ import Testing
             Self.sample(.heartRate, at: 2, 125, .appleWatch),
             Self.sample(.heartRate, at: 3, 130, .fitbit),
         ]
-        let series = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end).first)
+        let series = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end, units: .metric).first)
         #expect(series.lines.map(\.origin) == [.appleWatch, .fitbit])
         #expect(series.lines.last?.points.map(\.value) == [120, 130])
     }
@@ -63,7 +63,7 @@ import Testing
             Self.sample(.activeEnergy, at: 1, 8),
             Self.sample(.heartRate, at: 1, 120),
         ]
-        let metrics = ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end).map(\.metric)
+        let metrics = ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end, units: .metric).map(\.metric)
         #expect(metrics == [.heartRate, .activeEnergy, .steps])
     }
 
@@ -76,7 +76,7 @@ import Testing
             Self.sample(.activeEnergy, at: 0, 4),
             Self.sample(.activeEnergy, at: 20, 6),
         ]
-        let line = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end).first?.lines.first)
+        let line = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end, units: .metric).first?.lines.first)
         #expect(line.points.map(\.value) == [0, 4, 14, 20])
         #expect(line.points.first?.date == Self.start)
         #expect(line.summary == .cumulative(total: 20))
@@ -87,7 +87,7 @@ import Testing
     @Test func readingsSummarizeEverySample() throws {
         var samples = (0..<600).map { Self.sample(.heartRate, at: Double($0) / 10, 130) }
         samples.append(Self.sample(.heartRate, at: 30.05, 190))
-        let line = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end).first?.lines.first)
+        let line = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end, units: .metric).first?.lines.first)
         guard case .sampled(let average, let minimum, let maximum) = line.summary else {
             Issue.record("Expected a sampled summary")
             return
@@ -103,7 +103,7 @@ import Testing
     // true total.
     @Test func longActivitiesAreThinnedAndTotalsStillEndTrue() throws {
         let samples = (0..<3600).map { Self.sample(.steps, at: Double($0) / 60, 2, lasting: 1) }
-        let line = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end).first?.lines.first)
+        let line = try #require(ActivitySeriesBuilder.series(samples, from: Self.start, to: Self.end, units: .metric).first?.lines.first)
         #expect(line.points.count <= ActivitySeriesBuilder.maxPointsPerLine)
         #expect(line.points.last?.value == 7200)
         #expect(line.points.map(\.value) == line.points.map(\.value).sorted())
@@ -113,28 +113,50 @@ import Testing
     // flat line at the top), or a running total's axis not starting at 0.
     @Test func readingsFitTheirRangeAndTotalsStartAtZero() throws {
         let heart = [Self.sample(.heartRate, at: 1, 120), Self.sample(.heartRate, at: 2, 170)]
-        let heartSeries = try #require(ActivitySeriesBuilder.series(heart, from: Self.start, to: Self.end).first)
+        let heartSeries = try #require(ActivitySeriesBuilder.series(heart, from: Self.start, to: Self.end, units: .metric).first)
         #expect(heartSeries.valueDomain == 115...175)
         let energy = [Self.sample(.activeEnergy, at: 1, 30), Self.sample(.activeEnergy, at: 2, 20)]
-        let energySeries = try #require(ActivitySeriesBuilder.series(energy, from: Self.start, to: Self.end).first)
+        let energySeries = try #require(ActivitySeriesBuilder.series(energy, from: Self.start, to: Self.end, units: .metric).first)
         #expect(energySeries.valueDomain == 0...50)
     }
 
     // catches: a canonical HealthKit value shown raw -- a 3.2 m/s run as
     // "3.2 km/h", blood oxygen as "0.97 %", distance in metres as km.
     @Test func valuesShowInDisplayUnits() {
-        #expect(ActivityMetric.runningSpeed.format(ActivityMetric.runningSpeed.displayValue(3.2), locale: Self.enGB) == "11.5 km/h")
-        #expect(ActivityMetric.oxygenSaturation.format(ActivityMetric.oxygenSaturation.displayValue(0.97), locale: Self.enGB) == "97 %")
-        #expect(ActivityMetric.distance.format(ActivityMetric.distance.displayValue(6210), locale: Self.enGB) == "6.21 km")
-        #expect(ActivityMetric.steps.format(8240, locale: Self.enGB) == "8,240")
+        func shown(_ metric: ActivityMetric, _ canonical: Double, _ units: UnitPreferences = .metric) -> String {
+            metric.format(metric.displayValue(canonical, units: units), units: units, locale: Self.enGB)
+        }
+        #expect(shown(.runningSpeed, 3.2) == "11.5 km/h")
+        #expect(shown(.oxygenSaturation, 0.97) == "97 %")
+        #expect(shown(.distance, 6210) == "6.21 km")
+        #expect(shown(.swimmingDistance, 1500) == "1,500 m")
+        #expect(ActivityMetric.steps.format(8240, units: .metric, locale: Self.enGB) == "8,240")
+    }
+
+    // catches: a chosen unit ignored (km on a miles setting), or converted
+    // with the wrong factor.
+    @Test func valuesFollowTheChosenUnits() {
+        func shown(_ metric: ActivityMetric, _ canonical: Double) -> String {
+            metric.format(metric.displayValue(canonical, units: .imperial), units: .imperial, locale: Self.enGB)
+        }
+        #expect(shown(.distance, 6210) == "3.86 mi")
+        #expect(shown(.runningSpeed, 3.2) == "7.2 mph")
+        #expect(shown(.swimmingDistance, 1500) == "1,640 yd")
+        #expect(shown(.runningStrideLength, 1.2) == "3.94 ft")
+        #expect(shown(.runningVerticalOscillation, 8.5) == "3.3 in")
+        var kilojoules = UnitPreferences.metric
+        kilojoules.energy = .kilojoules
+        #expect(ActivityMetric.activeEnergy.format(
+            ActivityMetric.activeEnergy.displayValue(412, units: kilojoules), units: kilojoules, locale: Self.enGB
+        ) == "1,724 kJ")
     }
 
     // catches: the headline dropping the range or the unit, or a total
     // shown as an average.
     @Test func headlinesReadAsAverageAndRangeOrTotal() {
         let reading = ActivitySeriesSummary.sampled(average: 142.4, minimum: 118, maximum: 171)
-        #expect(reading.text(for: .heartRate, locale: Self.enGB) == "Avg 142 bpm \u{00B7} 118\u{2013}171")
-        #expect(ActivitySeriesSummary.cumulative(total: 412).text(for: .activeEnergy, locale: Self.enGB) == "412 kcal")
+        #expect(reading.text(for: .heartRate, units: .metric, locale: Self.enGB) == "Avg 142 bpm \u{00B7} 118\u{2013}171")
+        #expect(ActivitySeriesSummary.cumulative(total: 412).text(for: .activeEnergy, units: .metric, locale: Self.enGB) == "412 kcal")
     }
 
     // catches: a HealthKit-backed metric left without a type (its chart
@@ -174,7 +196,7 @@ import Testing
             end: Self.start.addingTimeInterval(37 * 60), sourceLabel: "Apple Watch", supplement: supplement,
             family: .onFoot, distanceMeters: 6200, averageHeartRate: 148.4
         )
-        #expect(entry.figures == [
+        #expect(entry.figures(units: .metric) == [
             ActivityFigure(label: "Duration", value: "37 m"),
             ActivityFigure(label: "Distance", value: "6.2 km"),
             ActivityFigure(label: "Avg heart rate", value: "148 bpm"),

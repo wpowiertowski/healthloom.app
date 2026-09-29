@@ -41,12 +41,13 @@ struct ActivityDetailContent: View {
     @Environment(\.locale) private var locale
     @Environment(\.calendar) private var calendar
     @Environment(\.timeZone) private var timeZone
+    @Environment(\.unitPreferences) private var units
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             kicker
             ThemedPanel {
-                ForEach(Array(entry.figures.enumerated()), id: \.offset) { index, figure in
+                ForEach(Array(entry.figures(units: units).enumerated()), id: \.offset) { index, figure in
                     if index > 0 { ThemedRowDivider() }
                     FigureRow(figure: figure)
                 }
@@ -54,11 +55,14 @@ struct ActivityDetailContent: View {
             .accessibilityIdentifier("activity.detail.figures")
 
             if let detail {
+                // Built here, in the units chosen now, so changing one in
+                // Settings redraws an open detail (WP-79).
+                let series = ActivitySeriesBuilder.series(detail.samples, from: entry.start, to: entry.end, units: units)
                 if let route = detail.route {
                     ThemedSectionHeader(title: "Route")
                     ActivityRouteMap(route: route)
                 }
-                if detail.series.isEmpty {
+                if series.isEmpty {
                     Text("Nothing else was recorded during this activity.")
                         .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .footnote))
                         .foregroundStyle(Theme.secondary)
@@ -68,7 +72,7 @@ struct ActivityDetailContent: View {
                 } else {
                     ThemedSectionHeader(title: "Recorded during this activity")
                     VStack(spacing: 12) {
-                        ForEach(detail.series) { series in
+                        ForEach(series) { series in
                             ActivitySeriesChart(series: series, start: entry.start, end: entry.end)
                         }
                     }
@@ -204,7 +208,7 @@ struct ActivitySeriesChart: View {
                         Rectangle().fill(Self.color(line.origin)).frame(width: 10, height: 3)
                             .alignmentGuide(.firstTextBaseline) { $0[.bottom] + lift }
                             .accessibilityHidden(true)
-                        SilkscreenText("\(ActivitySource(line.origin).label) \u{00B7} \(line.summary.text(for: series.metric, locale: locale))")
+                        SilkscreenText("\(ActivitySource(line.origin).label) \u{00B7} \(series.summaryText(line, locale: locale))")
                             .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
                             .tracking(0.5)
                             .foregroundStyle(Theme.secondary)

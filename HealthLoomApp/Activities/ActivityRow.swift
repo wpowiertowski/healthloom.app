@@ -19,6 +19,7 @@ struct ActivityRow: View {
     /// (`ActivitySummary.durationFraction`), computed by the container that
     /// can see every entry.
     let durationFraction: Double
+    @Environment(\.unitPreferences) private var units
 
     // WP-40 / D16: the per-activity symbol is gone. It was already
     // `accessibilityHidden` because the title carries the meaning, which is
@@ -56,7 +57,7 @@ struct ActivityRow: View {
             // Duration, readings and source as one spoken detail -- the
             // element `ActivitiesUITests` asserts on ("40 min", source).
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel((entry.badges + [entry.sourceLabel]).joined(separator: ", "))
+            .accessibilityLabel((entry.badges(units: units) + [entry.sourceLabel]).joined(separator: ", "))
             .accessibilityIdentifier("activities.row.\(entry.id).detail")
 
             // D13.2: the linked Fitbit session's fields, inline as a
@@ -99,7 +100,7 @@ struct ActivityRow: View {
 
     @ViewBuilder
     private var badgeViews: some View {
-        ForEach(Array(entry.badges.enumerated()), id: \.offset) { _, badge in
+        ForEach(Array(entry.badges(units: units).enumerated()), id: \.offset) { _, badge in
             ThemedBadge(text: badge)
         }
     }
@@ -119,10 +120,10 @@ struct ActivityRow: View {
     private func supplementText(_ supplement: FitbitActivitySupplement) -> String {
         var parts: [String] = []
         if let distance = supplement.distanceMeters {
-            parts.append(ActivityFormat.distance(distance))
+            parts.append(ActivityFormat.distance(distance, units: units, inPool: entry.isSwim))
         }
         if let energy = supplement.energyKilocalories {
-            parts.append("\(Int(energy)) kcal")
+            parts.append(ActivityFormat.energy(energy, units: units))
         }
         parts.append(supplement.sourceLabel)
         return parts.joined(separator: " \u{00B7} ")
