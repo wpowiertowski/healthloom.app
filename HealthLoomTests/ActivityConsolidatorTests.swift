@@ -14,6 +14,7 @@
 
 import CoreModel
 import Foundation
+import SyncKit
 import Testing
 @testable import HealthLoom
 
@@ -69,8 +70,8 @@ struct ActivityConsolidatorTests {
     @Test func supplementLinkedToNonAppleWatchWorkoutStillAttachesInline() {
         // The link is ground truth (resolver matched by coverage); the
         // `isAppleWatch` heuristic disagreeing must not drop the detail
-        // row -- one entry, supplement attached, row keeping its own source
-        // name (not the supplement's).
+        // row -- one entry, supplement attached, the import named as the
+        // Google session it is (not after HealthLoom, its writer).
         let imported = Self.fitbitImportedWorkout()
         let supplement = FitbitActivitySupplement(sample: Self.deferredSession(linkedTo: imported.uuid))
         let entries = ActivityConsolidator.consolidate(workouts: [imported], supplements: [supplement])
@@ -80,7 +81,7 @@ struct ActivityConsolidatorTests {
         #expect(entry.kind != .unlinkedFitbitSession)
         #expect(entry.supplement?.externalID == supplement.externalID)
         #expect(entry.supplement?.distanceMeters == 8000.0)
-        #expect(entry.sourceLabel == "HealthLoom")
+        #expect(entry.sourceLabel == ActivitySource.googleHealth.label)
     }
 
     @Test func watchWorkoutWithLinkedSessionConsolidatesIntoOneEntryWithSupplement() {
@@ -119,7 +120,7 @@ struct ActivityConsolidatorTests {
         #expect(entries.count == 1)
         #expect(entries[0].kind == .unlinkedFitbitSession)
         #expect(entries[0].title == "Run")
-        #expect(entries[0].sourceLabel == "Fitbit Air")
+        #expect(entries[0].sourceLabel == ActivitySource.googleHealth.label(detail: "Fitbit Air"))
     }
 
     /// A second Google copy of the same activity with no figures, running a
@@ -159,6 +160,26 @@ struct ActivityConsolidatorTests {
         )
 
         #expect(entries.map(\.id) == [rich.externalID])
+    }
+
+    // catches: a source named differently in one place -- "Fitbit" or
+    // "Other app" in a chart legend, a bare app name on a row, HealthLoom
+    // named as an import's source, Google Health doubled on a session.
+    @Test func everySourceIsNamedOneWay() {
+        let hydrow = WorkoutSummary(
+            uuid: UUID(), activityName: "Rowing", family: .endurance, start: Self.at(22), end: Self.at(22.25),
+            sourceName: "Hydrow", isHealthLoomImport: false, isAppleWatch: false
+        )
+        #expect(Self.watchWorkout().source == .appleWatch)
+        #expect(hydrow.source == .appleHealth)
+        #expect(Self.fitbitImportedWorkout().source == .googleHealth)
+        #expect(hydrow.sourceLabel == "Apple Health \u{00B7} Hydrow")
+        #expect(Self.fitbitImportedWorkout().sourceLabel == ActivitySource.googleHealth.label)
+        #expect(Self.bareSession(linkedTo: nil).sourceLabel == ActivitySource.googleHealth.label)
+
+        #expect(ActivitySource(.fitbit) == .googleHealth)
+        #expect(ActivitySource(.appleWatch) == .appleWatch)
+        #expect(ActivitySource(.otherApp) == .appleHealth)
     }
 
     @Test func mixedDayConsolidatesEachActivityOnceNewestFirst() {

@@ -201,7 +201,7 @@ struct ActivitySeriesChart: View {
                         Rectangle().fill(Self.color(line.origin)).frame(width: 10, height: 3)
                             .alignmentGuide(.firstTextBaseline) { $0[.bottom] + swatchLift }
                             .accessibilityHidden(true)
-                        SilkscreenText("\(line.origin.deviceLabel) \u{00B7} \(line.summary.text(for: series.metric, locale: locale))")
+                        SilkscreenText("\(ActivitySource(line.origin).label) \u{00B7} \(line.summary.text(for: series.metric, locale: locale))")
                             .font(Theme.mono(Theme.Step.micro, .regular, relativeTo: .caption2))
                             .tracking(0.5)
                             .foregroundStyle(Theme.secondary)
@@ -229,7 +229,7 @@ struct ActivitySeriesChart: View {
                     LineMark(
                         x: .value("Time", point.date),
                         y: .value(series.metric.title, point.value),
-                        series: .value("Device", line.origin.deviceLabel)
+                        series: .value("Device", ActivitySource(line.origin).label)
                     )
                     .foregroundStyle(Self.color(line.origin))
                     .lineStyle(StrokeStyle(lineWidth: 1.5))

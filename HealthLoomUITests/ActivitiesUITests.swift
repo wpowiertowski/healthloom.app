@@ -43,14 +43,14 @@ final class ActivitiesUITests: XCTestCase {
 
         // seed-exercise-1: a 40-min Fitbit run, deferred to a (seeded,
         // unreadable) watch workout -- one consolidated entry, titled from
-        // the session payload's activity type, sourced "Fitbit Air".
+        // the session payload's activity type, sourced "Google Health".
         let title = anyElement["activities.row.seed-exercise-1.title"]
         XCTAssertTrue(title.waitForExistence(timeout: 10))
         XCTAssertEqual(title.label, "Run")
 
         let detail = anyElement["activities.row.seed-exercise-1.detail"]
         XCTAssertTrue(detail.exists)
-        XCTAssertTrue(detail.label.contains("Fitbit Air"))
+        XCTAssertTrue(detail.label.contains("Google Health"))
         XCTAssertTrue(detail.label.contains("40 min"))
         // WP-37: hit-region audit over the Activities screen (test plan §6).
         try app.performAccessibilityAudit(for: [.hitRegion])

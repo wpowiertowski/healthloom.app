@@ -262,7 +262,9 @@ dense HR), so it is the priority source wherever it exists; Fitbit fills everyth
    Minutes, recovery metrics) — supplement, never duplicate. Several sessions can link to
    one workout, because Google Health can hold two copies of one activity. They fold into
    that workout's single entry, which shows the most complete one: more figures, then the
-   longer session (WP-75). Each entry opens a detail
+   longer session (WP-75). Sources are named one way throughout (`ActivitySource`, WP-76):
+   Google Health for anything from the Google feed, including what HealthLoom wrote to Apple
+   Health; Apple Watch for the watch; Apple Health for any other app. Each entry opens a detail
    screen (WP-73): its summary figures, the workout's route on a map when Apple Health
    has one, and a time plot of every measurement recorded during it, one line per device
    (`ActivitySeries`, read by `ActivityDetailProvider`). The extra read types (running

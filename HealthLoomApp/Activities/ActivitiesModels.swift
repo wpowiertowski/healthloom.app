@@ -66,6 +66,43 @@ enum SwimLocation: Hashable {
     }
 }
 
+/// Where an activity's data came from, named the same way everywhere in
+/// Activities -- rows, the detail header, its figures and chart legends:
+/// Google Health for anything from the Google feed (its sessions, and the
+/// Fitbit samples and workouts HealthLoom wrote to Apple Health), Apple
+/// Watch for the watch, and Apple Health for any other app that saves
+/// there (a Hydrow rower).
+nonisolated enum ActivitySource: Hashable, Sendable {
+    case googleHealth
+    case appleWatch
+    case appleHealth
+
+    var label: String {
+        switch self {
+        case .googleHealth: return "Google Health"
+        case .appleWatch: return "Apple Watch"
+        case .appleHealth: return "Apple Health"
+        }
+    }
+
+    /// The label, then what recorded it when that says more
+    /// ("Apple Health \u{00B7} Hydrow").
+    func label(detail: String?) -> String {
+        guard let detail, !detail.isEmpty, detail != label else { return label }
+        return "\(label) \u{00B7} \(detail)"
+    }
+
+    /// A HealthKit sample's origin: HealthLoom's own writes came from the
+    /// Google feed.
+    init(_ origin: SleepOrigin) {
+        switch origin {
+        case .fitbit: self = .googleHealth
+        case .appleWatch: self = .appleWatch
+        case .otherApp: self = .appleHealth
+        }
+    }
+}
+
 /// One HealthKit workout, reduced to what the Activities view renders.
 struct WorkoutSummary: Identifiable, Hashable {
     let uuid: UUID
@@ -88,6 +125,20 @@ struct WorkoutSummary: Identifiable, Hashable {
     var swimLocation: SwimLocation? = nil
 
     var id: UUID { uuid }
+
+    /// A HealthLoom import is a Google session; otherwise the watch or the
+    /// app that saved it.
+    var source: ActivitySource {
+        if isHealthLoomImport { return .googleHealth }
+        return isAppleWatch ? .appleWatch : .appleHealth
+    }
+
+    /// "Apple Watch \u{00B7} <watch>", "Apple Health \u{00B7} Hydrow", or
+    /// "Google Health" alone -- for an import, `sourceName` is HealthLoom,
+    /// the writer rather than the source.
+    var sourceLabel: String {
+        source == .googleHealth ? source.label : source.label(detail: sourceName)
+    }
 }
 
 /// One `.exercise` `LocalSample` row (a Fitbit session WP-12b's resolver
@@ -107,6 +158,9 @@ struct FitbitActivitySupplement: Identifiable, Hashable {
     let energyKilocalories: Double?
 
     var id: String { externalID }
+
+    /// Google Health, plus the device when the session names one.
+    var sourceLabel: String { ActivitySource.googleHealth.label(detail: source) }
 
     /// Decodes via the shared `LocalSample.decodedExercisePayload` (CoreModel
     /// -- code review 2026-08-28 finding #14: this was a hand-duplicated copy
@@ -193,7 +247,7 @@ struct ActivityFigure: Equatable {
 
 extension ActivityEntry {
     /// The detail screen's summary: the badges' readings, labelled, then
-    /// the linked Fitbit session's own figures under its device's name --
+    /// the linked session's own figures under Google Health's name --
     /// still a supplement (D13.2), never merged into the workout's.
     var figures: [ActivityFigure] {
         var figures = [ActivityFigure(label: "Duration", value: ActivityFormat.totalDuration(duration))]
@@ -208,10 +262,10 @@ extension ActivityEntry {
         }
         if let supplement {
             if let distance = supplement.distanceMeters, distance > 0 {
-                figures.append(ActivityFigure(label: "\(supplement.source) distance", value: ActivityFormat.distance(distance)))
+                figures.append(ActivityFigure(label: "\(ActivitySource.googleHealth.label) distance", value: ActivityFormat.distance(distance)))
             }
             if let energy = supplement.energyKilocalories, energy > 0 {
-                figures.append(ActivityFigure(label: "\(supplement.source) energy", value: "\(Int(energy)) kcal"))
+                figures.append(ActivityFigure(label: "\(ActivitySource.googleHealth.label) energy", value: "\(Int(energy)) kcal"))
             }
         }
         return figures
@@ -308,16 +362,13 @@ enum ActivityConsolidator {
             // nil at read time. Gating the attach on the heuristic dropped
             // the "+ 8.0 km" detail row exactly when the link was real.
             let supplement = supplementsByWorkoutUUID.removeValue(forKey: workout.uuid)
-            let sourceLabel = workout.isAppleWatch
-                ? "Apple Watch \u{00B7} \(workout.sourceName)"
-                : workout.sourceName
             return ActivityEntry(
                 id: workout.uuid.uuidString,
                 kind: .workout(workout),
                 title: workout.activityName,
                 start: workout.start,
                 end: workout.end,
-                sourceLabel: sourceLabel,
+                sourceLabel: workout.sourceLabel,
                 supplement: supplement,
                 family: workout.family,
                 distanceMeters: workout.distanceMeters,
@@ -341,7 +392,7 @@ enum ActivityConsolidator {
                 title: supplement.activityName ?? "Activity",
                 start: supplement.start,
                 end: supplement.end,
-                sourceLabel: supplement.source,
+                sourceLabel: supplement.sourceLabel,
                 supplement: nil,
                 family: ActivityFamily(googleExerciseType: supplement.exerciseType),
                 distanceMeters: supplement.distanceMeters
