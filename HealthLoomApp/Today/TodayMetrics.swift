@@ -96,6 +96,15 @@ enum TodayMetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
 struct TodayMetricReading: Equatable {
     var value: Double
     var date: Date?
+    /// A second, most recent single reading shown beside a nightly value
+    /// (HRV since WP-72); nil for every other kind.
+    var latest: TodayLatestReading? = nil
+}
+
+/// The newest single reading behind a row whose headline is an average.
+struct TodayLatestReading: Equatable {
+    var value: Double
+    var date: Date
 }
 
 /// One rendered instrument-panel row (the mockup's `Metric` model, bound to
@@ -185,11 +194,12 @@ enum TodayMetricFormatter {
         case .hrv:
             // A night's average in milliseconds (WP-65), dated by the night's
             // evening: "Last night", or the night it's from when last night
-            // had no readings. Whole milliseconds: the decimals are below the
-            // measurement's noise floor and only add width.
+            // had no readings. The newest single reading follows (WP-72).
+            // Whole milliseconds: the decimals are below the measurement's
+            // noise floor and only add width.
             return TodayMetricDisplay(
                 kind: kind,
-                sub: nightSub(reading.date),
+                sub: hrvSub(night: reading.date, latest: reading.latest, locale: locale),
                 value: groupedCount(reading.value.rounded(), locale: locale),
                 unit: "ms",
                 progress: nil,
@@ -264,6 +274,27 @@ enum TodayMetricFormatter {
     private static func timestampSub(_ date: Date?, prefix: String) -> String {
         guard let date else { return "\(prefix) reading" }
         return "\(prefix) \u{00B7} \(date.formatted(date: .omitted, time: .shortened))"
+    }
+
+    /// The HRV row's sub line: the night, then the newest single reading
+    /// -- "Last night · Latest 45 ms · 2:14 PM" (WP-72). A latest reading
+    /// from an earlier day names the day, so last night's 5:50 AM reading
+    /// never reads as today's.
+    static func hrvSub(
+        night: Date?,
+        latest: TodayLatestReading?,
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        let nightPart = nightSub(night, now: now, calendar: calendar)
+        guard let latest else { return nightPart }
+        var style = Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        if !calendar.isDate(latest.date, inSameDayAs: now) {
+            style = style.weekday(.abbreviated)
+        }
+        let value = groupedCount(latest.value.rounded(), locale: locale)
+        return "\(nightPart) \u{00B7} Latest \(value) ms \u{00B7} \(latest.date.formatted(style))"
     }
 
     /// "Last night" for the night whose evening was yesterday, else "Night

@@ -94,6 +94,26 @@ import Testing
         #expect(NightlyHRV.latestNight(in: [lastCompleted: 55], lastCompleted: lastCompleted) == lastCompleted)
     }
 
+    // catches (WP-72): the tile's "latest" coming from the other device
+    // than its night (RMSSD beside SDNN), an older reading shown as latest,
+    // or a reading after `now` (a clock-skewed sample) winning.
+    @Test func theLatestReadingIsThePreferredSourcesNewest() {
+        let z = Self.newYork
+        let now = Self.time(2026, 9, 28, 14, in: z)
+        let readings = [
+            Self.reading(Self.time(2026, 9, 28, 5, 50, in: z), 38, .fitbit),
+            Self.reading(Self.time(2026, 9, 28, 2, in: z), 44, .fitbit),
+            Self.reading(Self.time(2026, 9, 28, 13, in: z), 61, .appleWatch),
+            Self.reading(Self.time(2026, 9, 28, 15, in: z), 99, .fitbit),
+        ]
+        #expect(NightlyHRV.latestReading(readings, preference: .fitbit, now: now)?.milliseconds == 38)
+        #expect(NightlyHRV.latestReading(readings, preference: .appleWatch, now: now)?.milliseconds == 61)
+        // Only the other device recorded: it stands in, as it does for a night.
+        let watchOnly = readings.filter { $0.origin == .appleWatch }
+        #expect(NightlyHRV.latestReading(watchOnly, preference: .fitbit, now: now)?.milliseconds == 61)
+        #expect(NightlyHRV.latestReading([], preference: .fitbit, now: now) == nil)
+    }
+
     // catches: the build-21 crash shape -- this runs in HealthKit handlers.
     @Test func runsOffTheMainActor() async {
         let z = Self.newYork

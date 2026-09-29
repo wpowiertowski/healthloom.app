@@ -113,6 +113,16 @@ nonisolated public enum NightlyHRV {
         }
     }
 
+    /// The most recent single reading at or before `now`, from the source
+    /// the nightly averages prefer (WP-72) -- a Fitbit's RMSSD and a
+    /// watch's SDNN are different scales, so the Today tile's "latest"
+    /// comes from the same device as its night. Nil with none.
+    public static func latestReading(_ readings: [Reading], preference: SleepSourcePreference, now: Date) -> Reading? {
+        let past = readings.filter { $0.time <= now }
+        return SleepSourceSelection.winningSource(of: past, preference: preference, origin: \.origin, isAsleep: { _ in true })
+            .max { $0.time < $1.time }
+    }
+
     /// The latest night that has ended by `now` (a night ends at 06:00).
     public static func lastCompletedNight(before now: Date, in timeZone: TimeZone) -> NightKey {
         NightKey.civilDay(of: now.addingTimeInterval(-TimeInterval(morningHour) * 3600), in: timeZone).adding(days: -1)
