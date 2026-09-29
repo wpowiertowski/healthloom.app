@@ -1,7 +1,7 @@
 // CoachTools.swift
 //
 // WP-24 (implementation-plan.md): the coach's tool set in one place.
-// `all(store:workouts:)` builds the live tools for registration on session
+// `all(store:workouts:activity:)` builds the live tools for registration on session
 // creation (`LanguageModelSession(model:tools:instructions:)` via
 // `CoachSessionFactory` -- WP-25 wires this into the chat UI). The steps,
 // sleep and vitals tools answer from a `KnowledgeStore` summary (WP-19 step
@@ -27,13 +27,20 @@ public enum CoachTools {
     /// `workouts`), vitals. Pass the result as `tools:` when creating the
     /// session -- WP-25 does this for chat conversations; one-shot insight
     /// sessions (WP-23) stay tool-free unless a later WP says otherwise.
-    public static func all(store: KnowledgeStore, workouts: CoachWorkoutQueries) -> [any Tool] {
+    ///
+    /// Each tool reports to `activity` while it runs (WP-78), under the
+    /// label the chat's typing indicator shows.
+    public static func all(store: KnowledgeStore, workouts: CoachWorkoutQueries, activity: CoachToolActivity) -> [any Tool] {
         [
-            GetStepsTool.live(store: store),
-            GetRecentSleepTool.live(store: store),
-            GetWorkoutsTool.live(store: store, list: workouts.list),
-            GetWorkoutDetailTool.live(store: store, detail: workouts.detail),
-            GetVitalsTool.live(store: store),
+            ReportingTool(GetStepsTool.live(store: store), activity: activity) { _ in "Checking your steps" },
+            ReportingTool(GetRecentSleepTool.live(store: store), activity: activity) { _ in "Reviewing your sleep" },
+            ReportingTool(GetWorkoutsTool.live(store: store, list: workouts.list), activity: activity) { _ in
+                "Looking through your workouts"
+            },
+            ReportingTool(GetWorkoutDetailTool.live(store: store, detail: workouts.detail), activity: activity) { arguments in
+                "Reading workout \(arguments.number)" + (arguments.measurement.map { " (\($0.lowercased()))" } ?? "")
+            },
+            ReportingTool(GetVitalsTool.live(store: store), activity: activity) { _ in "Checking your heart rate and HRV" },
         ]
     }
 

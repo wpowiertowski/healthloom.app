@@ -3,7 +3,7 @@
 // WP-24 (implementation-plan.md): the `getRecentSleep` coach tool, backed by
 // `KnowledgeStore.sleepSummary` (WP-19 step 4). Output is the same
 // user-visible summary text as the profile -- nothing the trace UI can't
-// show (D7). Registered on session creation via `CoachTools.all(store:)`.
+// show (D7). Registered on session creation via `CoachTools.all`.
 // See GetStepsTool.swift for the isolation pattern shared by all the tools.
 
 import Foundation

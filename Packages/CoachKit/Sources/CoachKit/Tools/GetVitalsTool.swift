@@ -4,7 +4,7 @@
 // `KnowledgeStore.vitalsSummary` (WP-19 step 4): resting HR and HRV trends.
 // Output is the same user-visible summary text as the profile -- nothing the
 // trace UI can't show (D7). Registered on session creation via
-// `CoachTools.all(store:)`. See GetStepsTool.swift for the isolation pattern
+// `CoachTools.all`. See GetStepsTool.swift for the isolation pattern
 // shared by all the tools.
 
 import Foundation

@@ -94,19 +94,54 @@ private final class WorkoutQueriesProbe {
     }
 }
 
+/// Records tool activity reports in order.
+@MainActor
+private final class ActivityProbe {
+    var events: [String] = []
+
+    var activity: CoachToolActivity {
+        CoachToolActivity(
+            began: { self.events.append("began \($0)") },
+            ended: { self.events.append("ended \($0)") }
+        )
+    }
+}
+
 @Suite("CoachTools wiring")
 @MainActor
 struct CoachToolsWiringTests {
-    @Test("all builds five named tools in order")
+    @Test("all builds five named tools in order, each reporting its activity")
     func buildsAllTools() throws {
         let (store, _) = try makeToolsStore()
-        let tools: [any Tool] = CoachTools.all(store: store, workouts: WorkoutQueriesProbe().queries)
+        let tools: [any Tool] = CoachTools.all(store: store, workouts: WorkoutQueriesProbe().queries, activity: ActivityProbe().activity)
         #expect(tools.map(\.name) == ["getSteps", "getRecentSleep", "getWorkouts", "getWorkoutDetail", "getVitals"])
-        #expect(tools[0] is GetStepsTool)
-        #expect(tools[1] is GetRecentSleepTool)
-        #expect(tools[2] is GetWorkoutsTool)
-        #expect(tools[3] is GetWorkoutDetailTool)
-        #expect(tools[4] is GetVitalsTool)
+        #expect(tools[0] is ReportingTool<GetStepsTool>)
+        #expect(tools[1] is ReportingTool<GetRecentSleepTool>)
+        #expect(tools[2] is ReportingTool<GetWorkoutsTool>)
+        #expect(tools[3] is ReportingTool<GetWorkoutDetailTool>)
+        #expect(tools[4] is ReportingTool<GetVitalsTool>)
+        // The model sees the wrapped tool's own schema and description.
+        #expect(tools[3].description == GetWorkoutDetailTool.live(store: store, detail: { _, _ in "" }).description)
+    }
+
+    // catches: the typing indicator left naming a finished (or failed)
+    // tool, or the detail call not saying which workout it reads.
+    @Test("tools report what they're doing until they answer or fail")
+    func toolsReportActivity() async throws {
+        let (store, _) = try makeToolsStore()
+        let probe = ActivityProbe()
+        let tools = CoachTools.all(store: store, workouts: WorkoutQueriesProbe().queries, activity: probe.activity)
+        guard let detail = tools[3] as? ReportingTool<GetWorkoutDetailTool> else {
+            Issue.record("detail tool isn't reporting")
+            return
+        }
+        _ = try await detail.call(arguments: .init(number: 2, measurement: "Ground contact time"))
+        #expect(probe.events == ["began Reading workout 2 (ground contact time)", "ended Reading workout 2 (ground contact time)"])
+
+        struct Probe: Error {}
+        let failing = ReportingTool(GetStepsTool { _ in throw Probe() }, activity: probe.activity) { _ in "Checking your steps" }
+        await #expect(throws: Probe.self) { try await failing.call(arguments: .init(days: 7)) }
+        #expect(probe.events.suffix(2) == ["began Checking your steps", "ended Checking your steps"])
     }
 
     // catches: the list asked for more days than it numbers, or the detail

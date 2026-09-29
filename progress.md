@@ -6750,3 +6750,35 @@ swatch's alignment closure (Sendable) read `@ScaledMetric` view state.
 Mutants caught: split averages over the whole workout; no remainder merge; running totals not
 differenced; splits never widening; breakdown of the first device only; exact names only;
 detail tool ungated.
+
+## WP-78 — Typing indicator in the coach chat
+
+Between sending and the first streamed word the chat showed nothing but the Stop button, and
+WP-77's tool calls made that gap seconds long. Now:
+
+- **While the coach responds**, a typing bubble sits at the end of the transcript: three dots
+  pulsing in turn, beside what it's doing. That's "Thinking…" or, while a tool runs, the tool's
+  own label: "Looking through your workouts…", "Reading workout 2 (ground contact time)…",
+  "Reviewing your sleep…".
+- **Once text streams**, bare dots stay under it until the reply ends. The label comes back if
+  a tool runs mid-reply.
+- **Accessibility:** the dots are still under Reduce Motion, VoiceOver reads the label
+  (`chat.activity`), and the dots sit beside the label's first line at any text size.
+
+**Structure:**
+- CoachKit's `ReportingTool` wraps every tool in `CoachTools.all(store:workouts:activity:)`. It
+  reports `began`/`ended` with the tool's label around each call, including failed ones, and
+  forwards the tool's name, description and schema untouched.
+- The chat view model keeps the running labels (`toolActivity`, newest last) and clears them
+  when the turn ends.
+- `CoachActivityIndicator` drives `CoachActivityBubble` from a timeline.
+- The tool-set ID is `wp78-chat-v3`.
+
+**Tests:**
+- `CoachToolsTests`: every tool reports; begin and end around a failing call.
+- `CoachChatViewModelTests.activityLabelFollowsTools`.
+- `CoachSnapshotTests` (new; light, dark, AXXXL).
+- `CoachUITests` checks the indicator is present while a reply streams.
+
+Mutants caught: the oldest tool named; one end clearing every same-named call; no end
+reported on failure.
