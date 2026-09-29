@@ -6485,3 +6485,25 @@ run, so it skips unless `HL_RUN_STRESS=1`; `make stress` sets it (through xcodeb
 `TEST_RUNNER_` prefix) and runs only that test. The pinned-simulator lookup moved to
 `scripts/pinned-simulator-udid.sh`, shared by `make test` and `make stress`. Every other test
 these WPs added is a unit test measured in milliseconds.
+
+## WP-70 — Knowledge refresh: local samples read off the main actor
+
+Follow-up from WP-67/69. `KnowledgeStore.refresh()` (main actor, fired at most hourly by
+store changes, and on coach warm-up) fetched every `LocalSample` in its window on the main
+actor and decoded their payloads there: a month of per-minute Active Minutes, 0.4 s on the
+simulator (timed in WP-68), longer on a phone — a stutter whenever it fired.
+
+`LocalKnowledgeReader` (a `@ModelActor`, CoachKit) now fetches the exercise sessions in the
+workouts window and each local-only type's samples in its window, and derives the local-only
+profile fields there, returning plain values (`ExerciseSupplement`s, `ProfileField`s). The
+store keeps the HealthKit reads, the merge and the save. Same bounds and failure posture as
+before (windowed and upper-bounded at `now`; a fetch failure propagates rather than erasing
+fields). To run off the main actor, `KnowledgeDerivation`, `ExerciseSupplement`,
+`sumPayloadValues` and CoreModel's `ProfileField` are `nonisolated` (pure value code that the
+packages' default main-actor isolation had pinned).
+
+**Tests.** CoachKit 202 (all existing refresh tests unchanged and passing;
+`LocalKnowledgeReaderTests` reads both windows on the reader's actor). Mutants: dropping the
+exercise window caught; dropping the local fetch's upper bound survives by design —
+`localOnlyField` filters `start <= asOf` itself, so the fetch bound only avoids reading rows
+that would be discarded.

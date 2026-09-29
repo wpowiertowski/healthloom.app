@@ -9,7 +9,7 @@ import Foundation
 /// One derived (or user-pinned) fact about the user, in the human-readable,
 /// source-tagged, timestamped shape architecture.md D7 requires for AI context —
 /// display text a person could read directly, never a raw value dump.
-public struct ProfileField: Codable, Sendable, Hashable {
+nonisolated public struct ProfileField: Codable, Sendable, Hashable {
     /// Stable identifier for this field (e.g. `"steps.dailyAverage30d"`), used for
     /// correction-pinning (WP-19/WP-30 "Correct") and exclusion toggles.
     public var key: String

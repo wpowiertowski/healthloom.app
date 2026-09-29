@@ -25,7 +25,7 @@ import Foundation
 /// D13.2). `nil` `activityName`/`distanceMeters`/`energyKilocalories` means
 /// decoding didn't find that field; the sample still identifies which workout
 /// it supplements via `linkedWatchWorkoutUUID`.
-public struct ExerciseSupplement {
+nonisolated public struct ExerciseSupplement: Sendable {
     public let externalID: String
     public let linkedWatchWorkoutUUID: UUID?
     /// The sample's own start date -- code review (2026-08-28) finding #4:
@@ -94,7 +94,7 @@ public struct ExerciseSupplement {
 /// exact key -- and degrades to `0` (not a crash) if a future payload shape
 /// adds unrelated numeric fields, which would only overcount, never throw.
 /// Flagged in progress.md for correction once a real payload is observed.
-func sumPayloadValues(_ sample: LocalSample) -> Double {
+nonisolated func sumPayloadValues(_ sample: LocalSample) -> Double {
     // WP-56: the decode is CoreModel's `LocalSample.payloadValues`, shared
     // with the app's Data-tab trends.
     sample.payloadValues.values.reduce(0, +)
