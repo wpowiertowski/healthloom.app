@@ -6507,3 +6507,35 @@ packages' default main-actor isolation had pinned).
 exercise window caught; dropping the local fetch's upper bound survives by design —
 `localOnlyField` filters `start <= asOf` itself, so the fetch bound only avoids reading rows
 that would be discarded.
+
+## WP-71 — Sync resilience: background time for Sync Now, one retry for network drops
+
+Second half of the sync-speedup list.
+
+**Background time.** Leaving the app during Sync Now cut off the types in flight; they
+failed and waited for the next sync. `ForegroundSync.start` now holds a UIKit
+background-task assertion for the whole run. If iOS's time runs out first, the expiry
+handler cancels the run: the engine records the types in flight as `cancelled`, not
+failed, and `SyncSchedule`'s `shouldStart` gate starts nothing further (the same rule as
+the background path). The UIKit adapter is `BackgroundTime` (`HealthLoomApp/DI`), shared
+with the iCloud flush on backgrounding, which carried its own copy of the token before.
+
+**One retry for transport errors.** `GoogleHealthClient.fetchPage` threw `.transport` on
+the first dropped connection, so a Wi-Fi to cellular hand-off failed the whole type. A
+transient `URLError` (connection lost, timed out, not connected, can't connect/find host,
+DNS) now gets one retry per page after the backoff policy's first delay (~1 s plus jitter).
+The classifier is pure (`isTransient`); a TLS failure or bad URL fails at once, as before.
+The backoff sleep's cancellation handling is now one helper shared by the 429/5xx path.
+
+**Tests** (all milliseconds; none added to UI tests):
+- `ForegroundSyncTests.holdsBackgroundTimeForTheWholeRun` (catches: no assertion, never
+  ended, or ended before the last type finished).
+- `runningOutOfBackgroundTimeCancelsTheRun` (catches: expiry leaving the run going, or
+  types starting after it).
+- `ResilienceTests.droppedConnectionIsRetriedOnce` (catches: no retry; retry with no wait).
+- `persistentDropThrowsAfterOneRetry` (catches: unbounded retry; the network returns on
+  the fourth request, so the mutant fails instead of hanging).
+- `transientClassification` (catches: a transient code dropped, non-transient retried).
+
+Mutants caught: start gate removed; expiry a no-op; assertion ended at the run's start;
+connection-lost not transient; everything transient; no wait; unbounded retry.

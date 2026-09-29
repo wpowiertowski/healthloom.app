@@ -16,7 +16,6 @@
 import CoreModel
 import Foundation
 import SwiftData
-import UIKit
 
 @MainActor
 final class CloudSyncChangeMonitor {
@@ -72,33 +71,17 @@ final class CloudSyncChangeMonitor {
 }
 
 /// Runs a waiting change-triggered sync when the app goes to the
-/// background, holding a background-task assertion so iOS gives it time
-/// to finish. Thin UIKit adapter; the sync itself is the engine's.
+/// background, holding background time (`BackgroundTime`) so iOS lets it
+/// finish. Thin UIKit adapter; the sync itself is the engine's.
 @MainActor
 enum CloudSyncBackgroundFlush {
     static func run(_ engine: CloudSyncEngine) {
-        let token = BackgroundTaskToken()
-        token.id = UIApplication.shared.beginBackgroundTask(withName: "cloud-sync-flush") {
-            // Out of time: end the assertion; the change stays local and
-            // syncs at the next activation.
-            MainActor.assumeIsolated { token.end() }
-        }
+        // Out of time: the assertion ends; the change stays local and
+        // syncs at the next activation.
+        let end = BackgroundTime.system.begin("cloud-sync-flush") {}
         Task {
             await engine.flushPendingSync()
-            token.end()
+            end()
         }
-    }
-}
-
-/// Holds the assertion's identifier so both the expiration handler and
-/// the completion can end it exactly once.
-@MainActor
-private final class BackgroundTaskToken {
-    var id: UIBackgroundTaskIdentifier = .invalid
-
-    func end() {
-        guard id != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(id)
-        id = .invalid
     }
 }

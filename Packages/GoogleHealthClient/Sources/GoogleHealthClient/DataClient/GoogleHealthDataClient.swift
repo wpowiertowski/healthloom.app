@@ -66,6 +66,7 @@ nonisolated public struct GoogleHealthClient: Sendable {
     ) async throws(GoogleHealthClientError) -> Page {
         var attempt = 1
         var retriedAfter401 = false
+        var retriedTransport = false
         // `type.endpointName` is a user-declared computed property in
         // CoreModel, which -- like this package -- opts into
         // `.defaultIsolation(MainActor.self)` (architecture.md §3), so
@@ -101,6 +102,13 @@ nonisolated public struct GoogleHealthClient: Sendable {
                 // expiration-handler cancel during a live request becomes a
                 // red dashboard row.
                 throw .cancelled
+            } catch let urlError as URLError where Self.isTransient(urlError) && !retriedTransport {
+                // WP-71: a dropped connection or a timeout gets one retry
+                // after a short wait -- a Wi-Fi to cellular hand-off used
+                // to fail the whole type until the next sync.
+                retriedTransport = true
+                try await backoffSleep(seconds: config.backoff.delay(forAttempt: 1, retryAfter: nil, jitterFraction: jitter.nextFraction()))
+                continue
             } catch {
                 throw .transport(String(describing: Swift.type(of: error)))
             }
@@ -123,24 +131,41 @@ nonisolated public struct GoogleHealthClient: Sendable {
                     throw response.statusCode == 429 ? .rateLimited : .server(status: response.statusCode)
                 }
                 let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
-                let delay = config.backoff.delay(forAttempt: attempt, retryAfter: retryAfter, jitterFraction: jitter.nextFraction())
-                do {
-                    try await sleeper.sleep(seconds: delay)
-                } catch is CancellationError {
-                    // Never `try?` a backoff sleep: swallowing cancellation
-                    // burns the remaining attempts back-to-back with no
-                    // delay, against a server that just rate-limited us,
-                    // in the exact window the system is winding us down.
-                    throw GoogleHealthClientError.cancelled
-                } catch {
-                    throw .transport(String(describing: Swift.type(of: error)))
-                }
+                try await backoffSleep(seconds: config.backoff.delay(forAttempt: attempt, retryAfter: retryAfter, jitterFraction: jitter.nextFraction()))
                 attempt += 1
                 continue
 
             default:
                 throw .server(status: response.statusCode)
             }
+        }
+    }
+
+    /// Sleeps before a retry. Never `try?` a backoff sleep: swallowing
+    /// cancellation burns the remaining attempts back-to-back with no
+    /// delay, against a server that just rate-limited us, in the exact
+    /// window the system is winding us down.
+    private func backoffSleep(seconds: Double) async throws(GoogleHealthClientError) {
+        do {
+            try await sleeper.sleep(seconds: seconds)
+        } catch is CancellationError {
+            throw .cancelled
+        } catch {
+            throw .transport(String(describing: Swift.type(of: error)))
+        }
+    }
+
+    /// Whether a request that got no response is worth one more try: the
+    /// connection dropped, timed out, or the network wasn't there for a
+    /// moment. Anything else (a TLS failure, a bad URL) fails the same way
+    /// again.
+    nonisolated static func isTransient(_ error: URLError) -> Bool {
+        switch error.code {
+        case .networkConnectionLost, .timedOut, .notConnectedToInternet,
+             .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            true
+        default:
+            false
         }
     }
 

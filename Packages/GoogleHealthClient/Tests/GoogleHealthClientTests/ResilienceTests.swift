@@ -156,4 +156,85 @@ struct ResilienceTests {
             #expect(error == .server(status: 503))
         }
     }
+
+    // MARK: - WP-71: one retry for a dropped connection
+
+    /// Whether `error` is a transport failure. (Its payload is the thrown
+    /// type's name, which a `URLError` crossing an existential reports as
+    /// `NSError` -- not what these tests are about.)
+    nonisolated static func isTransport(_ error: GoogleHealthClientError) -> Bool {
+        if case .transport = error { true } else { false }
+    }
+
+    /// Scripts the data endpoint to fail with `code` for the first
+    /// `failures` requests, then answer with the steps fixture.
+    nonisolated static func dropping(_ code: URLError.Code, failures: Int) -> RecordingHTTPSession {
+        RecordingHTTPSession { request, allRequests in
+            if TestClientFactory.isTokenRequest(request) {
+                return (TestClientFactory.tokenJSON(), httpResponse(statusCode: 200))
+            }
+            if allRequests.filter({ !TestClientFactory.isTokenRequest($0) }).count <= failures {
+                throw URLError(code)
+            }
+            return (await Fixture.data("steps"), httpResponse(statusCode: 200))
+        }
+    }
+
+    // catches: a Wi-Fi to cellular hand-off (connection lost) failing the
+    // whole type until the next sync, and a retry with no wait.
+    @Test("a dropped connection is retried once after a short wait, then succeeds")
+    func droppedConnectionIsRetriedOnce() async throws {
+        let sleeper = RecordingSleeper()
+        let http = Self.dropping(.networkConnectionLost, failures: 1)
+        let client = TestClientFactory.client(http: http, sleeper: sleeper, jitter: ZeroJitterSource())
+
+        let page = try await client.reconcile(type: .steps, since: Date(), until: Date())
+        #expect(page.points.count == 2)
+        #expect(await sleeper.recordedDurations == [1.0])
+        let dataRequestCount = await http.requests.filter { !TestClientFactory.isTokenRequest($0) }.count
+        #expect(dataRequestCount == 2)
+    }
+
+    // catches: retrying a dead network forever (or up to the 429 budget)
+    // instead of failing the type with a transport error.
+    @Test("a connection that keeps dropping throws .transport after exactly one retry")
+    func persistentDropThrowsAfterOneRetry() async throws {
+        // The network comes back on the fourth request: an unbounded
+        // retry would reach it and succeed, failing this test, not hang it.
+        let http = Self.dropping(.timedOut, failures: 3)
+        let client = TestClientFactory.client(http: http, sleeper: RecordingSleeper(), jitter: ZeroJitterSource())
+
+        do {
+            _ = try await client.reconcile(type: .steps, since: Date(), until: Date())
+            Issue.record("Expected .transport to be thrown")
+        } catch {
+            #expect(Self.isTransport(error), "\(error)")
+        }
+        let dataRequestCount = await http.requests.filter { !TestClientFactory.isTokenRequest($0) }.count
+        #expect(dataRequestCount == 2)
+    }
+
+    // catches: retrying failures that repeat identically (a TLS failure
+    // costs a wasted wait and request), and the classifier dropping a
+    // transient code.
+    @Test("only a network blip counts as transient")
+    func transientClassification() async throws {
+        let transient: [URLError.Code] = [.networkConnectionLost, .timedOut, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed]
+        for code in transient {
+            #expect(GoogleHealthClient.isTransient(URLError(code)), "\(code)")
+        }
+        #expect(!GoogleHealthClient.isTransient(URLError(.secureConnectionFailed)))
+        #expect(!GoogleHealthClient.isTransient(URLError(.badURL)))
+
+        let http = Self.dropping(.secureConnectionFailed, failures: 1)
+        let client = TestClientFactory.client(http: http, sleeper: RecordingSleeper(), jitter: ZeroJitterSource())
+        do {
+            _ = try await client.reconcile(type: .steps, since: Date(), until: Date())
+            Issue.record("Expected .transport to be thrown")
+        } catch {
+            #expect(Self.isTransport(error), "\(error)")
+        }
+        let dataRequestCount = await http.requests.filter { !TestClientFactory.isTokenRequest($0) }.count
+        #expect(dataRequestCount == 1)
+    }
 }

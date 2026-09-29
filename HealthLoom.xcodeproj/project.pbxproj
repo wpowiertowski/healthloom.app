@@ -149,6 +149,7 @@
 		AC39A70937F4394B8C0BC06E /* pendingHero-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 20FA9FE2182F8E17B9299FBF /* pendingHero-dark-AXXXL.png */; };
 		AFA1078008838E98F758406C /* coachInsight-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 5628D5360463B146A727C76D /* coachInsight-light-XL.png */; };
 		B33E57DF4C1FD2387B7DADFC /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57D6673B7A365B3460D0CC4 /* RootView.swift */; };
+		B4BD9B8F96DDD4969791A8B9 /* BackgroundTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12E296127832022DF713DA10 /* BackgroundTime.swift */; };
 		B4E86A25EDF34E82727F5C37 /* AIModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A4E209B61B8777CC35D75C0 /* AIModelsView.swift */; };
 		B6789B0869C28B5850089C97 /* TodayMetricsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ABC6579DD2BF9C1E6DD278E /* TodayMetricsProvider.swift */; };
 		B6AB397E8649AA2281D00F67 /* TipStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AA5DF674AC3FE2C1689652B /* TipStoreTests.swift */; };
@@ -256,6 +257,7 @@
 		0FA01E0FE7697F0A466F2523 /* DisclaimerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisclaimerTests.swift; sourceTree = "<group>"; };
 		0FCCEAEE418620195FDB6C80 /* OnboardingCompletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingCompletionTests.swift; sourceTree = "<group>"; };
 		1023BB0803852B24F3CEF218 /* coachInsight-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachInsight-dark-XL.png"; sourceTree = "<group>"; };
+		12E296127832022DF713DA10 /* BackgroundTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTime.swift; sourceTree = "<group>"; };
 		12FB571E89093F864BBC6CE5 /* Archivo.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Archivo.ttf; sourceTree = "<group>"; };
 		15AF48D6CF1DCBA4EE186B07 /* ActivityConsolidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityConsolidatorTests.swift; sourceTree = "<group>"; };
 		1627F7ACD1E039C95A247CF3 /* WatchPriorityPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPriorityPreferences.swift; sourceTree = "<group>"; };
@@ -797,6 +799,7 @@
 			isa = PBXGroup;
 			children = (
 				0396CF67FD2C9E20AD61935D /* AppEnvironment.swift */,
+				12E296127832022DF713DA10 /* BackgroundTime.swift */,
 				EA6C6779B6097D8736ACBF62 /* DuplicateWriteRepair.swift */,
 				DF45F57176795A360526D438 /* ForegroundSync.swift */,
 				BC71B1121CA46671792B0C54 /* GoogleConsentCoordinator.swift */,
@@ -1196,6 +1199,7 @@
 				6A20CB0AA63596B0D3E1B713 /* AppEnvironment.swift in Sources */,
 				33F6BEA0C1AB5B131D8C3BB5 /* BackfillTypeRow.swift in Sources */,
 				7860DC47AA4A79C760F311EA /* BackfillView.swift in Sources */,
+				B4BD9B8F96DDD4969791A8B9 /* BackgroundTime.swift in Sources */,
 				A209AA18044B5129C1B9BF0D /* CloudGateCache.swift in Sources */,
 				50CEEFDECB7A217C879361BE /* CloudKeyStoring.swift in Sources */,
 				A2BA6F04B8B481B8ABD14DE3 /* CloudKeyValidator.swift in Sources */,
