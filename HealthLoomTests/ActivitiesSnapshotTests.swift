@@ -87,6 +87,35 @@ private enum ActivitiesSnapshotSubject {
     }
 }
 
+/// WP-73: the detail screen below its title -- summary figures and a
+/// chart per metric, one with two devices' lines. No route: MapKit draws
+/// nothing off-screen, so the map is left to the device check.
+@MainActor
+private enum ActivityDetailSnapshotSubject {
+    static var detail: some View {
+        let calendar = ActivitiesSnapshotSubject.calendar
+        let start = ActivitiesSnapshotSubject.at(day: 18, hour: 11, minute: 48)
+        let end = start.addingTimeInterval(37 * 60)
+        let entry = ActivitiesSnapshotSubject.entry(
+            "run", "Run", .onFoot, day: 18, hour: 11, minute: 48, minutes: 37, distance: 6200, heartRate: 148,
+            supplement: ActivitiesSnapshotSubject.runSupplement
+        )
+        var samples: [ActivitySample] = []
+        for second in stride(from: 0.0, to: 37 * 60, by: 20) {
+            let time = start.addingTimeInterval(second)
+            let effort = 120 + 45 * sin(second / 400)
+            samples.append(ActivitySample(metric: .heartRate, start: time, end: time, value: effort, origin: .appleWatch))
+            samples.append(ActivitySample(metric: .heartRate, start: time, end: time, value: effort - 4, origin: .fitbit))
+            samples.append(ActivitySample(metric: .activeEnergy, start: time, end: time.addingTimeInterval(20), value: 3.6, origin: .appleWatch))
+        }
+        let detail = ActivityDetail(series: ActivitySeriesBuilder.series(samples, from: start, to: end), route: nil)
+        return ActivityDetailContent(entry: entry, detail: detail)
+            .environment(\.locale, Locale(identifier: "en_GB"))
+            .environment(\.timeZone, calendar.timeZone)
+            .environment(\.calendar, calendar)
+    }
+}
+
 @Suite("Activities snapshots")
 struct ActivitiesSnapshotTests {
     @Test("activity list across appearance and content size")
@@ -104,6 +133,24 @@ struct ActivitiesSnapshotTests {
             SnapshotAssert.assert(
                 ActivitiesSnapshotSubject.list.padding().background(Theme.canvas),
                 named: "list-\(configName)",
+                colorScheme: scheme,
+                sizeCategory: size
+            )
+        }
+    }
+
+    @Test("activity detail across appearance and content size")
+    @MainActor
+    func detail() {
+        let configs: [(String, ColorScheme, ContentSizeCategory)] = [
+            ("light-XL", .light, .extraLarge),
+            ("dark-XL", .dark, .extraLarge),
+            ("light-AXXXL", .light, .accessibilityExtraExtraExtraLarge),
+        ]
+        for (configName, scheme, size) in configs {
+            SnapshotAssert.assert(
+                ActivityDetailSnapshotSubject.detail.padding().background(Theme.canvas),
+                named: "detail-\(configName)",
                 colorScheme: scheme,
                 sizeCategory: size
             )

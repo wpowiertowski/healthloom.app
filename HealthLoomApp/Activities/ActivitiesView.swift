@@ -64,10 +64,18 @@ struct ActivitiesView: View {
                     ThemedPanel {
                         ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in
                             if index > 0 { ThemedRowDivider() }
-                            ActivityRow(
-                                entry: entry,
-                                durationFraction: ActivitySummary.durationFraction(of: entry, in: entries)
-                            )
+                            // WP-73: each row opens its activity in full.
+                            NavigationLink {
+                                ActivityDetailView(entry: entry)
+                            } label: {
+                                ActivityRow(
+                                    entry: entry,
+                                    durationFraction: ActivitySummary.durationFraction(of: entry, in: entries)
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("activities.row.\(entry.id)")
                         }
                     }
                 }
