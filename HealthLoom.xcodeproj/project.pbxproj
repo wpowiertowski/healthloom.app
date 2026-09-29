@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		013BAC8CFE7D0B224F7396B5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86CD8BFAD0971DF362990C41 /* Assets.xcassets */; };
+		02044B3BD6F82BB5D6DE9586 /* detail-light-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 1906C8B82BDC1BE2EC252828 /* detail-light-XL.png */; };
 		026FA68CC32045A6930347F7 /* ActivitiesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F832D79C0293DFF02EB3AAF6 /* ActivitiesProvider.swift */; };
 		02ABBBD1C21C78714BA6CC35 /* panel-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 5FA41B36FFB4A4D18BE188AC /* panel-light-AXXXL.png */; };
 		0662DA34D3EC8DCB3641BED6 /* InsightUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA89693D81AB7314BCB9E27F /* InsightUITests.swift */; };
@@ -61,6 +62,7 @@
 		46B21701C926F29FD7F4865A /* coachInsight-dark-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = 6821074A215081E8C8E02F47 /* coachInsight-dark-XS.png */; };
 		47D9AA84C5D9C0A2A4F3CCB8 /* welcome-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 2B01212EEF38BB0B5E7B49D8 /* welcome-dark-XL.png */; };
 		48E43464DE53328598B2F549 /* sleepSourceRow-light-XS.png in Resources */ = {isa = PBXBuildFile; fileRef = B0029271E7433011DC6B3F35 /* sleepSourceRow-light-XS.png */; };
+		4924B32494E09BF2B901CC11 /* detail-light-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = 935574DA4FD63831875814FF /* detail-light-AXXXL.png */; };
 		4AC73E302422E17DFF2FD9A5 /* firstScoreHero-dark-AXXXL.png in Resources */ = {isa = PBXBuildFile; fileRef = F131BD20C9931E50997B2CB2 /* firstScoreHero-dark-AXXXL.png */; };
 		4C751CEB6B7CE82F0CDD7DA0 /* YouViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57D3E1F4CF05962C558B46D8 /* YouViewModel.swift */; };
 		4CCBD911C44DED95573C42F1 /* AboutYouSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A75B43CE76F00103D1D3A4A /* AboutYouSection.swift */; };
@@ -215,6 +217,7 @@
 		F120E2253FC52364EA152C38 /* scoredHero-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 755F461766380A79B2F297E1 /* scoredHero-dark-XL.png */; };
 		F22669CA63DEF1CFDBCEA31E /* ActivitiesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B636138EC9433DF44A01B2D8 /* ActivitiesUITests.swift */; };
 		F369D69D07987D4408FC0530 /* MorningInsightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51ED544BBB6FE7133E24FCC9 /* MorningInsightTests.swift */; };
+		F3D40F32FB0131ECDD2411C3 /* detail-dark-XL.png in Resources */ = {isa = PBXBuildFile; fileRef = 277DF37067CEA7F95A1BDF87 /* detail-dark-XL.png */; };
 		F47D1C15766CFE4588463EA0 /* YouViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB65FD53D09CB4A91ADF980 /* YouViewModelTests.swift */; };
 		F51FBC81951E3295DD33291E /* CloudSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89253009FF69315BB768A3F9 /* CloudSyncTests.swift */; };
 		F5201EEB895AEADD50381C78 /* ActivityConsolidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15AF48D6CF1DCBA4EE186B07 /* ActivityConsolidatorTests.swift */; };
@@ -271,6 +274,7 @@
 		17360EE1F4C01D3375B54EAD /* UITestScriptedCoachSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestScriptedCoachSession.swift; sourceTree = "<group>"; };
 		17481EE947A762C743BC47F9 /* TierSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TierSettingsStore.swift; sourceTree = "<group>"; };
 		18ADA5529703601F668C1171 /* InsightNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightNotifier.swift; sourceTree = "<group>"; };
+		1906C8B82BDC1BE2EC252828 /* detail-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "detail-light-XL.png"; sourceTree = "<group>"; };
 		19ACC74CFE335BD5CAC2B60B /* StoreProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreProtectionTests.swift; sourceTree = "<group>"; };
 		1A4E209B61B8777CC35D75C0 /* AIModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModelsView.swift; sourceTree = "<group>"; };
 		1AEDE64BD24E3404034E10C4 /* SleepSourcePreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepSourcePreferences.swift; sourceTree = "<group>"; };
@@ -282,6 +286,7 @@
 		23510BBAB3D1FEF1A1074200 /* GoogleConnectionSetting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleConnectionSetting.swift; sourceTree = "<group>"; };
 		260DEF38CD6BB5D9E58E74C8 /* SyncPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPreferencesTests.swift; sourceTree = "<group>"; };
 		274817A936B0737083E5F9D1 /* syncRow-neverSynced-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "syncRow-neverSynced-light-AXXXL.png"; sourceTree = "<group>"; };
+		277DF37067CEA7F95A1BDF87 /* detail-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "detail-dark-XL.png"; sourceTree = "<group>"; };
 		295F76D5D16EAEB2D59FEE2C /* Secrets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Secrets; path = Packages/Secrets; sourceTree = SOURCE_ROOT; };
 		2A75B43CE76F00103D1D3A4A /* AboutYouSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutYouSection.swift; sourceTree = "<group>"; };
 		2ABC6579DD2BF9C1E6DD278E /* TodayMetricsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayMetricsProvider.swift; sourceTree = "<group>"; };
@@ -376,6 +381,7 @@
 		8DB65107E5622A86BF645716 /* panel-light-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "panel-light-XL.png"; sourceTree = "<group>"; };
 		8E525CA73C5512443ACDAC6F /* firstScoreHero-dark-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "firstScoreHero-dark-XS.png"; sourceTree = "<group>"; };
 		9126F67A6EF4050877C5972A /* coachPlaceholder-light-XS.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "coachPlaceholder-light-XS.png"; sourceTree = "<group>"; };
+		935574DA4FD63831875814FF /* detail-light-AXXXL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "detail-light-AXXXL.png"; sourceTree = "<group>"; };
 		93910D48DA29A35F9B043B6C /* TierSwitcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TierSwitcherTests.swift; sourceTree = "<group>"; };
 		97783DB11B12EF2985A05D99 /* HealthKitUnavailableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitUnavailableView.swift; sourceTree = "<group>"; };
 		99168A76726FB69F20CC579A /* firstScoreHero-dark-XL.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "firstScoreHero-dark-XL.png"; sourceTree = "<group>"; };
@@ -578,6 +584,9 @@
 		2A4AF16C5B2E363CF1E50FB7 /* ActivitiesSnapshotTests */ = {
 			isa = PBXGroup;
 			children = (
+				277DF37067CEA7F95A1BDF87 /* detail-dark-XL.png */,
+				935574DA4FD63831875814FF /* detail-light-AXXXL.png */,
+				1906C8B82BDC1BE2EC252828 /* detail-light-XL.png */,
 				FC67D59F816F8463B444FEF9 /* list-dark-AXXXL.png */,
 				5F8E2BA0EF9B6C295EFF70A5 /* list-dark-XL.png */,
 				C2F92C0239E68DADF4CEBF94 /* list-dark-XS.png */,
@@ -1099,6 +1108,9 @@
 				A52FDDB0F139205A0C86D171 /* coachPlaceholder-light-AXXXL.png in Resources */,
 				A3ED23EC2392E55FDC3153C1 /* coachPlaceholder-light-XL.png in Resources */,
 				5A45447394A9B6FCE61EC16C /* coachPlaceholder-light-XS.png in Resources */,
+				F3D40F32FB0131ECDD2411C3 /* detail-dark-XL.png in Resources */,
+				4924B32494E09BF2B901CC11 /* detail-light-AXXXL.png in Resources */,
+				02044B3BD6F82BB5D6DE9586 /* detail-light-XL.png in Resources */,
 				4AC73E302422E17DFF2FD9A5 /* firstScoreHero-dark-AXXXL.png in Resources */,
 				D9BC3AE112E691B542E7E4CC /* firstScoreHero-dark-XL.png in Resources */,
 				8CE72C2D72C5C623E121FDFB /* firstScoreHero-dark-XS.png in Resources */,
