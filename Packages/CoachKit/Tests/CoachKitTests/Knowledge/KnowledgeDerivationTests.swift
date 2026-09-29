@@ -227,14 +227,16 @@ struct WorkoutsFieldTests {
         #expect(field?.displayText.contains("plus 1 Fitbit Air session not currently linked") == true)
     }
 
-    @Test("a supplement linked to a workout outside the current window still counts as unlinked")
+    @Test("sessions linked to a workout outside the current window count once, as unlinked")
     func linkedToAbsentWorkout() {
-        let supplements = [
+        // Two Google copies of one activity (catches: counting each copy).
+        let absent = UUID()
+        let supplements = ["ext-3", "ext-3b"].map { externalID in
             ExerciseSupplement(
-                externalID: "ext-3", linkedWatchWorkoutUUID: UUID(), start: day(0), source: "Fitbit Air",
+                externalID: externalID, linkedWatchWorkoutUUID: absent, start: day(0), source: "Fitbit Air",
                 activityName: "Swimming", distanceMeters: nil, energyKilocalories: nil
-            ),
-        ]
+            )
+        }
         let field = KnowledgeDerivation.workoutsField(
             workouts: [], exerciseSupplements: supplements, windowDays: 30, asOf: .now, source: "HealthKit"
         )

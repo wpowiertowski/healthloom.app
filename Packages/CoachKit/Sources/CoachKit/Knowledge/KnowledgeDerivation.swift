@@ -251,9 +251,12 @@ nonisolated public enum KnowledgeDerivation {
         source: String
     ) -> ProfileField? {
         let workoutIDs = Set(workouts.map(\.id))
+        // Sessions linked to the same unreadable workout are copies of one
+        // activity (Google Health can hold two), so they count once.
+        var seenLinks: Set<UUID> = []
         let unlinkedSupplements = exerciseSupplements.filter { supplement in
             guard let linked = supplement.linkedWatchWorkoutUUID else { return true }
-            return !workoutIDs.contains(linked)
+            return !workoutIDs.contains(linked) && seenLinks.insert(linked).inserted
         }
         let totalCount = workouts.count + unlinkedSupplements.count
         guard totalCount > 0 else { return nil }

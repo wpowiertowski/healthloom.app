@@ -6656,3 +6656,26 @@ All ten findings from the `/code-review last 10 commits` pass.
 Mutants caught: baseline from any device; latest from any device; coach keeping tonight; coach
 keeping the partial first night; offset ignoring DST; first night counted from the start day;
 timeout transient; refresh key ignoring item count; query reading the wrong type.
+
+## WP-75 — Fold duplicate Google sessions into one activity
+
+A Hydrow row showed twice in Activities: once as the Hydrow workout with "+ 195 kcal · Google
+Health" attached, and again as a standalone "Google Health" entry. Google Health held two
+exercise sessions for that one row, and the resolver correctly deferred both to the Hydrow
+workout. `ActivityConsolidator` attached only the first linked session and listed any other
+session linked to the same workout as its own entry. Its comment said that couldn't happen.
+Runs and swims had a single Google session each, so they merged.
+
+- `ActivityConsolidator.consolidate` groups sessions by linked workout. The entry shows the
+  most complete session (`mostComplete`: more figures, then longer, then lowest external ID
+  so the pick never depends on fetch order), and the rest fold away. Copies linked to an
+  unreadable workout surface once.
+- The coach's workout count (`KnowledgeDerivation.workoutsField`) counts copies linked to the
+  same unreadable workout once. Copies linked to a readable workout were already ignored.
+
+**Tests:** `ActivityConsolidatorTests.twoSessionsLinkedToOneWorkoutFoldIntoItsEntry` (both
+input orders) and `twoSessionsLinkedToOneUnreadableWorkoutShowOnce`. `WorkoutsFieldTests
+.linkedToAbsentWorkout` now carries two copies.
+
+Mutants caught: keeping the first session and listing the rest; ranking without figures;
+counting each copy for the coach.
