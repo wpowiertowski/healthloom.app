@@ -6835,8 +6835,8 @@ read Apple Health across every source. Today shows the latest reading. The Data 
 is the average of the last 7 completed days, which leaves out today and so this morning's
 weigh-in. The "7d avg" label sat only on the smaller comparison line.
 
-"Your Data" now carries a note under its heading: "Values are 7-day averages of full days,
-so today isn't in them yet. Today shows the latest readings." It explains only the numbers:
+"Your Data" now carries a two-line note under its heading: "Values are 7-day averages of
+full days." / "Today page shows the latest readings." It explains only the numbers:
 the page is about syncing with Google, so it doesn't name Apple Health, where the averages
 come from. `ThemedSectionHeader` takes an
 optional note. Headers without one are unchanged; the snapshots with section headers still

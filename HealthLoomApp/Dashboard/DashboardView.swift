@@ -52,7 +52,7 @@ struct DashboardView: View {
     private var isSyncing: Bool { appEnvironment.foregroundSync.isRunning }
 
     /// How to read the "Your Data" rows (WP-80).
-    static let yourDataNote = "Values are 7-day averages of full days, so today isn't in them yet. Today shows the latest readings."
+    static let yourDataNote = "Values are 7-day averages of full days.\nToday page shows the latest readings."
 
     private var orderedRows: [(GoogleDataType, SyncState?)] {
         AppEnvironment.p0Types.map { type in
