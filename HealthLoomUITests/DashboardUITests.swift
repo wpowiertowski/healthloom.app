@@ -41,6 +41,8 @@ final class DashboardUITests: XCTestCase {
         // window -- asserting up top, right after launch, avoids coupling
         // this check to how much content happens to exist below it.
         XCTAssertTrue(anyElement["dashboard.freshnessHeader"].exists)
+        // WP-80: the rows' values are 7-day averages, and the section says so.
+        XCTAssertTrue(anyElement["dashboard.yourData.note"].label.hasPrefix("Values are 7-day averages"))
 
         // steps: seeded "ok". WP-56: the right-hand column is the 7-day
         // trend from Apple Health, which the test simulator's empty store
