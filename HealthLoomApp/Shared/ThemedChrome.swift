@@ -224,14 +224,27 @@ private struct ThemedNavigationChrome: ViewModifier {
 struct ThemedSectionHeader: View {
     let title: String
     var topPadding: CGFloat = 22
+    /// A line under the title saying how to read the section (WP-80:
+    /// "Your Data" values are 7-day averages).
+    var note: String? = nil
+    var noteAccessibilityIdentifier = "section.note"
 
     var body: some View {
-        SilkscreenText(title)
-            .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
-            .foregroundStyle(Theme.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, topPadding)
-            .padding(.bottom, 10)
+        VStack(alignment: .leading, spacing: 4) {
+            SilkscreenText(title)
+                .font(Theme.mono(Theme.Step.micro, .medium, relativeTo: .caption2)).tracking(0.8)
+                .foregroundStyle(Theme.secondary)
+            if let note {
+                Text(note)
+                    .font(Theme.font(Theme.Step.caption, .regular, relativeTo: .caption))
+                    .foregroundStyle(Theme.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(noteAccessibilityIdentifier)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, topPadding)
+        .padding(.bottom, 10)
     }
 }
 

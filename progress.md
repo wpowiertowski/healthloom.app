@@ -6827,3 +6827,20 @@ no distances or weights, and the workout tools name their units.
 - The Units panel snapshot (new), and the Sleep source row at AXXXL re-recorded.
 
 Mutants caught: swims measured in road units; a choice not saved.
+
+## WP-80 — Say that the Data tab's values are averages
+
+Weight read 98.1 kg on the Data tab and 97.3 kg on Today, which looked like a stale row. Both
+read Apple Health across every source. Today shows the latest reading. The Data row's value
+is the average of the last 7 completed days, which leaves out today and so this morning's
+weigh-in. The "7d avg" label sat only on the smaller comparison line.
+
+"Your Data" now carries a note under its heading: "Values are 7-day averages of full days,
+so today isn't in them yet. Today shows the latest readings." It explains only the numbers:
+the page is about syncing with Google, so it doesn't name Apple Health, where the averages
+come from. `ThemedSectionHeader` takes an
+optional note. Headers without one are unchanged; the snapshots with section headers still
+match.
+
+**Tests:** `DashboardUITests` checks the note. It's a presence check on copy, so no mutant
+was run.
