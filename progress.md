@@ -6844,3 +6844,29 @@ match.
 
 **Tests:** `DashboardUITests` checks the note. It's a presence check on copy, so no mutant
 was run.
+
+## WP-81 — Open the Data tab on its last known numbers
+
+The Data tab opened with "No recent data" in every row and filled in about 5 seconds later.
+The rows' 7-day averages lived only in the view's state. The Apple Health queries and the
+local-sample fetch behind them take a few seconds, so every launch started empty.
+
+`DataTabValues` (on `AppEnvironment`) now holds the rows' values and saves them to the app's
+defaults. A launch shows the last saved values at once, and each refresh replaces them when it
+lands. It saves raw averages and counts (`DataTabSnapshot`), not strings, so a unit or locale
+change formats them like fresh values.
+
+The wipe flow's defaults reset erases the saved values. `update` does nothing once a wipe has
+latched, so a refresh finishing after the wipe can't write them back. UI-test launches keep the
+values in memory only, so no launch opens on another launch's numbers.
+
+The refresh also changed:
+- The Apple Health trends and the in-app summaries now load side by side, not one after the
+  other.
+- A refresh that a newer one replaced drops its result, rather than landing after it.
+
+**Tests:** `DataTabValuesTests`:
+- `lastValuesOpenTheNextLaunch` (unreadable saved data starts empty).
+- `nothingIsKeptOnceAWipeLatched`.
+
+Mutants caught: values shown but never saved; a save after the wipe latched.

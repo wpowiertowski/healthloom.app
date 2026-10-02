@@ -261,6 +261,10 @@ final class AppEnvironment {
     /// app root hands its preferences to every view (`\.unitPreferences`);
     /// the coach's workout answers read them at call time.
     let unitSettings: UnitSettings
+    /// WP-81: the Data tab's last known numbers, shown at launch while the
+    /// fresh ones load. Memory-only under `-UITest*`, so no launch inherits
+    /// another's.
+    let dataTabValues: DataTabValues
     /// WP-34 (implementation-plan.md): morning-insight preferences + the
     /// notification seam. The notifier is stubbed under
     /// `-UITestStubNotifications` (grants on request) and starts denied
@@ -316,6 +320,7 @@ final class AppEnvironment {
         self.healthKitAuth = HealthKitAuth()
         let unitSettings = UnitSettings()
         self.unitSettings = unitSettings
+        self.dataTabValues = DataTabValues(defaults: launchConfiguration.isUITest ? nil : .standard)
 
         let authManager = GoogleAuthManager(
             config: Self.googleAuthConfig,

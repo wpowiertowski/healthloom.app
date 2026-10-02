@@ -16,7 +16,7 @@ import Foundation
 import SwiftData
 
 /// What one in-app row shows, as plain values.
-nonisolated struct LocalRowSummary: Sendable, Equatable {
+nonisolated struct LocalRowSummary: Codable, Sendable, Equatable {
     /// Minutes-per-day trend (Active Zone Minutes, Active Minutes).
     var trend: RollingTrend?
     /// Events in the last 30 days (ECG, irregular-rhythm notifications).
