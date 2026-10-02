@@ -117,9 +117,13 @@ attack/privacy surface minimal and avoids a three-way consistency problem. The
 
 **D3 — Sync cursor = high-water mark + fixed lookback window.**
 Each type keeps `lastSyncedAt`, but every sync pulls `since: lastSyncedAt − lookback`
-(default 72 h; sleep 7 d, since sleep sessions finalize late). Late-arriving device data
-falls inside the window; the idempotency key (D4) makes re-pulling overlap free. A pure
-high-water mark would silently drop any sample synced late by the device.
+(default 72 h; sleep 7 d, since sleep sessions finalize late; heart rate 24 h, WP-82).
+Late-arriving device data falls inside the window; the idempotency key (D4) makes
+re-pulling overlap free of duplicates. A pure high-water mark would silently drop any
+sample synced late by the device. Re-pulling isn't free of cost, though: heart rate runs
+to tens of thousands of points a day, nearly all already written, so its overlap is one
+day. Readings a watch uploads more than a day late fall outside it; a Historical Backfill
+(D5) recovers them.
 The window is walked one day at a time, oldest first, and `lastSyncedAt` commits after
 each day (WP-52): a dense type (heart rate is hundreds of thousands of points on a first
 sync) keeps every finished day when a run is cut short, and resumes from there. Only the

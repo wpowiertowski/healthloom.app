@@ -33,6 +33,7 @@ import Testing
     static let initialWindow: TimeInterval = 7 * 24 * 3600
     static let defaultLookback: TimeInterval = 72 * 3600
     static let sleepLookback: TimeInterval = 7 * 24 * 3600
+    static let heartRateLookback: TimeInterval = 24 * 3600
 
     // MARK: - Test fixtures
 
@@ -123,6 +124,27 @@ import Testing
         // window, the last one ends it.
         let last = try #require(mock.calls.last { $0.type == .sleep })
         #expect(last.until == Self.fixedNow)
+    }
+
+    // catches: heart rate re-pulling 72h of its densest-of-all stream on
+    // every run (WP-82) -- or the shorter lookback leaking to the other
+    // dense streams, which keep 72h (the steps tests around this one).
+    @Test func heartRateReachesBackOneDay() async throws {
+        let container = try CoreModel.makeContainer(inMemory: true)
+        let clock = TestSyncClock(Self.fixedNow)
+        let mock = MockGoogleReconcileClient()
+        mock.setPage(type: .heartRate, pageToken: nil, page: Page(points: [], nextPageToken: nil))
+        let engine = SyncEngine(
+            client: mock, writer: HealthKitWriter(store: MockHealthStore()), modelContainer: container, clock: clock
+        )
+
+        _ = await engine.sync(type: .heartRate) // lastSyncedAt == fixedNow
+        let firstRunCalls = mock.calls.count
+        clock.set(Self.fixedNow.addingTimeInterval(3600))
+        _ = await engine.sync(type: .heartRate)
+
+        let firstSpan = try #require(mock.calls.dropFirst(firstRunCalls).first)
+        #expect(firstSpan.since == Self.fixedNow.addingTimeInterval(-Self.heartRateLookback))
     }
 
     @Test func secondSyncWindowIsAnchoredOnLastSyncedAtNotInitialWindow() async throws {

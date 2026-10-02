@@ -19,7 +19,7 @@ import SyncKit
 /// HealthKit's own queues. Under the target's default MainActor isolation
 /// its closures carried a main-actor check, and build 21 crashed at launch
 /// the first time a real night of sleep reached one.
-nonisolated struct RollingTrend: Equatable {
+nonisolated struct RollingTrend: Codable, Equatable {
     static let weekDays = 7
     static let monthDays = 30
 

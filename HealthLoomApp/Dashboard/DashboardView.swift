@@ -34,11 +34,7 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
     @Query(sort: \SyncState.dataType) private var syncStates: [SyncState]
-    /// WP-67: the in-app rows' summaries, built off the main thread.
-    @State private var localSummaries: [GoogleDataType: LocalRowSummary] = [:]
     @State private var isConnectingGoogle = false
-    /// WP-56: 7-day vs 30-day trends from Apple Health, per P0 row.
-    @State private var trends: [GoogleDataType: RollingTrend] = [:]
     @Environment(\.locale) private var locale
     @Environment(\.unitPreferences) private var units
     @State private var connectError: String?
@@ -60,8 +56,13 @@ struct DashboardView: View {
         }
     }
 
+    /// WP-56: 7-day vs 30-day trends from Apple Health, per P0 row, and
+    /// WP-67's in-app summaries -- the last known ones until a refresh
+    /// lands (WP-81), so the rows never open empty.
+    private var values: DataTabSnapshot { appEnvironment.dataTabValues.snapshot }
+
     private var localOnlyRows: [(GoogleDataType, LocalRowSummary)] {
-        AppEnvironment.p1LocalOnlyTypes.map { type in (type, localSummaries[type] ?? .empty) }
+        AppEnvironment.p1LocalOnlyTypes.map { type in (type, values.localSummaries[type] ?? .empty) }
     }
 
     // WP-33 follow-on: the stock `List` this screen shipped with is replaced
@@ -147,10 +148,17 @@ struct DashboardView: View {
         // or finishes (the run's end brings new days into Apple Health).
         // WP-74: and whenever any sync lands data -- background syncs and
         // backfill never flip `isRunning`, so the rows went stale.
+        // WP-81: the two sources load side by side, and a refresh a newer
+        // one superseded drops its result rather than landing after it.
         .task(id: Self.refreshKey(syncStates, isSyncing: appEnvironment.foregroundSync.isRunning)) {
-            trends = await DataTrendProvider().trends(for: AppEnvironment.p0Types)
-            localSummaries = await LocalRowSummarizer(modelContainer: appEnvironment.modelContainer)
-                .summaries(for: AppEnvironment.p1LocalOnlyTypes, now: Date(), calendar: .current)
+            let summarizer = LocalRowSummarizer(modelContainer: appEnvironment.modelContainer)
+            let p0Types = AppEnvironment.p0Types
+            let localTypes = AppEnvironment.p1LocalOnlyTypes
+            async let trends = DataTrendProvider().trends(for: p0Types)
+            async let localSummaries = summarizer.summaries(for: localTypes, now: Date(), calendar: .current)
+            let fresh = await DataTabSnapshot(trends: trends, localSummaries: localSummaries)
+            guard !Task.isCancelled else { return }
+            appEnvironment.dataTabValues.update(fresh)
         }
     }
 
@@ -203,7 +211,7 @@ struct DashboardView: View {
     private func trendText(for type: GoogleDataType) -> DataTrendText {
         guard let metric = DataTrendMetric(type) else { return .empty }
         return DataTrendText.make(
-            trends[type],
+            values.trends[type],
             metric: metric,
             locale: locale,
             units: units

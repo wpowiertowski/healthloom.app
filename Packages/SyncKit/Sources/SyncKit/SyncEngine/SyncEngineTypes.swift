@@ -28,11 +28,18 @@ nonisolated public struct SyncConfiguration: Sendable, Equatable {
     /// *not* WP-15's user-chosen backfill horizon, just the incremental
     /// engine's own bootstrap window).
     public var initialWindow: TimeInterval
-    /// Default lookback for every type except sleep (architecture.md D3: 72h).
+    /// Default lookback for every type except sleep and heart rate
+    /// (architecture.md D3: 72h).
     public var defaultLookback: TimeInterval
     /// Sleep-specific lookback (architecture.md D3: 7d -- "since sleep
     /// sessions finalize late").
     public var sleepLookback: TimeInterval
+    /// WP-82: heart rate's lookback, 24h. It is the densest stream (tens of
+    /// thousands of points a day, nearly all already written), and 72h of
+    /// it made every run re-pull and re-check three days to find a few
+    /// minutes' new readings. Readings a watch uploads more than a day late
+    /// fall outside it; a Historical Backfill still recovers them.
+    public var heartRateLookback: TimeInterval
     /// WP-52: a window is walked this much at a time, oldest first, and the
     /// cursor commits after each span. A first heart-rate sync is hundreds
     /// of thousands of points; walked as one piece it outlived every
@@ -59,12 +66,14 @@ nonisolated public struct SyncConfiguration: Sendable, Equatable {
         initialWindow: TimeInterval = 7 * 24 * 3600,
         defaultLookback: TimeInterval = 72 * 3600,
         sleepLookback: TimeInterval = 7 * 24 * 3600,
+        heartRateLookback: TimeInterval = 24 * 3600,
         chunkSpan: TimeInterval = 24 * 3600,
         spannedTypes: Set<GoogleDataType> = SyncConfiguration.denseTypes
     ) {
         self.initialWindow = initialWindow
         self.defaultLookback = defaultLookback
         self.sleepLookback = sleepLookback
+        self.heartRateLookback = heartRateLookback
         self.chunkSpan = chunkSpan
         self.spannedTypes = spannedTypes
     }
@@ -93,14 +102,18 @@ nonisolated public struct SyncConfiguration: Sendable, Equatable {
         return pieces
     }
 
-    /// `.sleep` gets the 7-day lookback (sessions finalize late); every other
-    /// type gets the 72h default. Compares `GoogleDataType` cases directly --
-    /// synthesized `Equatable`, not one of CoreModel's MainActor-isolated
-    /// *computed* properties (`.writability`/`.filterName`/`.endpointName`),
-    /// so this needs no `await` even from `SyncEngine`'s own (non-MainActor)
-    /// actor.
+    /// `.sleep` gets the 7-day lookback (sessions finalize late),
+    /// `.heartRate` 24h (WP-82); every other type gets the 72h default.
+    /// Switches on `GoogleDataType` cases directly -- not one of CoreModel's
+    /// MainActor-isolated *computed* properties
+    /// (`.writability`/`.filterName`/`.endpointName`), so this needs no
+    /// `await` even from `SyncEngine`'s own (non-MainActor) actor.
     public nonisolated func lookback(for type: GoogleDataType) -> TimeInterval {
-        type == .sleep ? sleepLookback : defaultLookback
+        switch type {
+        case .sleep: sleepLookback
+        case .heartRate: heartRateLookback
+        default: defaultLookback
+        }
     }
 }
 
