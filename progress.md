@@ -6870,3 +6870,19 @@ The refresh also changed:
 - `nothingIsKeptOnceAWipeLatched`.
 
 Mutants caught: values shown but never saved; a save after the wipe latched.
+
+## WP-82 — Reach back one day, not three, for heart rate
+
+Heart rate syncs were slow. Each run is incremental, but it starts 72 hours before the last
+sync (architecture.md D3), so late watch uploads still land. For heart rate, that meant
+re-downloading and re-checking roughly 12–16k readings each run to find a few minutes of new
+ones. Heart rate's lookback is now 24 hours (`SyncConfiguration.heartRateLookback`).
+Sleep keeps 7 days, and every other type, including the other dense streams, keeps 72 hours.
+
+The trade-off: readings a watch uploads to Google more than a day late fall outside the
+window. A Historical Backfill still picks them up.
+
+**Tests:** `SyncEngineTests.heartRateReachesBackOneDay`. The existing steps tests pin 72 hours
+for the other dense streams.
+
+Mutant caught: heart rate falling back to the 72-hour default.
