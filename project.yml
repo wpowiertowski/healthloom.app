@@ -3,9 +3,9 @@ name: HealthLoom
 options:
   minimumXcodeGenVersion: "2.38.0"
   createIntermediateGroups: true
-  # iOS 27 retarget (2026-07): building the app scheme requires the Xcode 27
-  # beta's iOS 27 SDK. Package `swift test` runs are unaffected (they build
-  # for the macOS host). See implementation-plan.md "Toolchain note".
+  # iOS 27: building the app scheme requires Xcode 27's iOS 27 SDK, which
+  # local dev and every CI job use (WP-83). See implementation-plan.md
+  # "Toolchain note".
   deploymentTarget:
     iOS: "27.0"
 
@@ -24,6 +24,11 @@ settings:
     # these per-target settings, covering local-package iOS builds in the
     # xcodebuild graph too. There are no remote package dependencies —
     # adding one requires it to build warning-free under this SDK first.
+    # The flags don't promote every diagnostic (WP-83: 24 UI-test
+    # concurrency warnings passed CI with them set), so `make test` and CI
+    # also fail on any warning left in the build log
+    # (scripts/no-compiler-warnings.sh). A GUI build has no such check:
+    # read the issue navigator before committing.
     # Known gap: the five local packages get no warnings-as-errors in GUI
     # builds (only their `swift test` runs and CI enforce it) -- project
     # settings can't reach package targets, and command-line flags can't

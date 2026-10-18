@@ -151,11 +151,11 @@ and zero failures.
 ## Requirements
 
 - iOS 27 or later
-- Xcode 27 beta or later, on an Apple Silicon Mac (to build from source). In CI, the
-  app-scheme job runs on GitHub's `xcode-27` preview runner image (Xcode 27 beta,
-  iOS 27 simulators); the package `swift test` jobs run on `macos-26` with Xcode 26.x
-  (the manifests deliberately stay at `swift-tools-version: 6.2`) — see the Toolchain
-  note in [implementation-plan.md](implementation-plan.md)
+- Xcode 27 or later, on an Apple Silicon Mac (to build from source). In CI, the
+  package `swift test` jobs and the app-scheme job all run on GitHub's `xcode-27`
+  runner image (Xcode 27.0, iOS 27 simulators), the only one that carries Xcode 27
+  so far; the manifests are at `swift-tools-version: 6.4`. See the Toolchain note in
+  [implementation-plan.md](implementation-plan.md)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) at the version pinned in `.github/workflows/ci.yml` (`XCODEGEN_VERSION`) — `project.yml` is the source of truth, and the generated `HealthLoom.xcodeproj` is **committed** (Xcode Cloud builds from it and has no XcodeGen step). Regenerate with `make xcode` after any structural change and commit the result; CI's drift job rejects a stale project
 - A Google Cloud OAuth client for the Google Health API (see [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md))
 

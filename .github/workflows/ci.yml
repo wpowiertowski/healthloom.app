@@ -20,17 +20,16 @@ concurrency:
 permissions:
   contents: read
 
-# iOS 27 retarget (2026-07): local dev is on the Xcode 27 beta / Swift 6.4.
-# GitHub now ships the beta on a dedicated preview image with the `xcode-27`
-# runs-on label (actions/runner-images#14196), which the app job uses below.
-# Package jobs stay on macos-26 pinned to an Xcode 26.x that IS on that
-# image -- `swift test` builds for the macOS host, and the manifests
-# deliberately stay at swift-tools-version 6.2, so those jobs don't need the
-# preview image (see implementation-plan.md "Toolchain note").
-# Available versions:
-# https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
+# Toolchain (WP-83): every Swift job builds with Xcode 27.0 / Swift 6.4 --
+# the toolchain local dev uses (`make test` runs /Applications/Xcode.app,
+# which is 27.0) and the one the app ships with. GitHub ships Xcode 27 only
+# on the `xcode-27` image (actions/runner-images#14404, still labelled
+# preview); the regular macos-26 image tops out at Xcode 26.6. So both the
+# package jobs and the app job run there, and the package manifests are at
+# swift-tools-version 6.4. Move both back to the regular image once it
+# carries Xcode 27 (implementation-plan.md "Toolchain note", WP-38).
 env:
-  XCODE_VERSION: "26.4.1"
+  XCODE_APP: "/Applications/Xcode_27.0.app"
   # Pinned so the project-drift job compares against a fixed generator —
   # see the comment on that job. Keep in lockstep with the version used
   # locally and with the committed HealthLoom.xcodeproj.
@@ -158,7 +157,7 @@ jobs:
 
   packages:
     name: swift test (${{ matrix.package }})
-    runs-on: macos-26
+    runs-on: xcode-27
     strategy:
       fail-fast: false
       matrix:
@@ -174,20 +173,28 @@ jobs:
             ~/.swiftpm
             ~/Library/Caches/org.swift.swiftpm
             Packages/${{ matrix.package }}/.build
-          key: ${{ runner.os }}-swiftpm-${{ matrix.package }}-${{ hashFiles(format('Packages/{0}/Package.resolved', matrix.package)) }}
+          # `xcode27` in the key: .build holds compiled modules, so a cache
+          # written by another toolchain (these jobs used Xcode 26.4.1 before
+          # WP-83) must never be restored into this one.
+          key: ${{ runner.os }}-xcode27-swiftpm-${{ matrix.package }}-${{ hashFiles(format('Packages/{0}/Package.resolved', matrix.package)) }}
           restore-keys: |
-            ${{ runner.os }}-swiftpm-${{ matrix.package }}-
+            ${{ runner.os }}-xcode27-swiftpm-${{ matrix.package }}-
 
-      - name: Select Xcode ${{ env.XCODE_VERSION }}
-        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+      - name: Select Xcode 27
+        run: sudo xcode-select -s "$XCODE_APP"
 
       - name: Show Xcode version
         run: xcodebuild -version
 
       - name: swift test
         working-directory: Packages/${{ matrix.package }}
-        # Warnings fail the build: CI must go red on warnings.
-        run: swift test -Xswiftc -warnings-as-errors
+        # Warnings fail the build: -warnings-as-errors promotes what it can,
+        # and the log check fails on any warning the flag lets through
+        # (scripts/no-compiler-warnings.sh has the case that needed it).
+        run: |
+          set -euo pipefail
+          swift test -Xswiftc -warnings-as-errors 2>&1 | tee "$RUNNER_TEMP/swift-test.log"
+          "$GITHUB_WORKSPACE/scripts/no-compiler-warnings.sh" "$RUNNER_TEMP/swift-test.log"
 
   # Xcode Cloud repo-prep (LumiVault pattern): Xcode Cloud builds from the
   # committed project and has no XcodeGen step, so the .xcodeproj must be
@@ -270,12 +277,11 @@ jobs:
 
   app:
     name: xcodebuild build test (HealthLoom scheme)
-    # The app targets iOS 27, which needs the Xcode 27 beta's SDK. That ships
-    # on GitHub's dedicated `xcode-27` preview image (arm64, macOS 26.5;
-    # Xcode 27.0 beta is the image default), not on macos-26:
-    # https://github.com/actions/runner-images/blob/releases/xcode-27/20260715/images/macos/xcode-27-Readme.md
-    # Once Xcode 27 GA lands on the regular macos-26 image, move this job back
-    # there (WP-38 toolchain-finalization checklist item).
+    # The app targets iOS 27, which needs Xcode 27's SDK. That ships only on
+    # GitHub's `xcode-27` image (arm64, macOS 26; still labelled preview),
+    # not on macos-26 -- see the toolchain note on `env` above. Once Xcode 27
+    # lands on the regular image, move this job and the package jobs back
+    # there together (WP-38 toolchain-finalization checklist item).
     runs-on: xcode-27
     needs: packages
     steps:
@@ -294,10 +300,10 @@ jobs:
             ${{ runner.os }}-swiftpm-app-
 
       - name: Select Xcode 27
-        # Xcode 27.0 beta is the image default, but select it explicitly so a
-        # future default bump on the preview image can't silently change what
-        # we build with.
-        run: sudo xcode-select -s /Applications/Xcode_27.0.app
+        # Xcode 27.0 (27A266a in run 227, a release build number, not a beta
+        # one) is the image default, but select it explicitly so a future
+        # default bump on the image can't silently change what we build with.
+        run: sudo xcode-select -s "$XCODE_APP"
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -389,14 +395,18 @@ jobs:
           # the command-line flags cover the xcodebuild graph including
           # local packages. No remote package dependencies remain, so no
           # third-party warnings can break this (WP-33's snapshot tests use
-          # a local helper for exactly this reason).
+          # a local helper for exactly this reason). The flags don't promote
+          # every diagnostic, so the log check after the build fails on any
+          # warning they let through (scripts/no-compiler-warnings.sh).
           xcodebuild build test \
             -project HealthLoom.xcodeproj \
             -scheme HealthLoom \
             -destination "$dest" \
             -resultBundlePath "$RUNNER_TEMP/HealthLoom.xcresult" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+          scripts/no-compiler-warnings.sh "$RUNNER_TEMP/xcodebuild.log"
 
       # UI-test failures are near-impossible to diagnose from stdout alone
       # (element-not-found waits log no hierarchy; the accessibility

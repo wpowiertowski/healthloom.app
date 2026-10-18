@@ -18,6 +18,7 @@ final class InsightUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    @MainActor
     private func openSettings(_ app: XCUIApplication) -> XCUIElementQuery {
         let anyElement = app.descendants(matching: .any)
         let settingsTab = anyElement["tabbar.settings"]
@@ -36,6 +37,7 @@ final class InsightUITests: XCTestCase {
         return anyElement
     }
 
+    @MainActor
     private func scrollToHittable(_ element: XCUIElement, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         // Bidirectional: earlier swipes may have pushed this element off
         // either edge. Below the fold swipes up; above it swipes down.
@@ -54,6 +56,7 @@ final class InsightUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
     }
 
+    @MainActor
     private func setToggle(
         _ toggle: XCUIElement,
         to state: String,

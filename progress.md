@@ -6886,3 +6886,32 @@ window. A Historical Backfill still picks them up.
 for the other dense streams.
 
 Mutant caught: heart rate falling back to the 72-hour default.
+
+## WP-83 — Xcode 27 everywhere, and no warning slips through
+
+Main's CI (run 227, 2fd618c) was green with 24 Swift compiler warnings in its log, all in
+`HealthLoomUITests`: `InsightUITests` and `WipeUITests` had helpers without `@MainActor` that
+call XCTest's MainActor-isolated APIs (`descendants(matching:)`, `tap()`, `isHittable`, …).
+The compile was passed `-warnings-as-errors` (in the logged driver command) and still
+reported these as warnings, so the build passed. AGENTS.md §1.2 counts that as red.
+
+- **The warnings:** the four helpers carry `@MainActor`, like every other UI-test helper.
+- **The gap:** `scripts/no-compiler-warnings.sh <log>` fails on any `path:line:col: warning:`
+  or `ld: warning:` line in a build log. Every CI package job, the app job and `make test`
+  tee their build output through it. `make test` keeps its logs in `build/test-logs`
+  (ignored, removed by `make clean`). Checked against run 227's log: it lists the 24
+  warnings and exits 1; with them removed it exits 0, and an empty log exits 1.
+- **Toolchain:** the package `swift test` jobs ran Xcode 26.4.1, a different compiler from
+  the app's and from local `make test` (Xcode 27). They now run on the `xcode-27` image with
+  Xcode 27.0 (`XCODE_APP` in ci.yml, shared with the app job), and the package cache key
+  names the toolchain so a 26.4.1 `.build` is never restored. The regular `macos-26` image
+  still tops out at Xcode 26.6 (actions/runner-images#14404), so moving back is still open.
+- **Manifests:** `swift-tools-version: 6.4` in all five packages.
+- Comments and docs follow: ci.yml, Makefile, project.yml (comments only, so the generated
+  project doesn't change), the plan's Toolchain note and WP-38 checklist, README
+  requirements, AGENTS.md §1.2.
+
+**Not done here:** re-testing the self-skipped HealthKit-sheet test on the 27.0 runtime.
+
+**Verification:** this branch was written in a Linux container with no Swift toolchain, so
+the build and tests are verified by CI on the PR, not locally.

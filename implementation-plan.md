@@ -12,14 +12,15 @@ Private Cloud Compute server model as the free bigger-model tier, and Claude
 public `LanguageModel` protocol (architecture D9/D14). No hand-rolled provider REST
 clients or SSE parsing anywhere in this plan.
 
-**Toolchain note (temporary, revisit before launch):** package manifests stay at
-`// swift-tools-version: 6.2` — that is a *minimum*, parses under both Xcode 26 and 27,
-and nothing here needs 6.4-only manifest APIs. GitHub now ships the Xcode 27 beta on a
-dedicated `xcode-27` preview runner image (actions/runner-images#14196), so the app job
-runs `xcodebuild build test` there unconditionally (the skip guard is gone); the
-per-package `swift test` jobs stay on `macos-26` with Xcode 26.x (they build for the
-macOS host, so 6.2 keeps them green without the preview image). Local development uses
-the Xcode 27 beta (Swift 6.4 compiler).
+**Toolchain note (WP-83, revisit before launch):** local development and every CI Swift
+job build with Xcode 27.0 (Swift 6.4), and the package manifests are at
+`// swift-tools-version: 6.4`. GitHub ships Xcode 27 only on the `xcode-27` image
+(actions/runner-images#14404, still labelled preview; 27A266a in run 227), while the
+regular `macos-26` image tops out at Xcode 26.6. So the package `swift test` jobs and the
+app job both run on `xcode-27`. Until WP-83 the package jobs ran Xcode 26.4.1, a
+different compiler from the one the app ships with. Every build log also goes through
+`scripts/no-compiler-warnings.sh`: run 227 passed `-warnings-as-errors` and still went
+green with 24 UI-test concurrency warnings.
 
 **HealthKit-sheet test quarantined; the rest of the XCUITest suite is back in CI
 (2026-07).** The preview image's iOS 27 beta 3 runtime does not deliver
@@ -39,9 +40,9 @@ Activities, Today) now run on the runner. No narrowed `-skip-testing` replaced i
 purpose: a second mechanism skipping the same test would hand a green CI to whoever
 eventually deletes the `XCTSkip`, without the test ever having run.
 
-Remaining WP-38 launch-checklist work: flip manifests to 6.4, re-enable UI tests in CI
-once a newer beta lands on the runner image, and move the app job from the preview image
-back to the regular macOS image once Xcode 27 goes GA there.
+Remaining WP-38 launch-checklist work: re-test the HealthKit-sheet test on the Xcode 27.0
+runtime (delete its skip if it passes), and move the package and app jobs back to the
+regular macOS image once it carries Xcode 27.
 
 ---
 
@@ -834,9 +835,10 @@ and the light row-sub text are the known inputs to verify, and the full-audit
       then) plus before/after tests proving the serving model per tier —
       flipping `liveTiers` without routing stamps on-device output as cloud.
 - [ ] Toolchain finalization: ~~CI un-guarded onto Xcode 27~~ (done 2026-07 — app job
-      runs on the `xcode-27` preview image, see Toolchain note); still open: package
-      manifests bumped to `swift-tools-version: 6.4`, built against the iOS 27 GA SDK,
-      app job moved back to the regular macOS image once Xcode 27 GA ships there.
+      runs on the `xcode-27` preview image, see Toolchain note); ~~package
+      manifests bumped to `swift-tools-version: 6.4`, built against the iOS 27 GA SDK~~
+      (done in WP-83, which also moved the package jobs onto Xcode 27); still open: app
+      and package jobs moved back to the regular macOS image once Xcode 27 ships there.
 - [ ] App Review prep: HealthKit usage strings accurate; demo video of Google consent for
       review notes; privacy nutrition label (Health & Fitness data — linked-to-user? no
       tracking) covering PCC and BYO-key tiers; non-medical disclaimer surfaced in
