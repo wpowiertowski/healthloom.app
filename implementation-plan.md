@@ -1241,6 +1241,39 @@ P5  WP-48      Silkscreen labels spoken as written ..... CI-guarded
 P5  WP-49      iCloud sync timing ...................... changes sync in seconds
 P5  WP-50      Onboarding runs once .................... until a wipe
 P5  WP-51      Real Google Health API wire format ...... first real sync returned 404
+P5  WP-52..   Real-device fixes and polish (progress.md):
+      WP-52   First real sync finishes
+      WP-53   Sync Now stays visible
+      WP-54   Header buttons stay put while syncing
+      WP-55   Apple Health workouts win the session
+      WP-56   Data rows show a 7-day trend
+      WP-57   Hotfix: launch crash in build 21
+      WP-58   Sync integrity
+      WP-59   Readiness, Data tab, iCloud review fixes
+      WP-60   Sleep source preference
+      WP-61   About you: goals, injuries, preferences
+      WP-62   Fitbit HRV into Apple Health
+      WP-63   Faster sync: types in parallel
+      WP-64   HRV zero-SDNN fallthrough
+      WP-65   Nightly HRV, 8 pm-6 am local
+      WP-66   One style for either/or settings
+      WP-67   Bounded LocalSample queries
+      WP-68   Batched in-app sample upserts
+      WP-69   Tab-switch render loop
+      WP-70   Knowledge refresh off the main actor
+      WP-71   Sync resilience
+      WP-72   Today HRV row
+      WP-73   Activity detail
+      WP-74   Review fixes (last 10 commits)
+      WP-75   Fold duplicate Google sessions
+      WP-76   One name per source
+      WP-77   Coach reads each workout in full
+      WP-78   Typing indicator in coach chat
+      WP-79   Units chosen per measurement
+      WP-80   Data tab says its values are averages
+      WP-81   Data tab opens on last known numbers
+      WP-82   24 h lookback for heart rate
+      WP-83   Xcode 27 everywhere, warnings log-checked
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

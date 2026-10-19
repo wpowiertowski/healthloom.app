@@ -30,28 +30,44 @@ non-editable safety suffix keeps clinical topics pointed at an actual clinician.
 
 ## Features
 
-Shipped (P0 + P1 — the sync pipeline — plus WP-33's Today view, pulled forward from P4):
+Shipped (P0–P5, then WP-52–WP-82 from real-device use; per-package build log in
+[progress.md](progress.md)):
 
-- **Google Health OAuth (PKCE)** — `ASWebAuthenticationSession` consent flow, Keychain-backed token storage, single-flight refresh on 401
-- **Typed Google Health v4 client** — `reconcile`/`dailyRollup` REST calls against `health.googleapis.com`, paged, with exponential backoff + jitter on 429/5xx
-- **Full type mapping** — steps, heart rate, sleep, weight, SpO₂, HRV, blood glucose, hydration, body fat, nutrition, and ~13 exercise types mapped to their HealthKit equivalents, with unit conversion and rejection rules pinned by golden-file tests
-- **Idempotent HealthKit writes** — every sample stamped with `HKMetadataKeyExternalUUID`; re-sync is diffed in batches, never one query per sample
-- **High-water-mark + lookback sync cursor** — a fixed lookback window (72 h; 7 d for sleep) so late-arriving device data is never silently dropped
-- **Historical backfill** — chunked, checkpointed, resumable walk-back (30 d / 90 d / 1 y / all) independent of incremental sync
-- **Background sync** — `BGAppRefreshTask`-driven, with a diagnostics log and manual sync from Settings
+**Sync: Google Health → Apple Health**
+
+- **Google Health OAuth (PKCE)** — `ASWebAuthenticationSession` consent flow, Keychain-backed token storage, single-flight refresh on 401, incremental consent per scope
+- **Typed Google Health v4 client** — `reconcile`/`dailyRollup` calls against `health.googleapis.com` in the real wire format (WP-51), paged, with exponential backoff + jitter on 429/5xx
+- **Full type mapping** — steps, heart rate, sleep, weight, SpO₂, HRV (written as RMSSD or SDNN, as a nightly 8 pm–6 am average), blood glucose, hydration, body fat, nutrition, and ~13 exercise types mapped to HealthKit, with unit conversion and rejection rules pinned by golden-file tests
+- **Idempotent HealthKit writes** — every sample stamped with `HKMetadataKeyExternalUUID`; re-syncs are diffed in batches, and in-app samples upsert in batches that leave unchanged rows alone
+- **Incremental sync with lookback** — each run reaches back 72 h (24 h for heart rate, 7 d for sleep) so late device uploads still land; three types sync at once
+- **Historical backfill** — chunked, checkpointed, resumable walk-back (30 d / 90 d / 1 y / all)
+- **Background sync** — `BGAppRefreshTask`-driven; Sync Now holds background time and retries a dropped connection once; Sync Log with per-type diagnostics
 - **Non-writable types surfaced in-app** — ECG, Active Zone Minutes, Irregular Rhythm Notifications stored locally and badged "not in Apple Health"
-- **Apple Watch-priority conflict resolution (D13)** — session- and stream-level dedupe against watch workout coverage windows, retroactive cleanup on ordering hazards, consolidated **Activities view**, and a "Prefer Apple Watch during workouts" Settings toggle
-- **Onboarding + dashboard** — welcome → Google consent → HealthKit permission → first sync, then a per-type sync status dashboard
-- **Today view (Yacht club design)** — readiness tick-scale hero, reorderable metric rows, sync-status header; the readiness score and coach panel render explicit pending states until WP-23/34 land
-- **KnowledgeStore (P2, WP-19)** — derives a human-readable `KnowledgeProfile` from HealthKit + `LocalSample` (steps, resting HR/HRV trend, sleep duration/stage split, workouts merged with linked Fitbit supplements, Active Zone Minutes, presence-only clinical fields), with user-correction pinning and tool-facing summary text — gated tool answers behind `CoachTools`, per-turn context behind the Coach tab
-- **ContextAssembler (P2, WP-20, hardened in WP-21/22 review)** — builds the exact `HealthContext` for one coach turn from the `KnowledgeProfile` only (`excludedFromAI` filtering incl. clinical default-out, UTF-8-bytes/4 token-budget trimming with user corrections first then vitals > sleep > activity > history, system-prompt tokens reserved out of the budget, every assembly persisted as a `ContextSnapshot` with a hard 200-row retention cap (evicted rows null linked turns first, so no trace link dangles) for the "What did the coach see?" trace) — consumed by WP-23 insights and the WP-25 Coach tab expander
-- **PromptManager + SafetyLayer (P2, WP-21)** — user-editable base prompt + immutable safety suffix (non-medical disclaimer, no-diagnosis/no-ECG-AFib rule with clinician redirect — ⚠️ wording needs human review, see progress.md), append-only version history with value-snapshot returns — the effective prompt drives WP-25 chat instructions (editor UI is WP-26)
-- **AvailabilityGate + CoachSession (P2, WP-22)** — on-device availability states with user copy + fallback, `CoachSession` seam over `LanguageModelSession` (incremental-delta streaming, cancellation-safe, observable busy flag), single purpose-driven session factory (cached conversation, fresh one-shots) — drives WP-25 chat
+- **Conflict resolution (D13)** — workouts other apps saved to Apple Health, Apple Watch included, win the session; Fitbit stream samples inside them are deferred; sleep source preference (Fitbit by default)
 
-Architected, not yet built (see [Status & Roadmap](#status--roadmap) below):
+**Screens**
 
-- The rest of the on-device AI coach — model tiers, prompt editor, and the rest of the surfaces below
-- Private Cloud Compute / Claude / Gemini model tiers, prompt editor, chat UI polish (WP-30 full context view)
+- **Today** — readiness score with its named signals, HRV beside last night's average, reorderable metric rows, morning insight panel
+- **Activities** — consolidated Apple Watch / Apple Health / Google Health entries (duplicate Google sessions folded into one), each opening to a summary, route map, and a plot of every measurement
+- **Data** — per-type sync status with 7-day averages, opening on the last known values
+- **You** — every profile field the coach can see, with per-field AI toggles, corrections, goals/injuries/preferences, and forget controls
+- **Settings** — sync preferences, units per measurement (weight, distance, pool, energy, stride), AI models with per-tier consent, morning insights, export, and disconnect & wipe
+- **Concrete Glass design system** (D16), floating tab bar, VoiceOver / Dynamic Type / Reduce Motion pass, iCloud sync of settings, insight preferences and coach history through the private CloudKit database (D17, schema as code)
+
+**AI coach**
+
+- **Knowledge + context** — `KnowledgeStore` derives a readable profile from HealthKit + local samples; `ContextAssembler` builds each turn's context from it alone (clinical fields excluded by default, token-budget trimming), and every assembly is kept as a snapshot for the "What did the coach see?" trace
+- **Prompt + safety** — user-editable base prompt with version history and editor; immutable safety suffix (non-medical disclaimer, no-diagnosis / no-ECG-AFib rule), wording approved by the owner 2026-09-03
+- **Chat** — streaming replies, typing indicator naming the running tool, in-chat tier menu, per-turn tier badge
+- **Tools** — gated answers for sleep, vitals, steps, and every workout in full (splits, per-device measurements)
+- **Morning insights** — `ReadinessEngine` + `@Generable DailyInsight`, generated after the overnight sync, local notification with headline only by default
+- **Evals** — `CoachEval` target: grounding, structure, safety red-team, and prompt-injection probes, with the deterministic half in CI
+
+Built but not live (see [Status & Roadmap](#status--roadmap)):
+
+- **Private Cloud Compute tier** — catalog, quota and consent are in place; turns route to a fail-closed session until the PCC entitlement is granted
+- **Claude tier** — key entry and consent UI exist; the adapter was removed in WP-28b when the CI SDK lacked a symbol it needs (restore point `f40022f`)
+- **Gemini tier** — deferred pending a product decision on who pays for and registers the Firebase backend
 
 ## Technology Stack
 
@@ -63,9 +79,9 @@ Architected, not yet built (see [Status & Roadmap](#status--roadmap) below):
 | Device sync source | Google Health API (`health.googleapis.com/v4`) via OAuth 2.0 + PKCE |
 | Secrets | Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) |
 | Background work | BGTaskScheduler (`BGAppRefreshTask`) |
-| On-device AI | Foundation Models framework (`LanguageModelSession`, `SystemLanguageModel`), planned |
-| Apple cloud AI | `PrivateCloudComputeLanguageModel` — free server model on Private Cloud Compute (Small Business Program), planned |
-| BYO-key cloud AI | Claude via Anthropic's official `ClaudeForFoundationModels` package, Gemini via Firebase — both through the iOS 27 `LanguageModel` protocol, opt-in, planned |
+| On-device AI | Foundation Models framework (`LanguageModelSession`, `SystemLanguageModel`) |
+| Apple cloud AI | `PrivateCloudComputeLanguageModel` — free server model on Private Cloud Compute (Small Business Program) — built, live once the entitlement is granted |
+| BYO-key cloud AI | Claude via Anthropic's official `ClaudeForFoundationModels` package, Gemini via Firebase — both through the iOS 27 `LanguageModel` protocol, opt-in — not live yet (see Features) |
 | Concurrency | Swift 6.4 strict concurrency (actors, `async`/`await`, `@concurrent`) |
 
 ## Architecture
@@ -112,7 +128,7 @@ Packages/                Local Swift packages, dependency-ordered (architecture.
 ├── SyncKit/              Pull → map → resolve conflicts → write pipeline + scheduling
 └── CoachKit/              On-device coach: knowledge/context/prompt/readiness/session/tool layers
 HealthLoomTests/          Unit tests hosted in the app target (@testable import HealthLoom)
-HealthLoomUITests/        XCUITest — onboarding, dashboard, activities, today, coach chat, and prompt editor flows
+HealthLoomUITests/        XCUITest — onboarding, dashboard, activities, Today, coach chat, prompt editor, AI models, insights, settings, You tab, wipe, sync stress
 Design/                  Yacht club design system reference (HTML + SwiftUI mockups)
 ```
 
@@ -135,18 +151,18 @@ xcodebuild test -project HealthLoom.xcodeproj \
 
 | Package | Tests | Coverage |
 | --- | --- | --- |
-| CoreModel | 22 | SwiftData model relationships, defaults, Codable value types, shared exercise-payload decoding, health-context data framing + shared prompt composer |
+| CoreModel | 25 | SwiftData model relationships, defaults, Codable value types, shared exercise-payload decoding, health-context data framing + shared prompt composer |
 | Secrets | 14 | Keychain read/write/delete round-trip, accessibility attribute, missing-item handling |
-| GoogleHealthClient | 36 | OAuth PKCE flow, token refresh, consent verify-before-store, cancellable backoff, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
-| SyncKit | 269 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction, persisted-error redaction, per-activity distance buckets, per-type resolver runs, backfill status fencing + loop generation, `WatchCoverageIndex`/`ConflictResolver` (D13) |
-| CoachKit | 186 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming, `ReadinessEngine` golden vectors + monotonicity, `DailyInsight` prompt/generator seam, coach tools wiring + clamping + exclusion gating, `ModelCatalog` gating truth table + tier budgets, `CoachError` normalization + sanitizer, orchestrator suffix/snapshot/escalation/`didTrim`/`TurnInfo`, tier-aware cache + credential guard + quota fallback (186 beta / 185 stable — 1 test needs the 27 SDK) |
-| HealthLoomTests | 68 | App-target unit tests — Today metrics/formatting, Activities consolidation, watch-priority preferences, coach chat view-model + launch matrix, prompt editor + diff engine + review rounds |
-| **HealthLoomUITests** | **8 (1 self-skipped)** | **XCUITest: onboarding (skips on this runner's HealthKit-sheet limitation), dashboard sync states, consolidated activities, Today edit mode, coach chat stream + persistence + unavailable state, prompt edit + preview + reset + restore** |
+| GoogleHealthClient | 62 | OAuth PKCE flow, token refresh, consent verify-before-store, cancellable backoff, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
+| SyncKit | 368 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction, persisted-error redaction, per-activity distance buckets, per-type resolver runs, backfill status fencing + loop generation, `WatchCoverageIndex`/`ConflictResolver` (D13) |
+| CoachKit | 232 | `KnowledgeStore` derivation math (steps/HR/HRV/sleep/workouts), correction pinning, clinical-field exclusion, HealthKit read-store adapter, refresh throttle, reentrancy, tool-facing summary window clamping, `ContextAssembler` trimming/snapshot retention, `PromptManager` history + suffix ordering, `AvailabilityGate` mapping, session lifecycle identities, cumulative-to-delta streaming, `ReadinessEngine` golden vectors + monotonicity, `DailyInsight` prompt/generator seam, coach tools wiring + clamping + exclusion gating, `ModelCatalog` gating truth table + tier budgets, `CoachError` normalization + sanitizer, orchestrator suffix/snapshot/escalation/`didTrim`/`TurnInfo`, tier-aware cache + credential guard + quota fallback |
+| HealthLoomTests | 403 | App-target unit tests — Today metrics/formatting, readiness inputs, Activities consolidation + detail series, units, Data tab values, coach chat view-model + workout reader, prompt editor, insights, wipe/export, iCloud sync, pixel snapshots |
+| **HealthLoomUITests** | **30 (2 skipped)** | **XCUITest: onboarding, dashboard, activities, Today, coach chat, prompt editor, AI models, insights, settings, You tab, wipe. Skipped: the HealthKit-sheet onboarding test (runner limitation) and the on-demand sync stress test (`make stress`)** |
 
-Verified 2026-09-01 (most recently, after the round-2 code review fixes below): full
-`make test` (all package suites + `xcodebuild build test`) passes on both this repo's
-toolchains (Xcode 27 beta and, for the package matrix, Xcode 26.4.1) with zero warnings
-and zero failures.
+Counts are from CI run 227 on main (2fd618c, 2026-10-02): packages on Xcode 26.4.1, app
+and UI tests on Xcode 27.0, zero failures. That run's log also held 24 UI-test compiler
+warnings, fixed in WP-83, which moves the package jobs to Xcode 27 and fails any build
+whose log holds a warning.
 
 ## Requirements
 
@@ -161,22 +177,14 @@ and zero failures.
 
 ## Status & Roadmap
 
-P0 (foundations + first vertical slice), P1 (full sync, including WP-12b's watch-priority
-conflict resolution), and WP-33 (Today view, pulled forward from P4) are implemented —
-see [progress.md](progress.md) for the per-work-package build log. Remaining phases, in
-order, per [implementation-plan.md](implementation-plan.md):
+Phases P0–P5 of [implementation-plan.md](implementation-plan.md) are implemented, plus
+WP-52–WP-82 from real-device use; [progress.md](progress.md) has the per-package log.
+What remains:
 
-- **P2** — on-device AI coach: `KnowledgeStore` (WP-19), `ContextAssembler` (WP-20), `PromptManager`/`SafetyLayer` (WP-21), `AvailabilityGate`/`CoachSession` (WP-22), and `ReadinessEngine`/`DailyInsight` (WP-23), and coach tools (WP-24) are implemented; the chat UI (WP-25) is implemented
-- **P3** — off-device model tiers (Private Cloud Compute / Claude / Gemini), consent +
-  key management, coach evals on Apple's Evaluations framework
-- **P4 remainder** — scheduled insights/notifications, export/deletion, optional
-  Siri/Spotlight App Intents, accessibility & localization pass, launch checklist
-
-**Outstanding human prerequisites (implementation-plan.md Phase P-1), not yet done:**
-a real Google Cloud OAuth client (P-1.3) — every sync-pipeline test so far runs against
-fixtures only, never a real account — plus the Google OAuth verification process (P-1.4)
-and the Private Cloud Compute entitlement application (P-1.5), both called out in the
-plan as launch long poles to start on day one.
+- **Off-device tiers** — PCC goes live with its entitlement (P-1.5), together with session routing and before/after serving-model tests (WP-38). Claude returns from `f40022f` once the CI SDK provides `Transcript.CustomSegment`. Gemini needs the product decision above.
+- **Toolchain** — move CI back to the regular macOS image once it carries Xcode 27, and re-test the self-skipped HealthKit-sheet UI test on the 27.0 runtime.
+- **Launch checklist (WP-38)** — Google OAuth verification for the Restricted scopes (P-1.4), App Review prep and privacy label, graceful-degradation matrix, and a real dual-wear verification day.
+- **Optional** — webhook push freshness (WP-36), Siri & Spotlight via App Intents (WP-39).
 
 ## License
 
