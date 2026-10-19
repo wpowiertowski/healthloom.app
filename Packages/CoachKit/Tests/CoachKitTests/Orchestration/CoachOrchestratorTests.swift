@@ -35,6 +35,8 @@ final class RecordingBuild {
     var builds: Int { sessions.count }
     var answer: String = "reply"
     var failure: Error?
+    /// What every built session's `contextFit` reports (WP-86).
+    var fit: ContextFit?
 
     func factory() -> CoachSessionFactory {
         // The build closure is `@MainActor`-isolated, so `self` (also
@@ -43,6 +45,7 @@ final class RecordingBuild {
             self.instructions.append(instructions)
             let session = ScriptedCoachSession(chunks: [self.answer])
             session.failure = self.failure
+            session.scriptedFit = self.fit
             self.sessions.append(session)
             return session
         })
@@ -247,6 +250,142 @@ struct CoachOrchestratorTests {
             guard case .underlying(let description) = error as? CoachError else { return false }
             return description.contains("Boom")
         }
+    }
+
+    @Test("a session's CoachError survives normalization")
+    func coachErrorPassesThrough() async throws {
+        // catches: the Claude adapter's `missingCredential` wrapped into
+        // `.underlying`, losing its "re-enter your key" copy.
+        let recording = RecordingBuild()
+        recording.failure = CoachError.missingCredential(tier: .claude)
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+        await #expect(throws: CoachError.missingCredential(tier: .claude)) {
+            try await orchestrator.respond(to: "Hi")
+        }
+    }
+
+    /// Drains a live stream turn, returning the error it finished with.
+    private func streamFailure(_ orchestrator: CoachOrchestrator) async throws -> Error? {
+        let turn = try await orchestrator.stream(to: "Hi")
+        guard case .live(let deltas, _, _, _) = turn else {
+            Issue.record("expected a live stream")
+            return nil
+        }
+        do {
+            for try await _ in deltas {}
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    @Test("stream failures normalize like one-shot failures")
+    func streamFailureNormalizes() async throws {
+        // catches: a raw framework error reaching the chat as its debug
+        // text ("Provided 10,890 tokens…") because the live stream
+        // bypassed `normalize`.
+        struct Boom: Error {}
+        let recording = RecordingBuild()
+        recording.failure = Boom()
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+        let error = try await streamFailure(orchestrator)
+        guard case .underlying(let description) = error as? CoachError else {
+            Issue.record("expected .underlying, got \(String(describing: error))")
+            return
+        }
+        #expect(description.contains("Boom"))
+    }
+
+    @Test("stream cancellation stays a CancellationError")
+    func streamCancellationPassesThrough() async throws {
+        // catches: a stop-button cancel normalized into `.underlying` and
+        // rendered as a failure instead of persisting the partial.
+        let recording = RecordingBuild()
+        recording.failure = CancellationError()
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+        #expect(try await streamFailure(orchestrator) is CancellationError)
+    }
+
+    @Test("a full on-device conversation offers instead of sending")
+    func conversationFullOffers() async throws {
+        // catches: the reported bug -- a transcript past the window sent
+        // anyway and failing mid-stream with `contextSizeExceeded`.
+        let recording = RecordingBuild()
+        recording.fit = ContextFit(tokens: 7_500, contextSize: 8_192)
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+        let turn = try await orchestrator.respond(to: "How am I doing?")
+        guard case .escalationOffer(let reason, _) = turn else {
+            Issue.record("expected an offer, got \(turn)")
+            return
+        }
+        #expect(reason == .conversationFull)
+        #expect(recording.sessions.allSatisfy { $0.receivedPrompts.isEmpty }, "nothing was sent")
+        // The streaming path decides the same way.
+        let streamed = try await orchestrator.stream(to: "How am I doing?")
+        guard case .offer(.conversationFull, _) = streamed else {
+            Issue.record("expected a conversationFull offer on stream")
+            return
+        }
+    }
+
+    @Test("a fitting or unmeasured on-device conversation sends")
+    func fittingConversationSends() async throws {
+        for fit in [ContextFit(tokens: 1_000, contextSize: 8_192), nil] {
+            let recording = RecordingBuild()
+            recording.fit = fit
+            let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+            let turn = try await orchestrator.respond(to: "How am I doing?")
+            guard case .reply = turn else {
+                Issue.record("expected a reply for fit \(String(describing: fit)), got \(turn)")
+                continue
+            }
+        }
+    }
+
+    @Test("cloud tiers answer whatever a session's fit reports")
+    func cloudTiersNeverOfferConversationFull() async throws {
+        // catches: an offer on a tier with nowhere bigger to go -- the
+        // offer rule stays on-device-only like the budget check.
+        let recording = RecordingBuild()
+        recording.fit = ContextFit(tokens: 9_000, contextSize: 8_192)
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording, catalog: cloudCatalog())
+        let turn = try await orchestrator.respond(to: "How am I doing?", tier: .claude)
+        guard case .reply = turn else {
+            Issue.record("expected a reply, got \(turn)")
+            return
+        }
+    }
+
+    @Test("a suppressed full conversation throws instead of offering")
+    func suppressedConversationFullThrows() async throws {
+        // catches: a quota-fallback turn offering the exhausted rung it
+        // fell back from.
+        let recording = RecordingBuild()
+        recording.fit = ContextFit(tokens: 9_000, contextSize: 8_192)
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+        await #expect(throws: CoachError.contextOverflow(offerEscalation: false)) {
+            try await orchestrator.runTurn(
+                to: "Hi",
+                purpose: .chat,
+                tier: .onDevice,
+                tools: [],
+                toolSetID: nil,
+                tokenBudget: nil,
+                quotaWarning: false,
+                quotaResetDate: nil,
+                suppressOffers: true
+            )
+        }
+        #expect(recording.sessions.allSatisfy { $0.receivedPrompts.isEmpty })
+    }
+
+    @Test("ContextFit keeps the response reserve free")
+    func contextFitReservesResponse() {
+        // catches: an off-by-reserve check that sends a turn with no room
+        // left for the reply.
+        let size = 8_192
+        #expect(ContextFit(tokens: size - ContextFit.responseReserve, contextSize: size).fits)
+        #expect(!ContextFit(tokens: size - ContextFit.responseReserve + 1, contextSize: size).fits)
     }
 
     @Test("turn prompt routes through the shared composer")

@@ -6,8 +6,10 @@
 // normalization into `CoachError`.
 //
 // Escalation (D14.2) is offer-only: on-device context-over-budget (reported
-// by WP-20's `promptOverBudget`) or an explicit "deeper analysis" request
-// returns `.escalationOffer`, never an automatic tier switch. The UI renders
+// by WP-20's `promptOverBudget`), a conversation whose measured transcript
+// no longer fits the on-device window (WP-86), or an explicit "deeper
+// analysis" request returns `.escalationOffer`, never an automatic tier
+// switch. The UI renders
 // the offer; switching stays a user action (D14.2).
 
 import CoreModel
@@ -21,6 +23,11 @@ public enum EscalationReason: String, Sendable, Equatable {
     case contextOverBudget
     /// The user explicitly asked for deeper analysis.
     case deeperAnalysisRequested
+    /// The conversation so far plus this turn won't fit the on-device
+    /// window (WP-86), measured by the model's tokenizer before sending.
+    /// Distinct from `contextOverBudget`: this turn alone fits; the
+    /// session's transcript is what filled the window.
+    case conversationFull
 }
 
 /// One orchestrated turn. Either a model reply or an escalation offer --
@@ -192,21 +199,21 @@ public final class CoachOrchestrator: Sendable {
         switch planned {
         case .offer(let reason, let snapshotID):
             return .offer(reason: reason, snapshotID: snapshotID)
-        case .ready(_, let assembled, let session):
-            // The session's OWN stream, returned directly (not
-            // re-wrapped): stream failures stay raw Errors for the
-            // consumer's existing mapping — identical to today's VM
-            // behavior. Gates, defense, fallback, and offers all fired
-            // above; nothing below can add to them.
+        case .ready(_, let assembled, let session, let prompt):
+            // The session's stream with its failures normalized (WP-86):
+            // a raw framework error reached the chat as its debug text
+            // ("Provided 10,890 tokens, but the maximum allowed is
+            // 8,192"), which `CoachError` exists to prevent (D11).
+            // Gates, defense, fallback, and offers all fired above;
+            // nothing below can add to them.
             var info = TurnInfo(
                 didTrim: assembled.didTrim,
                 quotaWarning: route.quotaWarning,
                 quotaResetDate: route.quotaResetDate
             )
             info.fellBackFromTier = route.fellBackFrom
-            let prompt = assembled.context.promptBlock(message: message)
             return .live(
-                deltas: session.stream(to: prompt),
+                deltas: Self.normalizing(session.stream(to: prompt), on: route.serving),
                 snapshotID: assembled.snapshotID,
                 info: info,
                 servingTier: route.serving
@@ -272,7 +279,7 @@ public final class CoachOrchestrator: Sendable {
     /// on when to offer vs answer.
     enum TurnPlan {
         case offer(reason: EscalationReason, snapshotID: UUID)
-        case ready(instructions: String, assembled: ContextAssembler.AssembledContext, session: any CoachSession)
+        case ready(instructions: String, assembled: ContextAssembler.AssembledContext, session: any CoachSession, prompt: String)
     }
 
     private func prepareTurn(
@@ -342,7 +349,22 @@ public final class CoachOrchestrator: Sendable {
                 tier: tier
             )
         }
-        return .ready(instructions: instructions, assembled: assembled, session: session)
+        // Framing via the shared composer (R1): the user message plus
+        // context-as-data block, one literal owned by `HealthContext`.
+        let prompt = assembled.context.promptBlock(message: message)
+        // WP-86: the per-turn budget above bounds this turn only; the
+        // conversation session also carries every earlier turn. Measure
+        // the real transcript before sending, so a full window is an offer
+        // here instead of `contextSizeExceeded` mid-stream. Sessions that
+        // can't measure (cloud providers) return nil and send. Same
+        // on-device-only offer rule as the budget check above.
+        if tier == .onDevice, let fit = await session.contextFit(adding: prompt), !fit.fits {
+            if suppressOffers {
+                throw CoachError.contextOverflow(offerEscalation: false)
+            }
+            return .offer(reason: .conversationFull, snapshotID: assembled.snapshotID)
+        }
+        return .ready(instructions: instructions, assembled: assembled, session: session, prompt: prompt)
     }
 
     /// The turn pipeline past quota pre-dispatch. `suppressOffers` is true
@@ -377,17 +399,17 @@ public final class CoachOrchestrator: Sendable {
         )
         let assembled: ContextAssembler.AssembledContext
         let session: any CoachSession
+        let prompt: String
         switch planned {
         case .offer(let reason, let snapshotID):
             return .escalationOffer(reason: reason, snapshotID: snapshotID)
-        case .ready(_, let plannedAssembled, let plannedSession):
+        case .ready(_, let plannedAssembled, let plannedSession, let plannedPrompt):
             assembled = plannedAssembled
             session = plannedSession
+            prompt = plannedPrompt
         }
         do {
-            // Framing via the shared composer (R1): the user message plus
-            // context-as-data block, one literal owned by `HealthContext`.
-            let text = try await session.respond(to: assembled.context.promptBlock(message: message))
+            let text = try await session.respond(to: prompt)
             return .reply(
                 text: text,
                 snapshotID: assembled.snapshotID,
@@ -444,6 +466,12 @@ public final class CoachOrchestrator: Sendable {
     /// tier rides along so overflow-escalation is decided structurally in
     /// the mapping (F2), not adjusted at the catch site.
     private static func normalize(_ error: Error, on tier: ModelTier) -> CoachError {
+        // Sessions that already speak `CoachError` (the Claude adapter's
+        // credential mapping, `UnwiredTierSession`) keep their case: wrapping
+        // them in `.underlying` would bury `missingCredential`'s copy.
+        if let coachError = error as? CoachError {
+            return coachError
+        }
 #if swift(>=6.4)
         // The cast needs the SDK's own availability: package tests execute
         // on macOS 26 hosts, where the 27-only conformance can't run.
@@ -457,5 +485,30 @@ public final class CoachOrchestrator: Sendable {
         }
 #endif
         return .underlying(CoachError.sanitizedSummary(String(describing: error)))
+    }
+
+    /// A session stream with every failure but cancellation passed through
+    /// `normalize`. Cancellation stays `CancellationError` so the consumer's
+    /// stop/partial-persist path is unchanged; consumer termination cancels
+    /// the pump, which ends the inner stream's iteration in turn.
+    static func normalizing(
+        _ deltas: AsyncThrowingStream<String, Error>,
+        on tier: ModelTier
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await delta in deltas {
+                        continuation.yield(delta)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
+                } catch {
+                    continuation.finish(throwing: normalize(error, on: tier))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 }

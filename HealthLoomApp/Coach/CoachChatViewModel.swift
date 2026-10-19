@@ -128,12 +128,18 @@ final class CoachChatViewModel {
     /// aborts with an error instead of streaming under a stale `.available`.
     private(set) var availability: CoachAvailability = .available
     var errorMessage: String?
-    /// Selected serving tier (WP-32). In-memory (resets to on-device per
-    /// launch); the menu offers only enabled tiers, `onAppear` clamps a
-    /// stale selection, and `send` re-validates at dispatch — so this is
-    /// always enabled at the moment a turn streams, never merely at the
-    /// moment it was picked.
-    var selectedTier: ModelTier = .onDevice
+    /// Selected serving tier (WP-32). Starts on the tier last picked from
+    /// the menu (WP-86, `TierSettingsStore.chatTier`), else on-device; the
+    /// menu offers only enabled tiers, `onAppear` clamps a stale selection
+    /// (without forgetting the pick), and `send` re-validates at dispatch
+    /// — so this is always enabled at the moment a turn streams, never
+    /// merely at the moment it was picked.
+    var selectedTier: ModelTier
+
+    /// The tier whose conversation no longer fits its model (WP-86): set by
+    /// a `conversationFull` offer or a mid-reply overflow, it shows the
+    /// Start fresh action until the user starts fresh, sends, or switches.
+    private(set) var startFreshTier: ModelTier?
 
     /// Enabled tiers in ladder order (row toggle AND catalog gate: consent,
     /// key, liveness, availability). The single source for the menu, the
@@ -173,8 +179,23 @@ final class CoachChatViewModel {
         // WP-32 F2 (the WP-29 F4 shape, one round later): success clears a
         // previous failure's banner instead of leaving it stale.
         errorMessage = nil
+        startFreshTier = nil
         selectedTier = tier
+        deps.tierSettings.setChatTier(tier)
         return true
+    }
+
+    /// Start fresh (WP-86): the full tier's model forgets this conversation
+    /// (the visible transcript stays), and the message it couldn't answer
+    /// goes back in the composer so asking again is one tap.
+    func startFresh() {
+        guard let tier = startFreshTier else { return }
+        deps.factory.resetConversation(for: tier)
+        startFreshTier = nil
+        errorMessage = nil
+        if inputText.isEmpty, let lastAsk = turns.last(where: { $0.role == "user" }) {
+            inputText = lastAsk.content
+        }
     }
 
     /// Unsent composer text. Owned here (not view `@State`, round-2 #15):
@@ -200,6 +221,7 @@ final class CoachChatViewModel {
 
     init(deps: Dependencies) {
         self.deps = deps
+        self.selectedTier = deps.tierSettings.chatTier ?? .onDevice
         self.viewContext = ModelContext(deps.container)
         self.orchestrator = CoachOrchestrator(
             prompts: deps.prompts,
@@ -303,6 +325,7 @@ final class CoachChatViewModel {
             return false
         }
         errorMessage = nil
+        startFreshTier = nil
         let userTurn = ChatTurn(role: "user", content: trimmed)
         do {
             try persist(userTurn)
@@ -364,6 +387,9 @@ final class CoachChatViewModel {
                     } catch {
                         errorMessage = "Couldn't save the coach's reply. Try again."
                     }
+                    if reason == .conversationFull {
+                        startFreshTier = servingTier
+                    }
                 case .live(let deltas, let snapshotID, _, let serving):
                     var streamError: Error?
                     do {
@@ -397,11 +423,11 @@ final class CoachChatViewModel {
                         }
                     }
                     if !Task.isCancelled, let streamError {
-                        errorMessage = Self.replyErrorMessage(streamError)
+                        report(streamError, on: serving)
                     }
                 }
             } catch {
-                errorMessage = Self.replyErrorMessage(error)
+                report(error, on: servingTier)
             }
             draft = ""
         }
@@ -419,6 +445,8 @@ final class CoachChatViewModel {
             return "This needs more context than \(tier.displayName) can hold right now. Switch to a larger tier from the tier menu above to continue."
         case .deeperAnalysisRequested:
             return "Happy to take a deeper look — switch to a larger tier from the tier menu above and ask again."
+        case .conversationFull:
+            return "This conversation has grown too long for \(tier.displayName) to keep in memory. Switch to a larger tier from the tier menu above, or start fresh so \(tier.displayName) forgets the earlier messages."
         }
     }
 
@@ -478,24 +506,47 @@ final class CoachChatViewModel {
         try viewContext.save()
     }
 
-    /// Names tier-routing failures (WP-32 F1 fail-closed arm) instead of
-    /// leaking the default `Error.localizedDescription` rendering
-    /// ("operation couldn't be completed") for a `CoachError` that
-    /// carries its own UI copy.
-    private static func replyErrorMessage(_ error: Error) -> String {
-        if let coachError = error as? CoachError {
-            switch coachError {
-            case .tierUnavailable(let tier, let reason):
-                return "\(tier.displayName) isn't available right now (\(reason))."
-            case .missingCredential(let tier):
-                // Round-7 item 13: the keyless-tier defense firing on a
-                // real turn (TOCTOU key deletion) — named, not opaque.
-                return "\(tier.displayName) needs its API key again before it can reply. Re-enter it in Settings."
-            default:
-                break
-            }
+    /// Shows a failed turn's copy, and offers Start fresh when the failure
+    /// was the conversation outgrowing the serving tier's window.
+    private func report(_ error: Error, on tier: ModelTier) {
+        errorMessage = Self.replyErrorMessage(error, on: tier)
+        if case .contextOverflow? = error as? CoachError {
+            startFreshTier = tier
         }
-        return "The coach couldn't reply. \(error.localizedDescription)"
+    }
+
+    /// Copy for a failed turn. Every `CoachError` case names what happened
+    /// on which tier (WP-86): the orchestrator normalizes stream failures,
+    /// so framework debug text ("Provided 10,890 tokens…") never renders
+    /// (D11). A non-`CoachError` (a save or transport failure outside the
+    /// orchestrator) keeps the generic line.
+    static func replyErrorMessage(_ error: Error, on tier: ModelTier) -> String {
+        guard let coachError = error as? CoachError else {
+            return "The coach couldn't reply. \(error.localizedDescription)"
+        }
+        switch coachError {
+        case .tierUnavailable(let tier, let reason):
+            return "\(tier.displayName) isn't available right now (\(reason))."
+        case .missingCredential(let tier):
+            // Round-7 item 13: the keyless-tier defense firing on a
+            // real turn (TOCTOU key deletion) — named, not opaque.
+            return "\(tier.displayName) needs its API key again before it can reply. Re-enter it in Settings."
+        case .contextOverflow(let offerEscalation):
+            let freshStart = "start fresh so \(tier.displayName) forgets the earlier messages."
+            return offerEscalation
+                ? "This conversation got too long for \(tier.displayName) to finish the reply. Switch to a larger tier from the tier menu above, or \(freshStart)"
+                : "This conversation got too long for \(tier.displayName) to finish the reply. You can \(freshStart)"
+        case .rateLimited:
+            return "\(tier.displayName) is busy right now. Wait a moment, then try again."
+        case .requestTimeout:
+            return "\(tier.displayName) took too long to answer. Try again."
+        case .declined:
+            return "The coach can't help with that request. Try asking another way."
+        case .unsupported(let summary):
+            return "The coach can't handle that request (\(summary))."
+        case .underlying(let summary):
+            return "The coach couldn't reply (\(summary))."
+        }
     }
 
     private func chatSession(instructions: String, tier: ModelTier) -> any CoachSession {

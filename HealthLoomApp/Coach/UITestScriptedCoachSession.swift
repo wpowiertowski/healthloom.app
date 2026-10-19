@@ -47,6 +47,7 @@ final class UITestScriptedCoachSession: CoachSession, @unchecked Sendable {
     }
 
     func prewarm() {}
+    func contextFit(adding prompt: String) async -> ContextFit? { nil }
 
     private func beginCall() throws {
         try lock.withLock {

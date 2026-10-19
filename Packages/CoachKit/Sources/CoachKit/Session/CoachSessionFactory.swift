@@ -122,12 +122,14 @@ public final class CoachSessionFactory: Sendable {
         { tier, configuration, instructions, tools in
             switch tier {
             case .onDevice:
+                let model = SystemLanguageModel.default
                 return LiveCoachSession(
                     session: LanguageModelSession(
-                        model: SystemLanguageModel.default,
+                        model: model,
                         tools: tools,
                         instructions: instructions
-                    )
+                    ),
+                    systemModel: model
                 )
             case .privateCloudCompute, .claude, .gemini:
                 guard let provider = providers[tier] else {
@@ -201,5 +203,11 @@ public final class CoachSessionFactory: Sendable {
     /// conversation-close path, not a second tier guard.
     public func resetConversation() {
         cachedConversations = [:]
+    }
+
+    /// Drops one tier's cached conversation (WP-86 "Start fresh"): that
+    /// tier's model forgets the earlier turns, the other tiers keep theirs.
+    public func resetConversation(for tier: ModelTier) {
+        cachedConversations.removeValue(forKey: tier)
     }
 }

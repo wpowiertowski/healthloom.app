@@ -6983,3 +6983,53 @@ and the key check work as WP-29 built them. Chat's tier menu offers Claude once 
 **Verification:** written in a Linux container with no Apple toolchain, so the build and
 tests are verified by CI on the PR. Real generation against Anthropic needs a device and a real
 key (test plan §7) and hasn't been done.
+
+## WP-86 — The coach measures the conversation, says why it stopped, and remembers the tier
+
+The owner hit "The coach couldn't reply. Provided 10,890 tokens, but the maximum allowed is
+8,192." on the second turn of an on-device chat, with Claude enabled. Three causes:
+
+- **The chat had reset to on-device.** `selectedTier` lived in memory, so every launch started
+  on-device whatever the user last picked.
+- **The on-device transcript outgrew the window.** The per-turn budget (`ContextAssembler`,
+  ~4K) bounds one turn: instructions, this turn's context and the message. The conversation
+  session also carries every earlier turn, each with its own full context block, so two turns
+  can exceed the iOS 27 on-device window (8,192). Nothing measured the transcript.
+- **The framework's text reached the screen.** `CoachOrchestrator.stream` returned the
+  session's stream un-normalized, so `LanguageModelError` rendered as its debug description,
+  token counts included (D11).
+
+**What changed:**
+- **Measured before sending (on-device):** `CoachSession.contextFit(adding:)` reports
+  transcript plus prompt, counted by the model's tokenizer
+  (`SystemLanguageModel.tokenCount(for:)`), against `contextSize`, keeping
+  `ContextFit.responseReserve` (1,000) free. `prepareTurn` turns a non-fit into a
+  `conversationFull` offer: the owner chose "stop and offer" over retrying silently. Provider
+  sessions return nil and send; offers stay on-device-only, as for the budget check. A
+  quota-fallback turn that doesn't fit throws `contextOverflow(offerEscalation: false)`.
+- **Start fresh:** the offer, or a mid-reply overflow, shows a Start fresh action.
+  `CoachSessionFactory.resetConversation(for:)` drops that tier's session only, and the
+  unanswered message goes back in the composer. The visible transcript stays.
+- **Stream errors normalized:** the live stream passes failures through `normalize` (cancellation
+  excepted). `normalize` now keeps a session's own `CoachError` instead of wrapping it in
+  `.underlying`, which buried the Claude adapter's `missingCredential` copy on the `respond`
+  path. `CoachChatViewModel.replyErrorMessage(_:on:)` has copy for every `CoachError` case.
+- **Tier remembered:** `TierSettingsStore.chatTier` persists the last pick. The chat starts on
+  it; `onAppear` still clamps to an enabled tier without forgetting the pick. `resetAll` clears
+  it, and UI-test launches clear it so one test's pick can't serve the next.
+
+**Not changed (follow-ups):** the per-turn budget constants (4K / 32K / 100K) are still the
+design-time working figures; the SDK now exposes `contextSize`, so they can come from the
+model. Each turn still re-sends the full health context, so on-device conversations with a
+large profile will usually reach `conversationFull` on the second turn; sending the context
+once per conversation is the change that lengthens them.
+
+**Tests:** CoachKit (8): a full conversation offers on both paths and sends nothing; a fitting
+or unmeasured one sends; cloud tiers never offer on fit; the suppressed arm throws; the reserve
+boundary; stream failures normalize; cancellation passes through; a session's `CoachError`
+survives `normalize`; the per-tier reset. App (5 + 1 extended): the offer row and Start fresh
+state; Start fresh rebuilds the session and refills the composer; a real
+`LanguageModelError.contextSizeExceeded` mid-reply renders tier copy without the token counts;
+the picked tier survives a relaunch; a disabled remembered tier clamps without being forgotten;
+`chatTier` round-trips and `resetAll` clears it. Mutants: removing the stream normalization
+fails the normalization test; removing the fit check fails both conversation-full tests.

@@ -468,6 +468,11 @@ final class AppEnvironment {
         // consent/key flows are deterministic on a simulator where the real
         // gates never pass; production reads the live stores.
         let tierSettings = TierSettingsStore()
+        // `UserDefaults.standard` outlives UI-test launches: a tier one
+        // test picked must not become the next test's serving tier.
+        if launchConfiguration.isUITest {
+            tierSettings.setChatTier(nil)
+        }
         self.tierSettingsStore = tierSettings
         let gates = CloudGateCache()
         self.gateCache = gates

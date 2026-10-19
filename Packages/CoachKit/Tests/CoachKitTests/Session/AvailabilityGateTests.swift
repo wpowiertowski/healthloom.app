@@ -107,6 +107,13 @@ struct AvailabilityGateTests {
         // Explicit reset drops the cache.
         factory.resetConversation()
         #expect(factory.makeSession(for: .conversation, instructions: "edited") !== conversationEdited)
+        // A per-tier reset (WP-86 Start fresh) drops only that tier's slot.
+        // catches: Start fresh on one tier wiping another tier's memory.
+        let onDevice = factory.makeSession(for: .conversation, instructions: "edited", tier: .onDevice)
+        let pcc = factory.makeSession(for: .conversation, instructions: "edited", tier: .privateCloudCompute)
+        factory.resetConversation(for: .onDevice)
+        #expect(factory.makeSession(for: .conversation, instructions: "edited", tier: .onDevice) !== onDevice)
+        #expect(factory.makeSession(for: .conversation, instructions: "edited", tier: .privateCloudCompute) === pcc)
         // Same tool names, different caller IDs: distinct configurations of
         // one tool type must not collide on names alone.
         let sevenDay = factory.makeSession(
@@ -228,6 +235,9 @@ final class ScriptedCoachSession: CoachSession, Sendable {
     var failure: Error?
     var isResponding: Bool { false }
 
+    /// What `contextFit(adding:)` reports; nil = can't measure (sends).
+    var scriptedFit: ContextFit?
+
     /// Scripted answer for the structured (`@Generable`) requirement, as
     /// `Any` because the protocol method is generic. Unset (or wrong-typed)
     /// throws, so unconfigured structured calls fail loudly, never silently.
@@ -252,6 +262,10 @@ final class ScriptedCoachSession: CoachSession, Sendable {
         if let failure { throw failure }
         guard let value = scriptedStructured as? Content else { throw NoStructuredResponse() }
         return value
+    }
+
+    func contextFit(adding prompt: String) async -> ContextFit? {
+        scriptedFit
     }
 
     func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {

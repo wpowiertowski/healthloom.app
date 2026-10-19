@@ -341,9 +341,13 @@ struct AIModelsViewModelTests {
         settings.recordConsent(for: .claude)
         #expect(settings.hasConsent(for: .claude))
         settings.setTurnedOn(true, for: .claude)
+        // WP-86: the chat tier persists across instances (a relaunch).
+        settings.setChatTier(.claude)
+        #expect(TierSettingsStore(defaults: suite).chatTier == .claude)
         TierSettingsStore.resetAll(in: suite)
         // `resetAll` is a static wipe — live instances resync (WP-29 F1).
         settings.resyncFromDefaults()
+        #expect(settings.chatTier == nil, "resetAll clears the remembered chat tier")
         #expect(!settings.hasConsent(for: .claude))
         #expect(!settings.isTurnedOn(.claude))
         #expect(settings.isTurnedOn(.onDevice), "reset restores defaults, not blanket-off")
