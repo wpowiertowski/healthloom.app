@@ -248,6 +248,10 @@ public struct ModelCatalog: Sendable {
         case .privateCloudCompute:
             PrivateCloudComputeLanguageModel()
         case .claude, .gemini:
+            // Not built here even when live: the Claude model lives in the
+            // app target (`ClaudeTier`, WP-85), whose package CoachKit
+            // doesn't link, and Gemini is deferred. Sessions for both come
+            // from `CoachSessionFactory(providers:)`.
             throw CoachError.tierUnavailable(tier: tier, reason: TierAvailability.notLive)
         }
     }

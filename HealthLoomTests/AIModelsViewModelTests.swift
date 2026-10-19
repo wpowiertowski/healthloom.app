@@ -235,6 +235,12 @@ struct AIModelsViewModelTests {
         viewModel.setModel(claudeSecond, for: .claude)
         #expect(settings.modelOverride(for: .claude) == claudeSecond)
         #expect(try row(.claude, in: viewModel).modelID == claudeSecond)
+        // WP-85: a stored pick the table no longer offers (a Claude 4.x ID
+        // from before the package table) reads as the default, not as a
+        // value the picker can't select. Catches the row showing, and
+        // dispatch using, a retired model.
+        settings.setModelOverride("claude-haiku-4-5-20251001", for: .claude)
+        #expect(try row(.claude, in: viewModel).modelID == CloudModelOptions.claudeDefault)
         // WP-29 F5: the Gemini row is deferred, not absent — pin its
         // default/options so the undeferral has a failing-then-passing twin.
         let gemini = try row(.gemini, in: viewModel)

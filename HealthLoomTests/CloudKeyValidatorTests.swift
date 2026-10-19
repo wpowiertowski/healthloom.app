@@ -129,7 +129,7 @@ struct CloudKeyValidatorTests {
         let dict = try #require(try JSONSerialization.jsonObject(with: sent) as? [String: Any])
         // Exact key set: any added field (notably "tools") fails here.
         #expect(Set(dict.keys) == ["model", "max_tokens", "messages"])
-        #expect(dict["model"] as? String == CloudModelOptions.claudeDefault)
+        #expect(dict["model"] as? String == ClaudeTier.keyCheckModel.id)
         #expect(dict["max_tokens"] as? Int == 1)
         let messages = try #require(dict["messages"] as? [[String: String]])
         #expect(messages == [["role": "user", "content": "ok"]])

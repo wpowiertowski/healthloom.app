@@ -461,35 +461,6 @@ final class AppEnvironment {
         let promptManager = PromptManager(modelContainer: container)
         self.promptManager = promptManager
         let contextAssembler = ContextAssembler(modelContainer: container)
-        // Both selections switch on the one precomputed mode (round-2
-        // #11) -- no re-derived flag precedence here. The scripted double
-        // is a plain always-compiled type (the `StubGoogleReconcileClient`
-        // precedent), so selection is purely runtime, identical in Debug
-        // and Release.
-        let coachSessionFactory: CoachSessionFactory
-        let availabilityChecker: any CoachAvailabilityChecking
-        switch launchConfiguration.coachSessionMode {
-        case .live:
-            coachSessionFactory = CoachSessionFactory()
-            availabilityChecker = LiveCoachAvailabilityChecker()
-        case .scripted:
-            // Round-10 item 11: tier-AWARE scripted factory — on-device
-            // answers scripted (provider stamps honestly); every other
-            // tier fail-closes exactly like production's default factory
-            // (the old tier-blind shape answered PCC/Claude turns
-            // on-device and persisted a false cloud provider).
-            coachSessionFactory = CoachSessionFactory(build: { tier, _, _ in
-                if tier == .onDevice {
-                    return UITestScriptedCoachSession()
-                }
-                return UnwiredTierSession(tier: tier)
-            })
-            availabilityChecker = FixedCoachAvailabilityChecker(availability: .available)
-        case .forced(let availability):
-            coachSessionFactory = CoachSessionFactory()
-            availabilityChecker = FixedCoachAvailabilityChecker(availability: availability)
-        }
-        self.coachSessionFactory = coachSessionFactory
 
         // WP-29 tier wiring. The UI-test scenario scripts every gate input
         // (PCC + Claude rows live, stubbed availability/quota/validator,
@@ -544,9 +515,12 @@ final class AppEnvironment {
             for tier in ModelTier.allCases {
                 gates.setConsent(tierSettings.hasConsent(for: tier), for: tier)
             }
+            // WP-85: Claude is live (BYO key, consent-gated like every
+            // off-device tier). PCC waits on its entitlement.
             modelCatalog = ModelCatalog.live(
                 hasConsent: { gates.hasConsent($0) },
-                hasKey: { gates.hasKey($0) }
+                hasKey: { gates.hasKey($0) },
+                liveTiers: [.onDevice, .claude]
             )
             // Fill Keychain presence for readers that never visit the
             // settings screen (the chat tier slot).
@@ -559,12 +533,52 @@ final class AppEnvironment {
         self.cloudKeys = cloudKeys
         self.keyValidator = keyValidator
         self.modelCatalog = modelCatalog
+
+        // Both selections switch on the one precomputed mode (round-2
+        // #11) -- no re-derived flag precedence here. The scripted double
+        // is a plain always-compiled type (the `StubGoogleReconcileClient`
+        // precedent), so selection is purely runtime, identical in Debug
+        // and Release.
+        let coachSessionFactory: CoachSessionFactory
+        // Tiers the factory serves (the chat orchestrator's map holds only
+        // these). Claude is wired in the live mode only: the UI-test modes
+        // script on-device and leave every cloud tier fail-closed.
+        let wiredCoachTiers: Set<ModelTier>
+        let availabilityChecker: any CoachAvailabilityChecking
+        switch launchConfiguration.coachSessionMode {
+        case .live:
+            coachSessionFactory = CoachSessionFactory(
+                providers: [.claude: Self.claudeProvider(keys: cloudKeys, settings: tierSettings)]
+            )
+            wiredCoachTiers = [.onDevice, .claude]
+            availabilityChecker = LiveCoachAvailabilityChecker()
+        case .scripted:
+            // Round-10 item 11: tier-AWARE scripted factory — on-device
+            // answers scripted (provider stamps honestly); every other
+            // tier fail-closes exactly like production's default factory
+            // (the old tier-blind shape answered PCC/Claude turns
+            // on-device and persisted a false cloud provider).
+            coachSessionFactory = CoachSessionFactory(build: { tier, _, _ in
+                if tier == .onDevice {
+                    return UITestScriptedCoachSession()
+                }
+                return UnwiredTierSession(tier: tier)
+            })
+            wiredCoachTiers = [.onDevice]
+            availabilityChecker = FixedCoachAvailabilityChecker(availability: .available)
+        case .forced(let availability):
+            coachSessionFactory = CoachSessionFactory()
+            wiredCoachTiers = [.onDevice]
+            availabilityChecker = FixedCoachAvailabilityChecker(availability: availability)
+        }
+        self.coachSessionFactory = coachSessionFactory
         self.coachChatViewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
             container: container,
             store: knowledgeStore,
             prompts: promptManager,
             assembler: contextAssembler,
             factory: coachSessionFactory,
+            wiredTiers: wiredCoachTiers,
             availability: availabilityChecker,
             tierSettings: tierSettings,
             tierCatalog: modelCatalog,
@@ -632,6 +646,26 @@ final class AppEnvironment {
     /// `Task`). `static` (not instance) so the launch `Task` in `init`
     /// doesn't capture a half-initialized `self` -- it takes only what it
     /// reads.
+    /// The Claude tier's session source (WP-85). Its configuration is the
+    /// model the AI Models row shows (`CloudModelOptions.resolvedModelID`,
+    /// the same resolution as the picker), so a model change starts a new
+    /// conversation session on that model. The key is read when the session
+    /// first answers (`ClaudeCoachSession`).
+    private static func claudeProvider(
+        keys: any CloudKeyStoring,
+        settings: TierSettingsStore
+    ) -> CoachSessionFactory.Provider {
+        CoachSessionFactory.Provider(
+            configuration: {
+                CloudModelOptions.resolvedModelID(stored: settings.modelOverride(for: .claude), for: .claude)
+                    ?? CloudModelOptions.claudeDefault
+            },
+            build: { modelID, instructions, tools in
+                ClaudeCoachSession(keys: keys, modelID: modelID, instructions: instructions, tools: tools)
+            }
+        )
+    }
+
     private static func fillKeyPresence(
         keys: any CloudKeyStoring,
         gates: CloudGateCache

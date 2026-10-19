@@ -39,14 +39,11 @@ protocol CloudKeyValidating: Sendable {
 /// Model options for the key-gated rows ("model picker where applicable",
 /// WP-29). Fixed lists (not free discovery): the picker must render without
 /// a valid key, so it can't ask the provider. The stored value is the full
-/// provider model ID -- the ping and (later) dispatch use it verbatim.
+/// provider model ID. Claude's list is the package's model table
+/// (`ClaudeTier.models`, WP-85), the same one dispatch resolves against.
 enum CloudModelOptions {
-    static let claudeDefault = "claude-haiku-4-5-20251001"
-    static let claudeOptions = [
-        "claude-haiku-4-5-20251001",
-        "claude-sonnet-4-5-20250929",
-        "claude-opus-4-1-20250805",
-    ]
+    static let claudeDefault = ClaudeTier.defaultModel.id
+    static let claudeOptions = ClaudeTier.models.map(\.id)
 
     static let geminiDefault = "gemini-2.5-flash"
     static let geminiOptions = [
@@ -54,6 +51,17 @@ enum CloudModelOptions {
         "gemini-2.5-pro",
         "gemini-2.0-flash",
     ]
+
+    /// The model a row shows and a turn dispatches to: the stored override
+    /// when the tier still offers it, else the default. A stale override
+    /// (a Claude 4.x pick from before WP-85) reads as the default instead of
+    /// a value the picker can't select.
+    static func resolvedModelID(stored: String?, for tier: ModelTier) -> String? {
+        if let stored, options(for: tier).contains(stored) {
+            return stored
+        }
+        return defaultModelID(for: tier)
+    }
 
     /// Default when no override is stored. Non-key-gated tiers have no
     /// selectable model (their rows render no picker).
@@ -109,9 +117,10 @@ struct ClaudeMessageRequest: Encodable, Sendable {
         case maxTokens = "max_tokens"
     }
 
-    /// The 1-token ping: cheapest authenticated call, fixed shape.
+    /// The 1-token ping: cheapest authenticated call, fixed shape, on the
+    /// cheapest model (any model proves the key).
     static let ping = ClaudeMessageRequest(
-        model: CloudModelOptions.claudeDefault,
+        model: ClaudeTier.keyCheckModel.id,
         messages: [Message(role: "user", content: "ok")],
         maxTokens: 1
     )

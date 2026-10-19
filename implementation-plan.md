@@ -685,7 +685,7 @@ session factory — no REST clients, no SSE parsing, no request encoding in this
   (near-limit warning, at-limit fallback to on-device, D14.3), reasoning-level
   selection, and offline unavailability (D14.4). No API key; consent screen still
   required (D14.1).
-- **b — Claude:** depend on Anthropic's official `ClaudeForFoundationModels` package
+- **b — Claude:** *(shipped in WP-85: package 0.2.3, see progress.md)* depend on Anthropic's official `ClaudeForFoundationModels` package
   (github.com/anthropics/ClaudeForFoundationModels). Build
   `ClaudeLanguageModel(name:auth:)` per session with `.apiKey` read from `KeychainStore`
   (it's the *user's* key entered at runtime — the package's don't-embed-a-key warning
@@ -1274,6 +1274,7 @@ P5  WP-52..   Real-device fixes and polish (progress.md):
       WP-81   Data tab opens on last known numbers
       WP-82   24 h lookback for heart rate
       WP-83   Xcode 27 everywhere, warnings log-checked
+      WP-85   Claude tier live (BYO key, package 0.2.3)
 ```
 
 Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement

@@ -157,8 +157,10 @@ final class AIModelsViewModel {
                 availability: deps.catalog.availability(for: tier),
                 hasKey: !tier.requiresAPIKey || (keyPresence[tier] ?? false),
                 consentDate: deps.settings.consentDate(for: tier),
-                modelID: deps.settings.modelOverride(for: tier)
-                    ?? CloudModelOptions.defaultModelID(for: tier),
+                modelID: CloudModelOptions.resolvedModelID(
+                    stored: deps.settings.modelOverride(for: tier),
+                    for: tier
+                ),
                 modelOptions: CloudModelOptions.options(for: tier),
                 quota: tier == .privateCloudCompute ? cachedQuota : nil
             )
