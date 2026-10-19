@@ -24,33 +24,45 @@ xcode: check-xcodegen
 # (Variable keeps its name so CI/local scripts referencing it survive.)
 XCODE_BETA := /Applications/Xcode.app/Contents/Developer
 
+# Build logs `make test` checks for warnings (scripts/no-compiler-warnings.sh).
+TEST_LOGS := build/test-logs
+
 test: check-xcodegen
 	@test -d "$(XCODE_BETA)" || { \
 		echo "error: $(XCODE_BETA) not found -- the app target needs the iOS 27 SDK from Xcode 27. Install Xcode 27." >&2; \
 		exit 1; \
 	}
-	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
+	@mkdir -p "$(TEST_LOGS)"
+	@set -o pipefail; for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
 		echo "==> swift test ($$pkg)"; \
-		(cd Packages/$$pkg && DEVELOPER_DIR="$(XCODE_BETA)" swift test -Xswiftc -warnings-as-errors) || exit 1; \
+		(cd Packages/$$pkg && DEVELOPER_DIR="$(XCODE_BETA)" swift test -Xswiftc -warnings-as-errors) 2>&1 \
+			| tee "$(TEST_LOGS)/swift-test-$$pkg.log" || exit 1; \
+		scripts/no-compiler-warnings.sh "$(TEST_LOGS)/swift-test-$$pkg.log" || exit 1; \
 	done
 	xcodegen generate
-	@udid=$$(DEVELOPER_DIR="$(XCODE_BETA)" scripts/pinned-simulator-udid.sh) || exit 1; \
+	@set -o pipefail; udid=$$(DEVELOPER_DIR="$(XCODE_BETA)" scripts/pinned-simulator-udid.sh) || exit 1; \
 	echo "==> xcodebuild build test (destination iOS Simulator $$udid)"; \
 	DEVELOPER_DIR="$(XCODE_BETA)" xcodebuild build test \
 		-project HealthLoom.xcodeproj \
 		-scheme HealthLoom \
 		-destination "platform=iOS Simulator,id=$$udid" \
 		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-		GCC_TREAT_WARNINGS_AS_ERRORS=YES
+		GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+		2>&1 | tee "$(TEST_LOGS)/xcodebuild.log" || exit 1; \
+	scripts/no-compiler-warnings.sh "$(TEST_LOGS)/xcodebuild.log"
 	# NOTE (owner directive: strict warnings-as-errors everywhere, no
 	# carve-outs): the flags above apply command-line-wide — first-party
 	# targets, local packages in the xcodebuild graph, and any SPM target.
 	# Per-target project.yml settings additionally cover Xcode-GUI builds
 	# (no command line), and per-package `swift test -Xswiftc
-	# -warnings-as-errors` covers the macOS host. There are no remote
-	# package dependencies left to break this (WP-33's snapshot tests use a
-	# local helper for exactly this reason); adding one requires it to
-	# build warning-free under this SDK first.
+	# -warnings-as-errors` covers the macOS host. The flags don't promote
+	# every diagnostic (WP-83: 24 UI-test concurrency warnings passed CI with
+	# them set), so each build's log goes through
+	# scripts/no-compiler-warnings.sh, as in CI. An incremental build only
+	# re-reports warnings for files it recompiles; CI's clean build sees all.
+	# There are no remote package dependencies left to break this (WP-33's
+	# snapshot tests use a local helper for exactly this reason); adding one
+	# requires it to build warning-free under this SDK first.
 
 # WP-69: the sync stress UI test (SyncStressUITests) -- on demand only, it
 # skips in `make test` and CI. Reproduces a sync's load while switching tabs
@@ -70,6 +82,7 @@ stress: check-xcodegen
 # Regenerating is `make xcode` (pinned xcodegen via project-drift CI).
 clean:
 	rm -rf ~/Library/Developer/Xcode/DerivedData/HealthLoom-*
+	rm -rf "$(TEST_LOGS)"
 	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
 		(cd Packages/$$pkg && swift package clean); \
 	done

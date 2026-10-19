@@ -14,7 +14,9 @@ this file is its enforceable distillate plus build policy.
    (local `Makefile`, CI package jobs).
 2. **Builds and tests must be error- AND warning-free.** A green suite with
    a warning in the log is red. Prove it: `grep 'warning:'` on the build
-   log returns zero compiler warnings before reporting done.
+   log returns zero compiler warnings before reporting done. `make test` and
+   every CI build job enforce this with `scripts/no-compiler-warnings.sh`,
+   because the flags alone don't promote every diagnostic (WP-83).
 3. **Third-party warnings are fixed at the source, never suppressed around.**
    If a remote SPM dependency emits warnings under our toolchain, the fix
    is upgrading to a warning-free release, patching, or removing the

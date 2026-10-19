@@ -77,3 +77,6 @@ fastlane/test_output
 
 # Review docs (working notes, never committed)
 reviews/*
+
+# `make test` build logs (scripts/no-compiler-warnings.sh input)
+/build/

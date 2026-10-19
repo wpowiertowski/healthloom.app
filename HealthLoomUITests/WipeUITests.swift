@@ -15,6 +15,7 @@ final class WipeUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    @MainActor
     private func openSettings(_ app: XCUIApplication) -> XCUIElementQuery {
         let anyElement = app.descendants(matching: .any)
         let settingsTab = anyElement["tabbar.settings"]
