@@ -1,9 +1,10 @@
 // CloudKeyValidatorTests.swift
 //
 // WP-29 (implementation-plan.md): the 1-token ping mapping -- 2xx valid,
-// provider rejection invalid, everything else (5xx/429, transport throw)
-// inconclusive transport-error, never "invalid key". Stubbed at the
-// `URLProtocol` layer so no test touches the network.
+// provider rejection invalid, any other answer refused with its reason and
+// the provider's message, no answer a transport error; never "invalid key"
+// unless the provider said so. Stubbed at the `URLProtocol` layer so no
+// test touches the network.
 
 import CoachKit
 import Foundation
@@ -99,23 +100,77 @@ struct CloudKeyValidatorTests {
         #expect(await validator(statusCode: 400, body: apiKeyInvalid).validate(key: "k", for: .gemini) == .invalidKey)
     }
 
-    @Test("a Gemini 400 without API_KEY_INVALID is a transport error, not invalidKey")
-    func geminiBareBadRequestIsTransport() async {
-        let disabledAPI = Data(#"{"error": {"code": 400, "message": "API disabled"}}"#.utf8)
-        let result = await validator(statusCode: 400, body: disabledAPI).validate(key: "k", for: .gemini)
-        #expect(result != .invalidKey)
-        #expect(result != .valid)
-        let emptyResult = await validator(statusCode: 400).validate(key: "k", for: .gemini)
-        #expect(emptyResult != .invalidKey)
+    /// The refusal a response produced, or nil (recorded) for any other result.
+    private func refusal(_ result: CloudKeyValidation) -> KeyCheckRefusal? {
+        guard case .refused(let refusal) = result else {
+            Issue.record("expected .refused, got \(result)")
+            return nil
+        }
+        return refusal
     }
 
-    @Test("a 429/500 is inconclusive, never an invalid-key verdict")
-    func serverErrorIsTransport() async {
+    private func anthropicError(type: String, message: String) -> Data {
+        let body: [String: Any] = ["type": "error", "error": ["type": type, "message": message]]
+        return (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+    }
+
+    @Test("a Gemini 400 without API_KEY_INVALID is refused with Google's message, not invalidKey")
+    func geminiBareBadRequestIsRefused() async {
+        let disabledAPI = Data(#"{"error": {"code": 400, "message": "API disabled"}}"#.utf8)
+        let result = await validator(statusCode: 400, body: disabledAPI).validate(key: "k", for: .gemini)
+        guard let refused = refusal(result) else { return }
+        #expect(refused.reason == .other)
+        #expect(refused.detail == "API disabled")
+        let emptyResult = await validator(statusCode: 400).validate(key: "k", for: .gemini)
+        #expect(refusal(emptyResult)?.detail == nil)
+    }
+
+    @Test("an Anthropic 400 for an empty credit balance is a billing refusal, not a transport error")
+    func anthropicLowCreditIsBilling() async {
+        let message = "Your credit balance is too low to access the Anthropic API."
+        let body = anthropicError(type: "invalid_request_error", message: message)
+        let result = await validator(statusCode: 400, body: body).validate(key: "k", for: .claude)
+        guard let refused = refusal(result) else { return }
+        #expect(refused.reason == .billing)
+        #expect(refused.statusCode == 400)
+        #expect(refused.detail == message)
+    }
+
+    @Test("status codes and error types map to their refusal reasons", arguments: [
+        (402, "billing_error", KeyCheckRefusal.Reason.billing),
+        (403, "permission_error", .permission),
+        (404, "not_found_error", .modelUnavailable),
+        (429, "rate_limit_error", .rateLimited),
+        (500, "api_error", .providerOutage),
+        (529, "overloaded_error", .providerOutage),
+        (400, "invalid_request_error", .other),
+    ])
+    func reasonByStatus(statusCode: Int, type: String, reason: KeyCheckRefusal.Reason) async {
+        let body = anthropicError(type: type, message: "m")
+        let result = await validator(statusCode: statusCode, body: body).validate(key: "k", for: .claude)
+        #expect(refusal(result)?.reason == reason)
+    }
+
+    @Test("a 429/500 is never an invalid-key verdict")
+    func serverErrorIsNotInvalidKey() async {
         let claude = await validator(statusCode: 429).validate(key: "k", for: .claude)
-        #expect(claude != .invalidKey)
-        #expect(claude != .valid)
+        #expect(refusal(claude)?.reason == .rateLimited)
         let gemini = await validator(statusCode: 500).validate(key: "k", for: .gemini)
-        #expect(gemini != .invalidKey)
+        #expect(refusal(gemini)?.reason == .providerOutage)
+    }
+
+    @Test("the provider message is one bounded line; a body without one gives no detail")
+    func detailIsSanitized() {
+        let long = "first line\n\n  second\tline " + String(repeating: "x", count: 500)
+        let refusal = KeyCheckRefusal(statusCode: 400, body: anthropicError(type: "invalid_request_error", message: long))
+        let detail = refusal.detail ?? ""
+        #expect(detail.hasPrefix("first line second line x"))
+        let hasNewline = detail.contains { $0.isNewline }
+        #expect(!hasNewline)
+        #expect(detail.count == KeyCheckRefusal.maxDetailLength)
+        #expect(detail.hasSuffix("…"))
+        #expect(KeyCheckRefusal(statusCode: 502, body: Data("<html>Bad gateway</html>".utf8)).detail == nil)
+        #expect(KeyCheckRefusal(statusCode: 400, body: anthropicError(type: "invalid_request_error", message: " \n ")).detail == nil)
     }
 
     @Test("Claude ping body admits no tools key (structural, third-party F10)")

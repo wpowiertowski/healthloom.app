@@ -148,7 +148,7 @@ struct AIModelsViewModelTests {
         viewModel.keyDraft = "sk-ant-wrong"
         await viewModel.saveKey()
         #expect(viewModel.sheet == .keyEntry(.claude), "sheet stays open for correction")
-        #expect(viewModel.keyError?.contains("rejected") == true)
+        #expect(viewModel.keyError == KeyCheckCopy.invalidKey(.anthropic))
         #expect(try await keys.get(.claudeAPIKey) == nil)
         #expect(!(try row(.claude, in: viewModel).effectivelyOn))
     }
@@ -165,9 +165,56 @@ struct AIModelsViewModelTests {
         viewModel.acceptConsent()
         viewModel.keyDraft = "sk-ant-maybe"
         await viewModel.saveKey()
-        #expect(viewModel.keyError?.contains("not stored") == true)
-        #expect(viewModel.keyError?.contains("rejected") == false)
+        #expect(viewModel.keyError == KeyCheckCopy.unreachable("offline", .anthropic))
+        #expect(viewModel.keyError != KeyCheckCopy.invalidKey(.anthropic))
         #expect(try await keys.get(.claudeAPIKey) == nil)
+    }
+
+    @Test("a refused check shows the reason's hint and the provider's message, and stores nothing")
+    func refusedCheckStoresNothing() async throws {
+        let keys = InMemoryCloudKeyStore()
+        let ephemeral = try makeSuite()
+        let message = "Your credit balance is too low to access the Anthropic API."
+        let body = try JSONSerialization.data(withJSONObject: [
+            "type": "error",
+            "error": ["type": "invalid_request_error", "message": message],
+        ])
+        let refusal = KeyCheckRefusal(statusCode: 400, body: body)
+        let (viewModel, _, _) = makeViewModel(
+            suite: ephemeral.defaults, keys: keys, validatorResult: .refused(refusal))
+        await viewModel.refresh()
+        viewModel.setTurnedOn(true, for: .claude)
+        viewModel.acceptConsent()
+        viewModel.keyDraft = "sk-ant-no-credit"
+        await viewModel.saveKey()
+        #expect(viewModel.sheet == .keyEntry(.claude), "sheet stays open")
+        #expect(viewModel.keyError == KeyCheckCopy.refused(refusal, .anthropic))
+        #expect(try await keys.get(.claudeAPIKey) == nil)
+        #expect(!(try row(.claude, in: viewModel).effectivelyOn))
+    }
+
+    @Test("refusal copy leads with the reason's hint, carries the provider's message and code, and ends not-stored")
+    func refusedCopyShape() throws {
+        let body = try JSONSerialization.data(withJSONObject: ["error": ["message": "API disabled"]])
+        let lines = KeyCheckCopy.refused(KeyCheckRefusal(statusCode: 403, body: body), .google)
+            .split(separator: "\n").map(String.init)
+        #expect(lines.first == KeyCheckCopy.hint(for: .permission, .google))
+        #expect(lines.dropFirst().first?.contains("API disabled") == true)
+        #expect(lines.dropFirst().first?.contains("403") == true)
+        #expect(lines.last == KeyCheckCopy.notStored)
+        // No provider message: the code still shows.
+        let bare = KeyCheckCopy.refused(KeyCheckRefusal(statusCode: 503, body: Data()), .anthropic)
+        #expect(bare.contains("503"))
+        #expect(bare.hasPrefix(KeyCheckCopy.hint(for: .providerOutage, .anthropic)))
+    }
+
+    @Test("the key sheet names the issuer's key for key-gated tiers")
+    func keySheetNamesProvider() {
+        #expect(KeyCheckCopy.provider(for: .claude) == .anthropic)
+        #expect(KeyCheckCopy.provider(for: .gemini) == .google)
+        #expect(KeyCheckCopy.provider(for: .onDevice) == nil)
+        #expect(KeyCheckCopy.title(for: .claude) == KeyCheckCopy.Provider.anthropic.keyName)
+        #expect(KeyCheckCopy.intro(for: .gemini).contains(KeyCheckCopy.Provider.google.console))
     }
 
     @Test("key deletion drops the effective state but keeps toggle + consent")

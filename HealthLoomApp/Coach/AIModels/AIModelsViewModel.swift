@@ -67,6 +67,83 @@ struct TierConsentCopy: Sendable, Equatable {
     }
 }
 
+/// Key-sheet copy: the title, the intro, and one message per failed key
+/// check. Single edit point -- the sheet and `saveKey` render these
+/// verbatim, tests assert which function a result maps to. Every failure
+/// says what is likely wrong and where to fix it, in the issuer's own
+/// console.
+enum KeyCheckCopy {
+    /// Who issues a key-gated tier's keys, and where the user manages them.
+    struct Provider: Sendable, Equatable {
+        var name: String
+        var console: String
+        var keyName: String
+
+        static let anthropic = Provider(name: "Anthropic", console: "the Anthropic Console", keyName: "Anthropic API key")
+        static let google = Provider(name: "Google", console: "Google AI Studio", keyName: "Gemini API key")
+    }
+
+    static let emptyDraft = "Enter a key first."
+    static let notStored = "Your key was not stored."
+
+    static func provider(for tier: ModelTier) -> Provider? {
+        switch tier {
+        case .claude: .anthropic
+        case .gemini: .google
+        case .onDevice, .privateCloudCompute: nil
+        }
+    }
+
+    static func title(for tier: ModelTier) -> String {
+        provider(for: tier)?.keyName ?? "\(tier.displayName) key"
+    }
+
+    static func intro(for tier: ModelTier) -> String {
+        let source = provider(for: tier).map { " from \($0.console)" } ?? ""
+        return "Paste an API key\(source). It's checked with a single 1-token request, then stored in the Keychain."
+    }
+
+    static func invalidKey(_ provider: Provider) -> String {
+        "\(provider.name) rejected that key. Check that you copied all of it and that it hasn't been revoked in \(provider.console)."
+    }
+
+    /// The provider answered but refused the check: a hint for the reason,
+    /// then the provider's own message, so an unclassified refusal still
+    /// says something specific.
+    static func refused(_ refusal: KeyCheckRefusal, _ provider: Provider) -> String {
+        let source = refusal.detail.map { "\(provider.name)'s message (HTTP \(refusal.statusCode)): \($0)" }
+            ?? "\(provider.name) answered with HTTP \(refusal.statusCode)."
+        return [hint(for: refusal.reason, provider), source, notStored].joined(separator: "\n")
+    }
+
+    static func hint(for reason: KeyCheckRefusal.Reason, _ provider: Provider) -> String {
+        switch reason {
+        case .billing:
+            "Your \(provider.name) account is out of credit. Add credits or a payment method in \(provider.console), then try again."
+        case .permission:
+            "This key's account isn't allowed to make this request. Check the key's workspace and access settings in \(provider.console)."
+        case .modelUnavailable:
+            "This key's account can't use the model the check runs on. Check model access in \(provider.console)."
+        case .rateLimited:
+            "\(provider.name) is limiting requests from this key. Wait a minute, then try again."
+        case .providerOutage:
+            "\(provider.name) is having problems right now. Try again in a few minutes."
+        case .other:
+            "\(provider.name) couldn't check the key."
+        }
+    }
+
+    /// No answer at all: the system's description (it carries its own
+    /// punctuation) on its own line.
+    static func unreachable(_ description: String, _ provider: Provider) -> String {
+        [
+            "Couldn't reach \(provider.name). Check your internet connection, then try again.",
+            description,
+            notStored,
+        ].joined(separator: "\n")
+    }
+}
+
 /// The settings screen's one presented sheet. A single enum (not two
 /// sibling `ModelTier?` optionals): two `.sheet(item:)` modifiers of the
 /// same bound type on one view conflict and neither presents -- one typed
@@ -278,13 +355,15 @@ final class AIModelsViewModel {
     }
 
     /// Validates the draft with a 1-token ping, then stores. Only `.valid`
-    /// stores: `.invalidKey` and `.transportError` both surface copy and
-    /// leave the Keychain (and the toggle) untouched.
+    /// stores: every other result surfaces its `KeyCheckCopy` and leaves
+    /// the Keychain (and the toggle) untouched.
     func saveKey() async {
-        guard case .keyEntry(let tier) = sheet, let secretKey = tier.secretKey else { return }
+        guard case .keyEntry(let tier) = sheet,
+              let secretKey = tier.secretKey,
+              let provider = KeyCheckCopy.provider(for: tier) else { return }
         let draft = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !draft.isEmpty else {
-            keyError = "Enter a key first."
+            keyError = KeyCheckCopy.emptyDraft
             return
         }
         isValidating = true
@@ -304,9 +383,11 @@ final class AIModelsViewModel {
             keyError = nil
             deps.settings.setTurnedOn(true, for: tier)
         case .invalidKey:
-            keyError = "That key was rejected. Check it and try again."
-        case .transportError(let message):
-            keyError = "Couldn't reach the provider (\(message)). Your key was not stored -- try again."
+            keyError = KeyCheckCopy.invalidKey(provider)
+        case .refused(let refusal):
+            keyError = KeyCheckCopy.refused(refusal, provider)
+        case .transportError(let description):
+            keyError = KeyCheckCopy.unreachable(description, provider)
         }
     }
 

@@ -11,25 +11,103 @@
 // via `URLProtocol`). Both pings are the cheapest authenticated call each
 // provider offers:
 //   - Anthropic: POST /v1/messages with `max_tokens: 1` (one output token).
-//     200 = valid; 401 = invalid key; anything else = inconclusive
-//     (treated as a transport error, NOT "invalid" -- a 429/500 must not
-//     tell the user their key is wrong).
+//     200 = valid; 401 = invalid key; any other status = refused (the
+//     provider answered, but not about the key -- a 429/500 or an empty
+//     credit balance must not tell the user their key is wrong).
 //   - Gemini: GET /v1beta/models?key= (no body, no spend). 200 = valid;
-//     400 with API_KEY_INVALID = invalid key; anything else = transport
-//     error, same rule as above.
+//     400 with API_KEY_INVALID = invalid key; any other status = refused,
+//     same rule as above.
+// A refusal carries the reason and the provider's own message
+// (`KeyCheckRefusal`), so the sheet can say what to fix instead of a bare
+// status code. No answer at all (offline, timeout) is a transport error.
 // Timeout 15s: validation is user-initiated and foreground, but a hanging
 // socket must still lose to the spinner eventually.
 
 import CoachKit
 import Foundation
 
-/// Outcome of a key check. Three cases (not Bool): "the provider rejected
-/// the key" and "the network failed" need different copy AND different
-/// behavior (only `.invalidKey` is a reason to refuse storing).
+/// Outcome of a key check. Not Bool: "the provider rejected the key", "the
+/// provider answered but refused the check for another reason" and "no
+/// answer" each need their own copy. Only `.valid` stores.
 enum CloudKeyValidation: Sendable, Equatable {
     case valid
     case invalidKey
+    /// The provider answered with an error that isn't a verdict on the key
+    /// (billing, permissions, rate limit, outage, …).
+    case refused(KeyCheckRefusal)
+    /// No HTTP answer: offline, timeout, TLS failure, cancellation.
     case transportError(String)
+}
+
+/// Why a provider refused a key check it did answer, built from the status
+/// code and the error body. Classification and sanitizing happen here, at
+/// construction (AGENTS.md §2), so no caller can show a raw multi-line or
+/// unbounded provider body.
+nonisolated struct KeyCheckRefusal: Sendable, Equatable {
+    enum Reason: Sendable, Equatable {
+        /// 402 `billing_error`, or Anthropic's 400 "Your credit balance is
+        /// too low…" (an `invalid_request_error`, so only its message can
+        /// tell it apart).
+        case billing
+        /// 403: the key's organization or workspace isn't allowed.
+        case permission
+        /// 404: the check's model isn't available to the key's organization.
+        case modelUnavailable
+        /// 429.
+        case rateLimited
+        /// 5xx, including Anthropic's 529 overloaded.
+        case providerOutage
+        /// Anything else; the provider's message is the only hint.
+        case other
+    }
+
+    /// Longest provider message shown; longer ones are cut with "…".
+    static let maxDetailLength = 200
+
+    let reason: Reason
+    let statusCode: Int
+    /// The provider's `error.message`, collapsed to one line and capped at
+    /// `maxDetailLength`; nil when the body carried none.
+    let detail: String?
+
+    init(statusCode: Int, body: Data) {
+        // Both providers nest the message as `error.message`; Anthropic
+        // adds `error.type`. A body that doesn't decode leaves both nil.
+        let error = (try? JSONDecoder().decode(ErrorEnvelope.self, from: body))?.error
+        self.statusCode = statusCode
+        self.detail = error?.message.flatMap(Self.sanitized)
+        self.reason = Self.classify(statusCode: statusCode, type: error?.type, message: error?.message)
+    }
+
+    private struct ErrorEnvelope: Decodable {
+        struct Body: Decodable {
+            var type: String?
+            var message: String?
+        }
+
+        var error: Body
+    }
+
+    private static func classify(statusCode: Int, type: String?, message: String?) -> Reason {
+        if type == "billing_error" || message?.localizedCaseInsensitiveContains("credit balance") == true {
+            return .billing
+        }
+        switch statusCode {
+        case 402: return .billing
+        case 403: return .permission
+        case 404: return .modelUnavailable
+        case 429: return .rateLimited
+        case 500...599: return .providerOutage
+        default: return .other
+        }
+    }
+
+    private static func sanitized(_ message: String) -> String? {
+        let oneLine = message.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !oneLine.isEmpty else { return nil }
+        guard oneLine.count > maxDetailLength else { return oneLine }
+        return String(oneLine.prefix(maxDetailLength - 1)) + "…"
+    }
 }
 
 protocol CloudKeyValidating: Sendable {
@@ -148,7 +226,7 @@ struct LiveCloudKeyValidator: CloudKeyValidating {
 
     /// Body snippet that must accompany a 400 for it to count as a key
     /// rejection on Gemini (WP-29 F5). A bare 400 (disabled API,
-    /// malformed request) with a *valid* key is a transport error.
+    /// malformed request) with a *valid* key is a refusal, not a verdict.
     private static let geminiInvalidKeyMarker = "API_KEY_INVALID"
 
     private func validateClaude(key: String) async -> CloudKeyValidation {
@@ -177,9 +255,9 @@ struct LiveCloudKeyValidator: CloudKeyValidating {
 
     /// 2xx = valid; listed status = the provider rejected the credential
     /// (when `invalidBodyMarker` is set, the body must also contain it —
-    /// WP-29 F5: any other 400 is inconclusive, not "invalid key");
-    /// anything else (5xx, 429, transport throw, cancellation) =
-    /// inconclusive. Cancellation maps to transport-error (not invalid):
+    /// WP-29 F5: any other 400 is not "invalid key"); any other status =
+    /// refused, with the body's reason; a throw (offline, timeout,
+    /// cancellation) = transport error. Cancellation is never "invalid":
     /// the sheet's Task is cancelled on dismiss, and a dismiss must never
     /// rewrite the key field's error to "invalid key".
     private func perform(
@@ -201,14 +279,13 @@ struct LiveCloudKeyValidator: CloudKeyValidating {
             return .valid
         }
         if invalidStatusCodes.contains(http.statusCode) {
-            if let marker = invalidBodyMarker {
-                let body = String(data: data, encoding: .utf8) ?? ""
-                guard body.contains(marker) else {
-                    return .transportError("HTTP \(http.statusCode).")
-                }
+            let markerFound = invalidBodyMarker.map {
+                (String(data: data, encoding: .utf8) ?? "").contains($0)
+            } ?? true
+            if markerFound {
+                return .invalidKey
             }
-            return .invalidKey
         }
-        return .transportError("HTTP \(http.statusCode).")
+        return .refused(KeyCheckRefusal(statusCode: http.statusCode, body: data))
     }
 }
