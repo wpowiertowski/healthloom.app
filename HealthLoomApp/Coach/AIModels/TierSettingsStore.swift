@@ -18,6 +18,8 @@
 //     toggle stays put, and the row renders the blocker reason.
 //   - model override: the tier's selected model ID for key-gated tiers
 //     ("model picker where applicable"); nil = tier default.
+// Plus one unkeyed value: the chat's last picked tier (WP-86), so the
+// Coach tab reopens on it instead of resetting to on-device every launch.
 // Defaults: `.onDevice` on, every off-device tier off (opt-in, D11).
 //
 // `@Observable` (not a plain struct) so `AIModelsView` rows and the chat
@@ -45,6 +47,11 @@ final class TierSettingsStore {
     private(set) var toggles: [ModelTier: Bool] = [:]
     private(set) var consentDates: [ModelTier: Date] = [:]
     private(set) var modelOverrides: [ModelTier: String] = [:]
+    /// The chat tier last picked from the tier menu; nil = never picked.
+    /// A preference, not a gate: the chat still clamps to an enabled tier.
+    private(set) var chatTier: ModelTier?
+
+    private static let chatTierKey = "chatTier"
 
     private static func consentKey(for tier: ModelTier) -> String {
         "tierConsent.\(tier.rawValue)"
@@ -92,10 +99,11 @@ final class TierSettingsStore {
                 modelOverrides.removeValue(forKey: tier)
             }
         }
+        chatTier = defaults.string(forKey: Self.chatTierKey).flatMap(ModelTier.init(rawValue:))
     }
 
-    /// Removes every key this store owns for every tier (consent,
-    /// toggles, model overrides). The AI Models UI-test scenario calls this
+    /// Removes every key this store owns (consent, toggles, model
+    /// overrides, the chat tier). The AI Models UI-test scenario calls this
     /// at launch: `UserDefaults.standard` outlives UI-test launches on a
     /// simulator, and leftover consent from an earlier test would make
     /// "blocked without consent" assertions pass or fail on run order.
@@ -105,6 +113,7 @@ final class TierSettingsStore {
             defaults.removeObject(forKey: Self.toggleKey(for: tier))
             defaults.removeObject(forKey: Self.modelKey(for: tier))
         }
+        defaults.removeObject(forKey: Self.chatTierKey)
     }
 
     // MARK: - Consent (D11)
@@ -168,5 +177,16 @@ final class TierSettingsStore {
             defaults.removeObject(forKey: Self.modelKey(for: tier))
             modelOverrides.removeValue(forKey: tier)
         }
+    }
+
+    // MARK: - Chat tier (WP-86)
+
+    func setChatTier(_ tier: ModelTier?) {
+        if let tier {
+            defaults.set(tier.rawValue, forKey: Self.chatTierKey)
+        } else {
+            defaults.removeObject(forKey: Self.chatTierKey)
+        }
+        chatTier = tier
     }
 }

@@ -10,6 +10,7 @@
 import CoachKit
 import CoreModel
 import Foundation
+import FoundationModels
 import SwiftData
 import SyncKit
 import Testing
@@ -100,7 +101,13 @@ struct TierSwitcherTests {
         // Round-7 item 13: scripted quota + key presence for the
         // fallback/defense tests (defaults mirror production setup).
         pccQuota: PCCQuota = .ok,
-        keyPresent: (@Sendable (ModelTier) -> Bool)? = nil
+        keyPresent: (@Sendable (ModelTier) -> Bool)? = nil,
+        // WP-86: every built session's measured fit, a stream failure
+        // after the first chunk, and the tier remembered from a previous
+        // launch.
+        fit: ContextFit? = nil,
+        streamFailure: Error? = nil,
+        storedChatTier: ModelTier? = nil
     ) throws -> TierSwitcherFixture {
         let container = try CoreModel.makeContainer(inMemory: true)
         // Round-3 item 12: the holder rides in the fixture (same commit
@@ -112,6 +119,7 @@ struct TierSwitcherTests {
         // survivors; the janitor closes the leak at exit.
         let ephemeral = try EphemeralDefaults(prefix: "tierswitcher")
         let settings = TierSettingsStore(defaults: ephemeral.defaults)
+        settings.setChatTier(storedChatTier)
         let gates = CloudGateCache()
         let catalog = ModelCatalog(
             onDeviceAvailable: { true },
@@ -128,10 +136,12 @@ struct TierSwitcherTests {
         )
         let factory = CoachSessionFactory(build: { tier, instructions, _ in
             log.append(instructions)
-            if let chunks {
-                return TestCoachSession(chunks: chunks(tier))
-            }
-            return TestCoachSession()
+            return TestCoachSession(
+                chunks: chunks?(tier) ?? ["Hello ", "world."],
+                failAfterChunks: streamFailure == nil ? nil : 1,
+                failure: streamFailure ?? StreamBoom(),
+                fit: fit
+            )
         })
         let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
             container: container,
@@ -469,5 +479,86 @@ struct TierSwitcherTests {
         #expect(viewModel.turns.count == 1) // user turn only — nothing answered
         #expect(viewModel.errorMessage?.contains("API key") == true)
         #expect(fixture.factoryBuilds().isEmpty)
+    }
+
+    // MARK: - WP-86: conversation fit, overflow copy, remembered tier
+
+    @Test("a full on-device conversation renders the conversationFull offer and offers Start fresh")
+    func conversationFullOffers() async throws {
+        // catches: the reported bug -- a transcript past the on-device
+        // window sent anyway, failing mid-stream instead of offering.
+        let fixture = try makeViewModel(fit: ContextFit(tokens: 7_500, contextSize: 8_192))
+        let viewModel = fixture.viewModel
+        #expect(viewModel.send("How should I change my training?") == true)
+        try await waitForIdle(viewModel)
+        #expect(viewModel.turns.count == 2)
+        #expect(viewModel.turns[1].content == CoachChatViewModel.offerMessage(for: .conversationFull, tier: .onDevice))
+        #expect(viewModel.turns[1].contextSnapshotID != nil)
+        #expect(viewModel.errorMessage == nil)
+        #expect(viewModel.startFreshTier == .onDevice)
+    }
+
+    @Test("Start fresh drops the full tier's session and puts the ask back in the composer")
+    func startFreshResetsTierSession() async throws {
+        // catches: Start fresh that clears the button but leaves the full
+        // transcript cached, so the next send measures the same session.
+        let fixture = try makeViewModel(fit: ContextFit(tokens: 7_500, contextSize: 8_192))
+        let viewModel = fixture.viewModel
+        let ask = "How should I change my training?"
+        #expect(viewModel.send(ask) == true)
+        try await waitForIdle(viewModel)
+        #expect(fixture.factoryBuilds().count == 1)
+        viewModel.startFresh()
+        #expect(viewModel.startFreshTier == nil)
+        #expect(viewModel.inputText == ask)
+        #expect(viewModel.send(viewModel.inputText) == true)
+        try await waitForIdle(viewModel)
+        #expect(fixture.factoryBuilds().count == 2, "the next turn builds a new session")
+    }
+
+    @Test("a mid-reply context overflow shows tier copy, never the framework's token counts")
+    func midReplyOverflowCopy() async throws {
+        // catches: "Provided 10,890 tokens, but the maximum allowed is
+        // 8,192." rendered verbatim because stream errors skipped
+        // `CoachError` normalization.
+        let frameworkMessage = "Provided 10,890 tokens, but the maximum allowed is 8,192."
+        let overflow = LanguageModelError.contextSizeExceeded(
+            .init(contextSize: 8_192, tokenCount: 10_890, debugDescription: frameworkMessage)
+        )
+        let fixture = try makeViewModel(streamFailure: overflow)
+        let viewModel = fixture.viewModel
+        #expect(viewModel.send("hi") == true)
+        try await waitForIdle(viewModel)
+        #expect(viewModel.errorMessage == CoachChatViewModel.replyErrorMessage(
+            CoachError.contextOverflow(offerEscalation: true), on: .onDevice))
+        #expect(viewModel.errorMessage?.contains("10,890") == false)
+        #expect(viewModel.startFreshTier == .onDevice)
+        // The partial reply streamed before the failure is still kept.
+        #expect(viewModel.turns.last?.role == "assistant")
+    }
+
+    @Test("a picked tier is remembered and a new chat starts on it")
+    func pickedTierIsRemembered() throws {
+        // catches: the chat resetting to on-device on every launch, so a
+        // user who enabled Claude silently chats on-device.
+        let fixture = try makeViewModel()
+        let (viewModel, settings, gates) = fixture.values
+        enable(.privateCloudCompute, settings: settings, gates: gates)
+        #expect(viewModel.selectTier(.privateCloudCompute) == true)
+        #expect(settings.chatTier == .privateCloudCompute)
+        let relaunched = try makeViewModel(storedChatTier: .privateCloudCompute)
+        #expect(relaunched.viewModel.selectedTier == .privateCloudCompute)
+    }
+
+    @Test("a remembered tier that's no longer enabled clamps without being forgotten")
+    func rememberedDisabledTierClamps() throws {
+        // catches: a remembered tier dispatching after its key or consent
+        // went away, or the clamp overwriting the preference so
+        // re-enabling Claude doesn't bring the chat back to it.
+        let fixture = try makeViewModel(storedChatTier: .claude)
+        let (viewModel, settings, _) = fixture.values
+        viewModel.onAppear()
+        #expect(viewModel.selectedTier == .onDevice)
+        #expect(settings.chatTier == .claude)
     }
 }

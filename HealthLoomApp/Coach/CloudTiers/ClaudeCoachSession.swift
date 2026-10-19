@@ -56,6 +56,12 @@ final class ClaudeCoachSession: CoachSession {
 
     /// Warms the built session only. Before the first turn there is nothing
     /// to warm without reading the key, and a warm-up must not read it.
+    /// The Claude provider has no tokenizer API to measure with; forwarded
+    /// so the adapter never claims a fit its built session didn't report.
+    func contextFit(adding prompt: String) async -> ContextFit? {
+        await session?.contextFit(adding: prompt)
+    }
+
     func prewarm() {
         session?.prewarm()
     }

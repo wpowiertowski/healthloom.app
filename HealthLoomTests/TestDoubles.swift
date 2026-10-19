@@ -30,23 +30,32 @@ struct StreamBoom: Error {}
 final class TestCoachSession: CoachSession, @unchecked Sendable {
     let chunks: [String]
     let failAfterChunks: Int?
+    /// What the stream throws at `failAfterChunks`.
+    let failure: Error
     let suspendForever: Bool
     let chunkDelay: Duration
 
     init(
         chunks: [String] = ["Hello ", "world."],
         failAfterChunks: Int? = nil,
+        failure: Error = StreamBoom(),
         suspendForever: Bool = false,
-        chunkDelay: Duration = .milliseconds(50)
+        chunkDelay: Duration = .milliseconds(50),
+        fit: ContextFit? = nil
     ) {
         self.chunks = chunks
         self.failAfterChunks = failAfterChunks
+        self.failure = failure
         self.suspendForever = suspendForever
         self.chunkDelay = chunkDelay
+        self.scriptedFit = fit
     }
 
     var isResponding: Bool { false }
     func prewarm() {}
+    /// Unmeasured unless a test scripts a fit.
+    let scriptedFit: ContextFit?
+    func contextFit(adding prompt: String) async -> ContextFit? { scriptedFit }
     func respond(to prompt: String) async throws -> String { chunks.joined() }
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         throw StreamBoom()
@@ -54,6 +63,7 @@ final class TestCoachSession: CoachSession, @unchecked Sendable {
     func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {
         let chunks = chunks
         let failAfterChunks = failAfterChunks
+        let failure = failure
         let suspendForever = suspendForever
         let chunkDelay = chunkDelay
         return AsyncThrowingStream { continuation in
@@ -63,7 +73,7 @@ final class TestCoachSession: CoachSession, @unchecked Sendable {
                     try? await Task.sleep(for: chunkDelay)
                     if Task.isCancelled { break }
                     if failAfterChunks == index {
-                        continuation.finish(throwing: StreamBoom())
+                        continuation.finish(throwing: failure)
                         return
                     }
                     continuation.yield(chunk)
@@ -88,6 +98,7 @@ final class PrewarmProbeSession: CoachSession, Sendable {
     func prewarm() {
         lock.withLock { _prewarmCount += 1 }
     }
+    func contextFit(adding prompt: String) async -> ContextFit? { nil }
     func respond(to prompt: String) async throws -> String { "" }
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         throw StreamBoom()

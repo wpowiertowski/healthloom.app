@@ -215,6 +215,7 @@ private final class ScriptedInsightSession: CoachSession, Sendable {
 
     var isResponding: Bool { false }
     func prewarm() {}
+    func contextFit(adding prompt: String) async -> ContextFit? { nil }
     func respond(to prompt: String) async throws -> String { "ok" }
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         guard let casted = insight as? Content else { throw StreamBoom() }
@@ -230,6 +231,7 @@ private final class ThrowingSession: CoachSession, Sendable {
     struct Boom: Error {}
     var isResponding: Bool { false }
     func prewarm() {}
+    func contextFit(adding prompt: String) async -> ContextFit? { nil }
     func respond(to prompt: String) async throws -> String { throw Boom() }
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         throw Boom()
@@ -725,6 +727,7 @@ struct MorningInsightRunnerTests {
             init(detail: String) { self.detail = detail }
             var isResponding: Bool { false }
             func prewarm() {}
+            func contextFit(adding prompt: String) async -> ContextFit? { nil }
             func respond(to prompt: String) async throws -> String { throw HostileBoom(detail: detail) }
             func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
                 throw HostileBoom(detail: detail)

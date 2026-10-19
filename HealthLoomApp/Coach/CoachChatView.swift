@@ -82,6 +82,24 @@ struct CoachChatView: View {
                 if let errorMessage = viewModel.errorMessage {
                     ThemedErrorText(message: errorMessage, accessibilityIdentifier: "chat.error")
                 }
+                // WP-86: offered when the conversation outgrew the serving
+                // tier's window; the copy above (or the offer row) says
+                // what it does.
+                if let tier = viewModel.startFreshTier {
+                    Button {
+                        viewModel.startFresh()
+                    } label: {
+                        // Frame and shape inside the label: outside it, only
+                        // the text is hit-testable, not the full-width row.
+                        Text("Start fresh")
+                            .font(Theme.font(Theme.Step.body, .medium, relativeTo: .body))
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityHint("\(tier.displayName) forgets the earlier messages in this conversation.")
+                    .accessibilityIdentifier("chat.startFresh")
+                }
                 inputBar
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

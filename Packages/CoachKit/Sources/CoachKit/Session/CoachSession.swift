@@ -30,6 +30,39 @@ public protocol CoachSession: AnyObject, Sendable {
     /// touches neither `Self` nor an associated type, so it remains callable
     /// through the existential. Test doubles answer from scripted values.
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content
+    /// How full the model's context window would be if `prompt` were sent
+    /// next on this session, counted by the model's own tokenizer over the
+    /// whole transcript (instructions, tools, every earlier turn) plus the
+    /// prompt. Nil when the session can't measure -- a provider without a
+    /// tokenizer API, or a count that failed -- which callers treat as
+    /// "send": a real overflow still surfaces as `contextSizeExceeded`.
+    /// A requirement (no default) so every session decides explicitly.
+    func contextFit(adding prompt: String) async -> ContextFit?
+}
+
+/// One measured look at a session's context window (WP-86). The per-turn
+/// token budget (`ContextAssembler`) bounds a single turn; this bounds the
+/// conversation, whose transcript grows with every turn.
+public struct ContextFit: Sendable, Equatable {
+    /// Tokens kept free for the reply and its tool calls. A working
+    /// figure: on-device replies run a few hundred tokens, and a reply
+    /// that still runs over fails as `contextSizeExceeded` mid-stream,
+    /// which maps to the same overflow copy.
+    public static let responseReserve = 1_000
+
+    /// Transcript plus the prompt about to be sent.
+    public let tokens: Int
+    /// The model's context window.
+    public let contextSize: Int
+
+    public init(tokens: Int, contextSize: Int) {
+        self.tokens = tokens
+        self.contextSize = contextSize
+    }
+
+    public var fits: Bool {
+        tokens + Self.responseReserve <= contextSize
+    }
 }
 
 /// Fail-closed session for live-but-unwired tiers (WP-32 F1). Returned by
@@ -63,6 +96,9 @@ public final class UnwiredTierSession: CoachSession, Sendable {
         return AsyncThrowingStream { $0.finish(throwing: error) }
     }
 
+    /// Nothing to measure: every answering method fails anyway.
+    public func contextFit(adding prompt: String) async -> ContextFit? { nil }
+
     /// Shared with `CoachOrchestrator`'s unwired-tier throw: one copy for
     /// "live, enabled, but no session provider," owned here next to the
     /// type that raises it.
@@ -82,9 +118,14 @@ public final class UnwiredTierSession: CoachSession, Sendable {
 @MainActor
 public final class LiveCoachSession: CoachSession {
     private let session: LanguageModelSession
+    /// The on-device model this session runs on, for `contextFit`. Nil for
+    /// provider sessions (`makeProviderSession`): the `LanguageModel`
+    /// protocol has no tokenizer API, so those never measure.
+    private let systemModel: SystemLanguageModel?
 
-    init(session: LanguageModelSession) {
+    init(session: LanguageModelSession, systemModel: SystemLanguageModel? = nil) {
         self.session = session
+        self.systemModel = systemModel
     }
 
     public var isResponding: Bool { session.isResponding }
@@ -190,5 +231,21 @@ public final class LiveCoachSession: CoachSession {
 
     public func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {
         Self.deltaStream(snapshots: session.streamResponse(to: prompt).map(\.content))
+    }
+
+    /// The model's own counts: the transcript (instructions and tool
+    /// definitions included) plus the prompt, against `contextSize` (the
+    /// real window on 27; the SDK back-deploys 4,096 before it). A count
+    /// that throws measures nothing rather than blocking the turn.
+    public func contextFit(adding prompt: String) async -> ContextFit? {
+        guard let systemModel else { return nil }
+        guard #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) else { return nil }
+        do {
+            let transcriptTokens = try await systemModel.tokenCount(for: session.transcript)
+            let promptTokens = try await systemModel.tokenCount(for: prompt)
+            return ContextFit(tokens: transcriptTokens + promptTokens, contextSize: systemModel.contextSize)
+        } catch {
+            return nil
+        }
     }
 }
