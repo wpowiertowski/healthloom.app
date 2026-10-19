@@ -64,6 +64,9 @@ packages:
   # upgrading or patching, never suppressed. swift-snapshot-testing stays
   # out for exactly that reason (SDK deprecation warnings); snapshot tests
   # use the local HealthLoomTests/SnapshotAssert.swift helper instead.
+  # Bumping exactVersion also means re-resolving and committing
+  # HealthLoom.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved:
+  # Xcode Cloud resolves only from that file, and CI's app job checks it.
   ClaudeForFoundationModels:
     url: https://github.com/anthropics/ClaudeForFoundationModels
     exactVersion: 0.2.3
