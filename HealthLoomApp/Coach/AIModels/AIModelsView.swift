@@ -267,7 +267,7 @@ struct AIModelsView: View {
     private func keySheet(for tier: ModelTier) -> some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Paste your API key. It's checked with a single 1-token request, then stored in the Keychain.")
+                Text(KeyCheckCopy.intro(for: tier))
                     .font(Theme.font(Theme.Step.body, .regular, relativeTo: .body))
                     .foregroundStyle(Theme.secondary)
                 SecureField("API key", text: Binding(
@@ -290,7 +290,7 @@ struct AIModelsView: View {
                     .accessibilityIdentifier("aimodels.key.cancel")
             }
             .padding(20)
-            .navigationTitle("\(tier.displayName) key")
+            .navigationTitle(KeyCheckCopy.title(for: tier))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("aimodels.key.sheet")
         }
