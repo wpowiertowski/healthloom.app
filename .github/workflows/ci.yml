@@ -364,6 +364,23 @@ jobs:
       # unpinned generator -- and would test a project that isn't the one
       # that ships. A stale commit fails project-drift, not silently here.
 
+      - name: Package.resolved matches project.yml (as Xcode Cloud resolves)
+        # Xcode Cloud disables automatic package resolution, so it builds
+        # only from the committed Package.resolved and fails if that file
+        # is missing or doesn't satisfy project.yml's pins. That's how #93
+        # broke the cloud build while this job passed. Resolve the same way
+        # here, into empty package and DerivedData dirs: the SourcePackages
+        # cache restored above would otherwise satisfy the resolver and hide
+        # a missing file.
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project HealthLoom.xcodeproj \
+            -scheme HealthLoom \
+            -disableAutomaticPackageResolution \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/resolve-check/SourcePackages" \
+            -derivedDataPath "$RUNNER_TEMP/resolve-check/DerivedData"
+
       - name: Wait for simulator boot to finish
         # Usually instant -- the boot started before the build. `-b` boots
         # first if the earlier async boot somehow didn't stick.

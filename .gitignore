@@ -41,8 +41,18 @@ playground.xcworkspace
 # capabilities).
 # Per-user Xcode state inside the now-tracked .xcodeproj stays out — only
 # project.pbxproj + xcshareddata (schemes Xcode Cloud builds from) commit.
+# One exception inside the embedded workspace: the SwiftPM Package.resolved.
+# Xcode Cloud disables automatic package resolution, so a remote package
+# (ClaudeForFoundationModels, WP-85) without a committed resolved file fails
+# every cloud build ("a resolved file is required"). Git can't re-include a
+# file under an ignored directory, so each level is re-opened in turn.
 xcuserdata/
-*.xcworkspace/
+**/*.xcworkspace/*
+!/HealthLoom.xcodeproj/project.xcworkspace/xcshareddata/
+/HealthLoom.xcodeproj/project.xcworkspace/xcshareddata/*
+!/HealthLoom.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+/HealthLoom.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!/HealthLoom.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # CocoaPods
 #
