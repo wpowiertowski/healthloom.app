@@ -393,11 +393,14 @@ jobs:
           # Owner directive: strict warnings-as-errors everywhere (mirrors
           # `make test`). Per-target project.yml settings cover GUI builds;
           # the command-line flags cover the xcodebuild graph including
-          # local packages. No remote package dependencies remain, so no
-          # third-party warnings can break this (WP-33's snapshot tests use
-          # a local helper for exactly this reason). The flags don't promote
-          # every diagnostic, so the log check after the build fails on any
-          # warning they let through (scripts/no-compiler-warnings.sh).
+          # local packages. The one remote package (ClaudeForFoundationModels,
+          # WP-85) gets `SWIFT_SUPPRESS_WARNINGS=NO`: Xcode builds remote
+          # packages with `-suppress-warnings`, which would hide upstream
+          # warnings and conflicts with `-warnings-as-errors`, so this
+          # overrides it and upstream code builds warning-free-or-fail like
+          # ours (AGENTS.md §1.3). The flags don't promote every diagnostic,
+          # so the log check after the build fails on any warning they let
+          # through (scripts/no-compiler-warnings.sh).
           xcodebuild build test \
             -project HealthLoom.xcodeproj \
             -scheme HealthLoom \
@@ -405,6 +408,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/HealthLoom.xcresult" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+            SWIFT_SUPPRESS_WARNINGS=NO \
             2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
           scripts/no-compiler-warnings.sh "$RUNNER_TEMP/xcodebuild.log"
 

@@ -153,6 +153,50 @@ struct AvailabilityGateTests {
         #expect(byName !== byID)
     }
 
+    @Test("a provider serves only its own tier; the rest stay fail-closed")
+    func providersRouteByTier() {
+        // WP-85: the live factory's Claude arm. Catches a provider build
+        // answering another tier (tier-blind routing) and an unlisted tier
+        // falling through to anything but `UnwiredTierSession`.
+        let builds = ProviderBuilds()
+        let factory = CoachSessionFactory(providers: [.claude: builds.provider(configuration: { "opus" })])
+        let served = factory.makeSession(
+            for: .oneShot,
+            instructions: "base",
+            tools: [StubTool(name: "steps")],
+            tier: .claude
+        )
+        #expect(served === builds.sessions.last)
+        #expect(builds.received.map(\.configuration) == ["opus"])
+        #expect(builds.received.map(\.instructions) == ["base"])
+        #expect(builds.received.map(\.tools) == [["steps"]])
+        for tier in [ModelTier.privateCloudCompute, .gemini] {
+            let session = factory.makeSession(for: .oneShot, instructions: "base", tier: tier)
+            #expect((session as? UnwiredTierSession)?.tier == tier)
+        }
+        #expect(builds.received.count == 1)
+    }
+
+    @Test("a provider configuration change builds a new conversation session")
+    func providerConfigurationKeysTheCache() {
+        // WP-85: the picked Claude model is a dimension of the
+        // conversation cache key. Catches a model change in Settings that
+        // keeps answering from the session built for the old model.
+        final class Picked {
+            var model = "opus"
+        }
+        let picked = Picked()
+        let builds = ProviderBuilds()
+        let factory = CoachSessionFactory(providers: [.claude: builds.provider(configuration: { picked.model })])
+        let first = factory.makeSession(for: .conversation, instructions: "base", tier: .claude)
+        #expect(factory.makeSession(for: .conversation, instructions: "base", tier: .claude) === first)
+        picked.model = "sonnet"
+        let second = factory.makeSession(for: .conversation, instructions: "base", tier: .claude)
+        #expect(second !== first)
+        #expect(builds.received.map(\.configuration) == ["opus", "sonnet"])
+        #expect(factory.makeSession(for: .conversation, instructions: "base", tier: .claude) === second)
+    }
+
     @Test("assembly purpose maps to the matching session lifecycle")
     func purposeMapping() {
         // Round-4 #11: the translation between the two Purpose enums lives in
@@ -245,6 +289,22 @@ struct StubTool: Tool {
 struct StubArgs {
     @Guide(description: "The query.")
     var query: String
+}
+
+/// Records each provider build (WP-85 factory tests) and answers with a
+/// fresh scripted session, so identity checks can tell builds apart.
+final class ProviderBuilds {
+    private(set) var received: [(configuration: String, instructions: String, tools: [String])] = []
+    private(set) var sessions: [ScriptedCoachSession] = []
+
+    func provider(configuration: @escaping @MainActor @Sendable () -> String) -> CoachSessionFactory.Provider {
+        CoachSessionFactory.Provider(configuration: configuration) { configuration, instructions, tools in
+            self.received.append((configuration, instructions, tools.map(\.name)))
+            let session = ScriptedCoachSession(chunks: [configuration])
+            self.sessions.append(session)
+            return session
+        }
+    }
 }
 
 @Suite("CoachSession seam")

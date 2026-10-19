@@ -22,23 +22,27 @@ settings:
     # NOTE (owner directive: strict warnings-as-errors everywhere, no
     # carve-outs): `make test` passes the flags command-line-wide on top of
     # these per-target settings, covering local-package iOS builds in the
-    # xcodebuild graph too. There are no remote package dependencies —
-    # adding one requires it to build warning-free under this SDK first.
+    # xcodebuild graph too, plus `SWIFT_SUPPRESS_WARNINGS=NO`, which keeps
+    # the one remote package's (ClaudeForFoundationModels, WP-85) warnings
+    # visible and promoted instead of suppressed by Xcode's SwiftPM
+    # integration. Any other remote package must build warning-free under
+    # this SDK before it lands.
     # The flags don't promote every diagnostic (WP-83: 24 UI-test
     # concurrency warnings passed CI with them set), so `make test` and CI
     # also fail on any warning left in the build log
     # (scripts/no-compiler-warnings.sh). A GUI build has no such check:
     # read the issue navigator before committing.
     # Known gap: the five local packages get no warnings-as-errors in GUI
-    # builds (only their `swift test` runs and CI enforce it) -- project
-    # settings can't reach package targets, and command-line flags can't
-    # come from the GUI.
+    # builds (only their `swift test` runs and CI enforce it), and the GUI
+    # suppresses the remote package's warnings (only `make test` and CI
+    # surface them) -- project settings can't reach package targets, and
+    # command-line flags can't come from the GUI.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1" # iPhone only for P0; iPad support is a later decision
 
-# Local Swift packages (architecture.md §2 module map).
+# Local Swift packages (architecture.md §2 module map), plus one remote.
 packages:
   CoreModel:
     path: Packages/CoreModel
@@ -50,10 +54,19 @@ packages:
     path: Packages/SyncKit
   CoachKit:
     path: Packages/CoachKit
-  # No remote packages: owner directive is strict warnings-as-errors
-  # everywhere, and the only candidate remote dep (swift-snapshot-testing)
-  # carries SDK deprecation warnings. Snapshot tests use the local
-  # HealthLoomTests/SnapshotAssert.swift helper instead.
+  # WP-85: the one remote package -- Anthropic's official Claude provider
+  # for Foundation Models (D9: no REST client in this repo for dispatch).
+  # App target only: it requires iOS/macOS 27, which CoachKit's macOS 26
+  # test floor can't link. Pinned exact so a release can't change what we
+  # build. It must build warning-free under our toolchain (AGENTS.md §1.3):
+  # its warnings stay visible in the build log, where
+  # scripts/no-compiler-warnings.sh fails the build, and are fixed by
+  # upgrading or patching, never suppressed. swift-snapshot-testing stays
+  # out for exactly that reason (SDK deprecation warnings); snapshot tests
+  # use the local HealthLoomTests/SnapshotAssert.swift helper instead.
+  ClaudeForFoundationModels:
+    url: https://github.com/anthropics/ClaudeForFoundationModels
+    exactVersion: 0.2.3
 
 targets:
   HealthLoom:
@@ -204,6 +217,7 @@ targets:
       - package: GoogleHealthClient
       - package: SyncKit
       - package: CoachKit
+      - package: ClaudeForFoundationModels
 
   HealthLoomTests:
     type: bundle.unit-test

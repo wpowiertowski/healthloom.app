@@ -6915,3 +6915,71 @@ reported these as warnings, so the build passed. AGENTS.md §1.2 counts that as 
 
 **Verification:** this branch was written in a Linux container with no Swift toolchain, so
 the build and tests are verified by CI on the PR, not locally.
+
+## WP-85 — Claude tier live
+
+WP-28b removed the Claude adapter in September: package 0.1.4 needed
+`Transcript.CustomSegment`, which CI's July-beta SDK lacked. Since WP-83 every CI job builds
+with Xcode 27.0, and the package is at 0.2.3 (2026-10-07), built for Xcode 27 beta 5 and later
+and no longer naming that symbol. The tier is back, on the current API, and live.
+
+**What the user gets:** Settings → AI Models → Claude, with their own Anthropic key. Consent
+and the key check work as WP-29 built them. Chat's tier menu offers Claude once it's on.
+
+- **Models:** the picker offers the package's constants, `.opus5_5` (default), `.sonnet5_5`
+  and `.haiku5_5` (`ClaudeTier.models`). `CloudModelOptions` reads the same table. A stored
+  pick the table no longer lists (a Claude 4.x ID from WP-29) resolves to the default for the
+  row and for dispatch alike (`CloudModelOptions.resolvedModelID`).
+- **Refusal fallbacks:** the API's default substitute (`.serverDefault`) on Opus 5.5 and
+  Sonnet 5.5. Haiku 5.5 sends none, because the API rejects the field for it.
+- **Key check:** the WP-29 one-token check now runs on Haiku 5.5 (`ClaudeTier.keyCheckModel`),
+  the cheapest model. Any model proves the key.
+- **Key read:** `ClaudeCoachSession` holds no key when the factory builds it. Its first answer
+  reads the key from the Keychain and builds the real session, which later turns reuse. No key
+  fails the turn with `.missingCredential` and leaves the session unbuilt, so a key entered
+  afterwards works on the next turn. Warm-up doesn't read the key.
+- **Errors:** package credential errors become `CoachError` at the source
+  (`CoachError(claudeError:)`), so the streaming path, which the orchestrator doesn't normalize,
+  names a revoked key ("re-enter it in Settings") the same way `respond` does.
+- **Scope:** chat only. `InsightTierRouter` takes no BYO-key input, so morning insights can't
+  reach Claude. No Anthropic-hosted tools are configured; the launch-gate grep still finds no
+  mention of that parameter in production code.
+
+**Structure:**
+- CoachKit: `CoachSessionFactory(providers:)` wires off-device tiers beside the built-in
+  on-device arm. Unlisted tiers stay `UnwiredTierSession`, and an `.onDevice` entry is ignored.
+  Each `Provider` has a `configuration` (Claude's is the resolved model ID). The configuration
+  is now part of the conversation cache key and is handed to the build, so changing the model
+  in Settings starts a new session on the new model instead of reusing the old one.
+  `makeProviderSession(model:instructions:tools:)` is public so the app can build a
+  `LiveCoachSession` over `ClaudeLanguageModel`.
+- App: `ClaudeTier` (model table, fallbacks, model construction, error table) and
+  `ClaudeCoachSession`, both in `HealthLoomApp/Coach/CloudTiers/`. `AppEnvironment` wires the
+  provider in the live coach mode only, with Claude in `wiredTiers` and in
+  `ModelCatalog.live(liveTiers:)`. The UI-test modes keep every cloud tier fail-closed.
+- **The remote package returns:** `project.yml` adds `ClaudeForFoundationModels` at exactly
+  0.2.3, app target only. Xcode builds remote packages with `-suppress-warnings`, which would
+  hide their warnings and conflicts with `-warnings-as-errors`. `make test`, `make stress` and
+  the CI app job pass `SWIFT_SUPPRESS_WARNINGS=NO` (the fix the owner found in WP-28b), so the
+  package's warnings surface, promote and fail the build, and the WP-83 log check sees them.
+  AGENTS.md §1.3, the Makefile, project.yml and ci.yml describe this together.
+- `HealthLoom.xcodeproj` was regenerated with XcodeGen 2.46.0 built from source on Linux. Run
+  on main's `project.yml`, that build reproduced the committed project byte for byte before it
+  was trusted here.
+
+**Tests:**
+- CoachKit: `providersRouteByTier` (a provider serves only its own tier, the rest stay
+  fail-closed) and `providerConfigurationKeysTheCache` (a model change builds a new
+  conversation session).
+- App, `ClaudeTierTests`: the model table pin; stale stored models resolve to the default;
+  fallbacks per model; construction carries the model, no hosted tools and the default base
+  URL; the error table.
+- App, `ClaudeCoachSessionTests`: no key fails without building and a later key works; an
+  empty key counts as missing; the key is read once per session; a package error mid-stream
+  arrives as the named coach error; warm-up reads no key.
+- `AIModelsViewModelTests.modelPicker`: a stale Claude 4.x pick shows as the default.
+  `CloudKeyValidatorTests` pins the key check's model to `ClaudeTier.keyCheckModel`.
+
+**Verification:** written in a Linux container with no Apple toolchain, so the build and
+tests are verified by CI on the PR. Real generation against Anthropic needs a device and a real
+key (test plan §7) and hasn't been done.

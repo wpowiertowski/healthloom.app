@@ -48,6 +48,7 @@ test: check-xcodegen
 		-destination "platform=iOS Simulator,id=$$udid" \
 		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
 		GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+		SWIFT_SUPPRESS_WARNINGS=NO \
 		2>&1 | tee "$(TEST_LOGS)/xcodebuild.log" || exit 1; \
 	scripts/no-compiler-warnings.sh "$(TEST_LOGS)/xcodebuild.log"
 	# NOTE (owner directive: strict warnings-as-errors everywhere, no
@@ -60,9 +61,14 @@ test: check-xcodegen
 	# them set), so each build's log goes through
 	# scripts/no-compiler-warnings.sh, as in CI. An incremental build only
 	# re-reports warnings for files it recompiles; CI's clean build sees all.
-	# There are no remote package dependencies left to break this (WP-33's
-	# snapshot tests use a local helper for exactly this reason); adding one
-	# requires it to build warning-free under this SDK first.
+	# The one remote package (ClaudeForFoundationModels, WP-85) is held to
+	# the same bar: Xcode's SwiftPM integration builds remote packages with
+	# `-suppress-warnings`, which would hide their warnings and conflicts
+	# with `-warnings-as-errors`; `SWIFT_SUPPRESS_WARNINGS=NO` overrides it,
+	# so upstream warnings surface, promote and fail like ours (AGENTS.md
+	# §1.3: fixed at the source, never suppressed). Any other remote package
+	# must build warning-free under this SDK before it lands (WP-33 kept
+	# swift-snapshot-testing out for exactly this).
 
 # WP-69: the sync stress UI test (SyncStressUITests) -- on demand only, it
 # skips in `make test` and CI. Reproduces a sync's load while switching tabs
@@ -75,7 +81,8 @@ stress: check-xcodegen
 		-destination "platform=iOS Simulator,id=$$udid" \
 		-only-testing:HealthLoomUITests/SyncStressUITests \
 		SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-		GCC_TREAT_WARNINGS_AS_ERRORS=YES
+		GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+		SWIFT_SUPPRESS_WARNINGS=NO
 
 # NOTE: clean must NOT delete HealthLoom.xcodeproj — it is tracked since
 # the Xcode Cloud repo-prep (cloud builds compile the committed project).

@@ -62,11 +62,11 @@ Shipped (P0–P5, then WP-52–WP-82 from real-device use; per-package build log
 - **Tools** — gated answers for sleep, vitals, steps, and every workout in full (splits, per-device measurements)
 - **Morning insights** — `ReadinessEngine` + `@Generable DailyInsight`, generated after the overnight sync, local notification with headline only by default
 - **Evals** — `CoachEval` target: grounding, structure, safety red-team, and prompt-injection probes, with the deterministic half in CI
+- **Claude tier (WP-85)** — opt-in, with your own Anthropic API key: Anthropic's official `ClaudeForFoundationModels` package behind the same session seam as on-device, Opus 5.5 by default (Sonnet 5.5 and Haiku 5.5 in the picker), consent required, key checked before it's stored and read from the Keychain only when a turn needs it, chat only (morning insights never leave Apple), no Anthropic-hosted tools
 
 Built but not live (see [Status & Roadmap](#status--roadmap)):
 
 - **Private Cloud Compute tier** — catalog, quota and consent are in place; turns route to a fail-closed session until the PCC entitlement is granted
-- **Claude tier** — key entry and consent UI exist; the adapter was removed in WP-28b when the CI SDK lacked a symbol it needs (restore point `f40022f`)
 - **Gemini tier** — deferred pending a product decision on who pays for and registers the Firebase backend
 
 ## Technology Stack
@@ -81,7 +81,7 @@ Built but not live (see [Status & Roadmap](#status--roadmap)):
 | Background work | BGTaskScheduler (`BGAppRefreshTask`) |
 | On-device AI | Foundation Models framework (`LanguageModelSession`, `SystemLanguageModel`) |
 | Apple cloud AI | `PrivateCloudComputeLanguageModel` — free server model on Private Cloud Compute (Small Business Program) — built, live once the entitlement is granted |
-| BYO-key cloud AI | Claude via Anthropic's official `ClaudeForFoundationModels` package, Gemini via Firebase — both through the iOS 27 `LanguageModel` protocol, opt-in — not live yet (see Features) |
+| BYO-key cloud AI | Claude via Anthropic's official `ClaudeForFoundationModels` package, Gemini via Firebase — both through the iOS 27 `LanguageModel` protocol, opt-in; Claude live since WP-85, Gemini deferred |
 | Concurrency | Swift 6.4 strict concurrency (actors, `async`/`await`, `@concurrent`) |
 
 ## Architecture
@@ -181,7 +181,7 @@ Phases P0–P5 of [implementation-plan.md](implementation-plan.md) are implement
 WP-52–WP-82 from real-device use; [progress.md](progress.md) has the per-package log.
 What remains:
 
-- **Off-device tiers** — PCC goes live with its entitlement (P-1.5), together with session routing and before/after serving-model tests (WP-38). Claude returns from `f40022f` once the CI SDK provides `Transcript.CustomSegment`. Gemini needs the product decision above.
+- **Off-device tiers** — PCC goes live with its entitlement (P-1.5), together with session routing and before/after serving-model tests (WP-38). Gemini needs the product decision above. Claude shipped in WP-85; a real-key check on a device is the remaining manual step (test plan §7).
 - **Toolchain** — move CI back to the regular macOS image once it carries Xcode 27, and re-test the self-skipped HealthKit-sheet UI test on the 27.0 runtime.
 - **Launch checklist (WP-38)** — Google OAuth verification for the Restricted scopes (P-1.4), App Review prep and privacy label, graceful-degradation matrix, and a real dual-wear verification day.
 - **Optional** — webhook push freshness (WP-36), Siri & Spotlight via App Intents (WP-39).
