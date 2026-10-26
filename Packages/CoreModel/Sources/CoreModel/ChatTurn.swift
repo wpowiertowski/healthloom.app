@@ -22,6 +22,11 @@ public final class ChatTurn {
     /// `nil` for user turns, which don't have a context sent *to* them).
     public var contextSnapshotID: UUID?
 
+    /// The model the provider reported serving this reply (WP-87), e.g.
+    /// `claude-opus-5-5`; nil for user turns, offers, and tiers that report
+    /// none (on-device). Optional with no default migration needed.
+    public var servedModelID: String?
+
     public var createdAt: Date
 
     public init(
@@ -29,12 +34,14 @@ public final class ChatTurn {
         content: String,
         provider: String = "",
         contextSnapshotID: UUID? = nil,
+        servedModelID: String? = nil,
         createdAt: Date = .now
     ) {
         self.role = role
         self.content = content
         self.provider = provider
         self.contextSnapshotID = contextSnapshotID
+        self.servedModelID = servedModelID
         self.createdAt = createdAt
     }
 }

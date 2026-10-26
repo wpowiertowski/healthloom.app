@@ -237,6 +237,8 @@ final class ScriptedCoachSession: CoachSession, Sendable {
 
     /// What `contextFit(adding:)` reports; nil = can't measure (sends).
     var scriptedFit: ContextFit?
+    /// What `servedModelID()` reports; nil = the provider names none.
+    var scriptedModelID: String?
 
     /// Scripted answer for the structured (`@Generable`) requirement, as
     /// `Any` because the protocol method is generic. Unset (or wrong-typed)
@@ -266,6 +268,10 @@ final class ScriptedCoachSession: CoachSession, Sendable {
 
     func contextFit(adding prompt: String) async -> ContextFit? {
         scriptedFit
+    }
+
+    func servedModelID() async -> String? {
+        scriptedModelID
     }
 
     func stream(to prompt: String) -> AsyncThrowingStream<String, Error> {

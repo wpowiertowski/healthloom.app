@@ -192,6 +192,7 @@ private final class FailingStreamSession: CoachSession, Sendable {
     var isResponding: Bool { false }
     func prewarm() {}
     func contextFit(adding prompt: String) async -> ContextFit? { nil }
+    func servedModelID() async -> String? { nil }
     func respond(to prompt: String) async throws -> String { throw error }
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         throw error
