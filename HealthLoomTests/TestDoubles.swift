@@ -41,7 +41,8 @@ final class TestCoachSession: CoachSession, @unchecked Sendable {
         failure: Error = StreamBoom(),
         suspendForever: Bool = false,
         chunkDelay: Duration = .milliseconds(50),
-        fit: ContextFit? = nil
+        fit: ContextFit? = nil,
+        modelID: String? = nil
     ) {
         self.chunks = chunks
         self.failAfterChunks = failAfterChunks
@@ -49,6 +50,7 @@ final class TestCoachSession: CoachSession, @unchecked Sendable {
         self.suspendForever = suspendForever
         self.chunkDelay = chunkDelay
         self.scriptedFit = fit
+        self.scriptedModelID = modelID
     }
 
     var isResponding: Bool { false }
@@ -56,6 +58,9 @@ final class TestCoachSession: CoachSession, @unchecked Sendable {
     /// Unmeasured unless a test scripts a fit.
     let scriptedFit: ContextFit?
     func contextFit(adding prompt: String) async -> ContextFit? { scriptedFit }
+    /// What `servedModelID()` reports; nil = the provider names none.
+    let scriptedModelID: String?
+    func servedModelID() async -> String? { scriptedModelID }
     func respond(to prompt: String) async throws -> String { chunks.joined() }
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         throw StreamBoom()
@@ -99,6 +104,7 @@ final class PrewarmProbeSession: CoachSession, Sendable {
         lock.withLock { _prewarmCount += 1 }
     }
     func contextFit(adding prompt: String) async -> ContextFit? { nil }
+    func servedModelID() async -> String? { nil }
     func respond(to prompt: String) async throws -> String { "" }
     func respond<Content: Generable>(to prompt: String, generating type: Content.Type) async throws -> Content {
         throw StreamBoom()

@@ -174,7 +174,10 @@ public final class CoachOrchestrator: Sendable {
             deltas: AsyncThrowingStream<String, Error>,
             snapshotID: UUID,
             info: TurnInfo,
-            servingTier: ModelTier
+            servingTier: ModelTier,
+            /// The serving session's `servedModelID()`, for after `deltas`
+            /// finishes (WP-87): only the session knows, and only then.
+            servedModelID: @MainActor () async -> String?
         )
     }
 
@@ -216,7 +219,8 @@ public final class CoachOrchestrator: Sendable {
                 deltas: Self.normalizing(session.stream(to: prompt), on: route.serving),
                 snapshotID: assembled.snapshotID,
                 info: info,
-                servingTier: route.serving
+                servingTier: route.serving,
+                servedModelID: { await session.servedModelID() }
             )
         }
     }

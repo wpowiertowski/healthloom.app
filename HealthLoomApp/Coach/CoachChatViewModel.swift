@@ -390,12 +390,14 @@ final class CoachChatViewModel {
                     if reason == .conversationFull {
                         startFreshTier = servingTier
                     }
-                case .live(let deltas, let snapshotID, _, let serving):
+                case .live(let deltas, let snapshotID, _, let serving, let servedModelID):
                     var streamError: Error?
+                    var finished = false
                     do {
                         for try await delta in deltas {
                             draft += delta
                         }
+                        finished = true
                     } catch is CancellationError {
                         // Stop button / disappearance: fall through to the
                         // partial persist below (a consumer-side cancel can also
@@ -405,6 +407,12 @@ final class CoachChatViewModel {
                         streamError = error
                     }
                     if !draft.isEmpty {
+                        // WP-87: the model the provider reported, read only
+                        // for a reply that streamed to the end — after a
+                        // failure or a stop, the session's latest response
+                        // is still the PREVIOUS turn's, and stamping it
+                        // would name the wrong model.
+                        let modelID = finished && !Task.isCancelled ? await servedModelID() : nil
                         do {
                             // Provider stamps the ACTUAL serving tier
                             // (quota fallback answers on-device) — the
@@ -413,7 +421,8 @@ final class CoachChatViewModel {
                                 role: "assistant",
                                 content: draft,
                                 provider: serving.rawValue,
-                                contextSnapshotID: snapshotID
+                                contextSnapshotID: snapshotID,
+                                servedModelID: modelID
                             )
                             try persist(reply)
                             turns.append(reply)
@@ -432,6 +441,20 @@ final class CoachChatViewModel {
             draft = ""
         }
         return true
+    }
+
+    /// The always-visible caption under an assistant reply (WP-87): the
+    /// tier that served it, plus the model the provider reported, verbatim
+    /// (the API's ID is the evidence; a display name would be our claim).
+    /// Nil when the turn records no tier -- a missed writer must not render
+    /// a bare "Served by". Unknown tier strings render raw (WP-30 F2).
+    static func servedByCaption(for turn: ChatTurn) -> String? {
+        guard turn.role == "assistant", !turn.provider.isEmpty else { return nil }
+        let tier = ModelTier(rawValue: turn.provider)?.displayName ?? turn.provider
+        if let model = turn.servedModelID, !model.isEmpty {
+            return "Served by \(tier) · \(model)"
+        }
+        return "Served by \(tier)"
     }
 
     /// Offer-row copy (round-7 item 13): the turn was offered, not

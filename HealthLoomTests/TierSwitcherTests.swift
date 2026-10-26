@@ -107,7 +107,9 @@ struct TierSwitcherTests {
         // launch.
         fit: ContextFit? = nil,
         streamFailure: Error? = nil,
-        storedChatTier: ModelTier? = nil
+        storedChatTier: ModelTier? = nil,
+        // WP-87: the model every built session reports serving.
+        servedModelID: String? = nil
     ) throws -> TierSwitcherFixture {
         let container = try CoreModel.makeContainer(inMemory: true)
         // Round-3 item 12: the holder rides in the fixture (same commit
@@ -140,7 +142,8 @@ struct TierSwitcherTests {
                 chunks: chunks?(tier) ?? ["Hello ", "world."],
                 failAfterChunks: streamFailure == nil ? nil : 1,
                 failure: streamFailure ?? StreamBoom(),
-                fit: fit
+                fit: fit,
+                modelID: servedModelID
             )
         })
         let viewModel = CoachChatViewModel(deps: CoachChatViewModel.Dependencies(
@@ -560,5 +563,45 @@ struct TierSwitcherTests {
         viewModel.onAppear()
         #expect(viewModel.selectedTier == .onDevice)
         #expect(settings.chatTier == .claude)
+    }
+
+    // MARK: - WP-87: served-model caption
+
+    @Test("a completed reply records the model the provider reported, and the caption names it")
+    func completedReplyStampsModel() async throws {
+        // catches: a Claude reply captioned by tier alone, with nothing
+        // from the API to show which model actually answered.
+        let fixture = try makeViewModel(servedModelID: "claude-opus-5-5")
+        let viewModel = fixture.viewModel
+        #expect(viewModel.send("hi") == true)
+        try await waitForIdle(viewModel)
+        let reply = try #require(viewModel.turns.last)
+        #expect(reply.servedModelID == "claude-opus-5-5")
+        let caption = try #require(CoachChatViewModel.servedByCaption(for: reply))
+        #expect(caption.contains(ModelTier.onDevice.displayName))
+        #expect(caption.contains("claude-opus-5-5"))
+    }
+
+    @Test("a reply that failed mid-stream records no model")
+    func failedReplyStampsNoModel() async throws {
+        // catches: a partial reply stamped with the session's latest
+        // response -- the previous turn's -- naming the wrong model.
+        let fixture = try makeViewModel(streamFailure: StreamBoom(), servedModelID: "claude-opus-5-5")
+        let viewModel = fixture.viewModel
+        #expect(viewModel.send("hi") == true)
+        try await waitForIdle(viewModel)
+        let reply = try #require(viewModel.turns.last)
+        #expect(reply.role == "assistant", "the partial reply is kept")
+        #expect(reply.servedModelID == nil)
+    }
+
+    @Test("the caption shows for replies that record a tier, and only those")
+    func captionVisibility() {
+        // catches: a bare "Served by" on a turn with no recorded tier, or a
+        // caption under the user's own messages.
+        let onDevice = ChatTurn(role: "assistant", content: "a", provider: ModelTier.onDevice.rawValue)
+        #expect(CoachChatViewModel.servedByCaption(for: onDevice) == "Served by \(ModelTier.onDevice.displayName)")
+        #expect(CoachChatViewModel.servedByCaption(for: ChatTurn(role: "assistant", content: "a")) == nil)
+        #expect(CoachChatViewModel.servedByCaption(for: ChatTurn(role: "user", content: "q", provider: "claude")) == nil)
     }
 }

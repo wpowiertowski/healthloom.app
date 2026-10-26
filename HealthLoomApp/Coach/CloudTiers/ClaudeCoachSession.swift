@@ -46,7 +46,10 @@ final class ClaudeCoachSession: CoachSession {
                 makeProviderSession(
                     model: ClaudeTier.makeModel(apiKey: apiKey, model: model),
                     instructions: instructions,
-                    tools: tools
+                    tools: tools,
+                    // The model the API reports serving each response,
+                    // the fallback's after a refusal handover (WP-87).
+                    servedModelID: { $0.claudeModelID }
                 )
             }
         )
@@ -56,14 +59,20 @@ final class ClaudeCoachSession: CoachSession {
 
     /// Warms the built session only. Before the first turn there is nothing
     /// to warm without reading the key, and a warm-up must not read it.
+    func prewarm() {
+        session?.prewarm()
+    }
+
     /// The Claude provider has no tokenizer API to measure with; forwarded
     /// so the adapter never claims a fit its built session didn't report.
     func contextFit(adding prompt: String) async -> ContextFit? {
         await session?.contextFit(adding: prompt)
     }
 
-    func prewarm() {
-        session?.prewarm()
+    /// The built session's report (the API's model ID, via
+    /// `claudeModelID`); nil before the first turn built one.
+    func servedModelID() async -> String? {
+        await session?.servedModelID()
     }
 
     func respond(to prompt: String) async throws -> String {

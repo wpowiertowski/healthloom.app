@@ -21,10 +21,12 @@
     public func makeProviderSession<Model: LanguageModel>(
         model: Model,
         instructions: String,
-        tools: [any Tool]
+        tools: [any Tool],
+        servedModelID: (@Sendable (Transcript.Response) -> String?)? = nil
     ) -> any CoachSession {
         LiveCoachSession(
-            session: LanguageModelSession(model: model, tools: tools, instructions: instructions)
+            session: LanguageModelSession(model: model, tools: tools, instructions: instructions),
+            modelIDOfResponse: servedModelID
         )
     }
 #endif

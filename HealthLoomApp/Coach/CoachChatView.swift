@@ -195,12 +195,19 @@ private struct CoachTurnRow: View {
                 .foregroundStyle(isUser ? .white : Theme.ink)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .accessibilityIdentifier(isUser ? "chat.message.user" : "chat.message.assistant")
+            // WP-87: which tier (and model) answered, without opening the
+            // expander -- WP-30's trace badge, moved out of it.
+            if let caption = CoachChatViewModel.servedByCaption(for: turn) {
+                Text(caption)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("chat.context.tier")
+            }
             if !isUser, turn.contextSnapshotID != nil {
                 CoachContextExpander(turn: turn, viewModel: viewModel)
-                    // Identifier-carrying parent of identified children:
-                    // without `.contain` FIRST, the row identifier collapses
-                    // the tier badge's (`chat.context.tier`) — the same
-                    // framework corner `AIModelsView`'s header documents.
+                    // Identifier-carrying parent: `.contain` FIRST keeps the
+                    // row identifier from collapsing its children's — the
+                    // same framework corner `AIModelsView`'s header documents.
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.context.\(turn.id)")
             }
@@ -327,18 +334,8 @@ private struct CoachContextExpander: View {
 
     var body: some View {
         DisclosureGroup("What did the coach see?", isExpanded: $isExpanded) {
-            // WP-30 trace badge (D15.b — "…and where did it run?"): the
-            // serving tier persisted on the turn (`ChatTurn.provider`).
-            // WP-30 F2: hidden for an empty provider (free-`String` field —
-            // a missed writer must not render a trailing "Served by ");
-            // non-empty unknowns keep the raw-string fallback so WP-32's
-            // future stamps stay readable.
-            if !turn.provider.isEmpty {
-                Text("Served by \(ModelTier(rawValue: turn.provider)?.displayName ?? turn.provider)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("chat.context.tier")
-            }
+            // WP-30's trace badge (D15.b — "…and where did it run?") lives
+            // under the reply now, always visible (WP-87).
             if let shared {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(shared.count) fields shared")

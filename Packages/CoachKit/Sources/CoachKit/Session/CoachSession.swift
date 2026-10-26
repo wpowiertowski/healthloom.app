@@ -38,6 +38,13 @@ public protocol CoachSession: AnyObject, Sendable {
     /// "send": a real overflow still surfaces as `contextSizeExceeded`.
     /// A requirement (no default) so every session decides explicitly.
     func contextFit(adding prompt: String) async -> ContextFit?
+    /// The model that produced this session's latest response, as the
+    /// provider reported it (Claude: the API's model ID, the fallback's
+    /// after a refusal handover). Nil when the provider reports none
+    /// (on-device) or no response was recorded. Read only after a turn
+    /// completes: a failed or cancelled turn leaves the previous turn's
+    /// response as the latest.
+    func servedModelID() async -> String?
 }
 
 /// One measured look at a session's context window (WP-86). The per-turn
@@ -99,6 +106,8 @@ public final class UnwiredTierSession: CoachSession, Sendable {
     /// Nothing to measure: every answering method fails anyway.
     public func contextFit(adding prompt: String) async -> ContextFit? { nil }
 
+    public func servedModelID() async -> String? { nil }
+
     /// Shared with `CoachOrchestrator`'s unwired-tier throw: one copy for
     /// "live, enabled, but no session provider," owned here next to the
     /// type that raises it.
@@ -122,10 +131,19 @@ public final class LiveCoachSession: CoachSession {
     /// provider sessions (`makeProviderSession`): the `LanguageModel`
     /// protocol has no tokenizer API, so those never measure.
     private let systemModel: SystemLanguageModel?
+    /// Reads the served model off a response entry, for providers that
+    /// record one (`makeProviderSession(servedModelID:)`). Nil: the
+    /// provider reports nothing, so `servedModelID()` is nil.
+    private let modelIDOfResponse: (@Sendable (Transcript.Response) -> String?)?
 
-    init(session: LanguageModelSession, systemModel: SystemLanguageModel? = nil) {
+    init(
+        session: LanguageModelSession,
+        systemModel: SystemLanguageModel? = nil,
+        modelIDOfResponse: (@Sendable (Transcript.Response) -> String?)? = nil
+    ) {
         self.session = session
         self.systemModel = systemModel
+        self.modelIDOfResponse = modelIDOfResponse
     }
 
     public var isResponding: Bool { session.isResponding }
@@ -237,6 +255,17 @@ public final class LiveCoachSession: CoachSession {
     /// definitions included) plus the prompt, against `contextSize` (the
     /// real window on 27; the SDK back-deploys 4,096 before it). A count
     /// that throws measures nothing rather than blocking the turn.
+    /// The latest response entry's model, via the provider's reader.
+    public func servedModelID() async -> String? {
+        guard let modelIDOfResponse else { return nil }
+        for entry in session.transcript.reversed() {
+            if case .response(let response) = entry {
+                return modelIDOfResponse(response)
+            }
+        }
+        return nil
+    }
+
     public func contextFit(adding prompt: String) async -> ContextFit? {
         guard let systemModel else { return nil }
         guard #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) else { return nil }

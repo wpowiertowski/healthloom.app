@@ -37,6 +37,8 @@ final class RecordingBuild {
     var failure: Error?
     /// What every built session's `contextFit` reports (WP-86).
     var fit: ContextFit?
+    /// What every built session's `servedModelID()` reports (WP-87).
+    var modelID: String?
 
     func factory() -> CoachSessionFactory {
         // The build closure is `@MainActor`-isolated, so `self` (also
@@ -46,6 +48,7 @@ final class RecordingBuild {
             let session = ScriptedCoachSession(chunks: [self.answer])
             session.failure = self.failure
             session.scriptedFit = self.fit
+            session.scriptedModelID = self.modelID
             self.sessions.append(session)
             return session
         })
@@ -267,7 +270,7 @@ struct CoachOrchestratorTests {
     /// Drains a live stream turn, returning the error it finished with.
     private func streamFailure(_ orchestrator: CoachOrchestrator) async throws -> Error? {
         let turn = try await orchestrator.stream(to: "Hi")
-        guard case .live(let deltas, _, _, _) = turn else {
+        guard case .live(let deltas, _, _, _, _) = turn else {
             Issue.record("expected a live stream")
             return nil
         }
@@ -294,6 +297,22 @@ struct CoachOrchestratorTests {
             return
         }
         #expect(description.contains("Boom"))
+    }
+
+    @Test("a live turn reports the serving session's model")
+    func liveTurnReportsServedModel() async throws {
+        // catches: the chat asking some other session (or none) which
+        // model answered, so the reply's caption names the wrong model.
+        let recording = RecordingBuild()
+        recording.modelID = "claude-opus-5-5"
+        let (orchestrator, _, _) = try makeOrchestrator(recording: recording)
+        let turn = try await orchestrator.stream(to: "Hi")
+        guard case .live(let deltas, _, _, _, let servedModelID) = turn else {
+            Issue.record("expected a live stream")
+            return
+        }
+        for try await _ in deltas {}
+        #expect(await servedModelID() == "claude-opus-5-5")
     }
 
     @Test("stream cancellation stays a CancellationError")

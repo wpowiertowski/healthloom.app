@@ -7033,3 +7033,38 @@ state; Start fresh rebuilds the session and refills the composer; a real
 the picked tier survives a relaunch; a disabled remembered tier clamps without being forgotten;
 `chatTier` round-trips and `resetAll` clears it. Mutants: removing the stream normalization
 fails the normalization test; removing the fit check fails both conversation-full tests.
+
+## WP-87 — Every reply says who answered it
+
+Asking the coach which model it is proves nothing: a model knows only what its instructions
+say, and the coach's name none. The owner wanted proof that a reply came from Claude.
+
+**What the user gets:** under every coach reply, always visible, "Served by" and the tier.
+For a Claude reply the caption adds the model ID Anthropic's API reported serving it,
+verbatim: "Served by Claude (your key) · claude-opus-5-5". The ID is the API's, not a name the
+app maps it to. After a refusal handover it is the fallback model that finished. WP-30's
+trace badge moves out of the "What did the coach see?" expander into this caption.
+
+- **Source of the ID:** ClaudeForFoundationModels 0.2.3's public
+  `Transcript.Response.claudeModelID` (the `message_start` model, or the last handover's
+  `toModelID`). The package's stored record is opaque and stays unread.
+- **Seam:** `CoachSession.servedModelID()`, a requirement (no default). `LiveCoachSession`
+  reads its latest `.response` entry through a reader its builder passes
+  (`makeProviderSession(servedModelID:)`); on-device passes none and reports nil.
+  `ClaudeCoachSession` forwards to its built session. `StreamTurn.live` carries a
+  `servedModelID` closure, since only the serving session knows, and only after the stream.
+- **When it's recorded:** only for a reply that streamed to the end. After a failure or a
+  stop, the session's latest response is still the previous turn's, so a partial reply gets
+  no model rather than a wrong one.
+- **Storage:** `ChatTurn.servedModelID: String?`, a new optional property (lightweight
+  migration). iCloud chat sync carries role/content/date only, so it isn't synced.
+- **Copy:** `CoachChatViewModel.servedByCaption(for:)`; nil for user turns and for turns
+  with no recorded tier (WP-30 F2's "no bare Served by" rule).
+- Also fixes WP-86's insertion of `ClaudeCoachSession.contextFit` between `prewarm`'s doc
+  comment and `prewarm`.
+
+**Tests:** CoachKit: a live turn reports the serving session's model. App: a completed reply
+records the reported model and the caption shows it; a reply that failed mid-stream records
+none (mutant: reading the model regardless fails it); the caption shows only for assistant
+turns with a recorded tier. `LiveCoachSession.servedModelID()` itself needs a real provider
+response, so it is checked on device.
